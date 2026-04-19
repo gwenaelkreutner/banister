@@ -1,0 +1,13 @@
+{
+  "name": "Sortie endurance Z2",
+  "sport_type": "Ride",
+  "elapsed_time": 5400,
+  "suffer_score": 72,
+  "start_date_local": "2026-03-15T07:10:00Z",
+  "average_heartrate": 141.0,
+  "average_watts": 188.4,
+  "weighted_average_watts": 201.3,
+  "kilojoules": 1015.2,
+  "distance": 50234.4,
+  "trainer": false
+}

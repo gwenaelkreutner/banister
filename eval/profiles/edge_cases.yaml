@@ -1,0 +1,136 @@
+# Profils "edge cases" — cas difficiles et limites du générateur
+# Ces profils testent des situations atypiques qui peuvent révéler des angles morts.
+
+profiles:
+
+  - id: edge_expert_plateau
+    description: >
+      Expert FTP très élevé (380W), 15h/sem, cycle long 20 semaines.
+      Test : l'algorithme génère-t-il suffisamment de variété pour un athlète
+      de haut niveau avec peu de marge de progression ? Risque de plans monotones
+      ou de pics TSS irréalistes.
+    level: expert
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 20
+    hours_per_week: 15
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 380
+    ftp_source: declared
+    age: 32
+    hr_max: 192
+    hr_max_source: declared
+    hr_rest: 43
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 62
+
+  - id: edge_reprise_blessure
+    description: >
+      Débutant en reprise après blessure (genou droit, sévérité légère).
+      Test : l'algorithme respecte-t-il une reprise ultra-progressive ?
+      Les zones Z4+ doivent être absentes des 4 premières semaines minimum.
+      La restriction zone Z4+ sur le genou doit limiter les séances intenses.
+    level: beginner
+    coaching_mode: hr
+    objective_type: sante
+    target_weeks: 12
+    hours_per_week: 4
+    preferred_days: [tuesday, thursday, saturday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 44
+    hr_max: 176
+    hr_max_source: estimated
+    hr_rest: 66
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: true
+    injury_status:
+      is_injured: true
+      location: "genou droit"
+      severity: "légère"
+      zone_restrictions: ["Z4", "Z5", "Z6"]
+      start_date: "2026-02-15"
+      estimated_recovery_date: "2026-04-15"
+    sex: M
+    weight_kg: 83
+
+  - id: edge_asymetrique_weekend
+    description: >
+      Intermédiaire avec disponibilité presque exclusivement week-end (sam+dim).
+      Seulement 2 jours disponibles mais volume total élevé (12h/sem).
+      Test : l'algorithme concentre-t-il correctement les séances sur ces 2 jours ?
+      Risque de surcharge le week-end (2 séances intenses consécutives sam+dim).
+    level: intermediate
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 16
+    hours_per_week: 12
+    preferred_days: [saturday, sunday]
+    power_meter: true
+    ftp: 245
+    ftp_source: declared
+    age: 35
+    hr_max: 186
+    hr_max_source: declared
+    hr_rest: 58
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 74
+
+  - id: edge_evenement_imminent
+    description: >
+      Avancé avec événement dans 3 semaines seulement.
+      Test : l'algorithme génère-t-il un plan cohérent sur 3 semaines ?
+      Le taper doit être immédiat. Pas de phase base ou build longue possible.
+      Risque de plan qui ignore l'urgence ou qui sous-charge sur une durée si courte.
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 3
+    hours_per_week: 10
+    preferred_days: [monday, tuesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 305
+    ftp_source: declared
+    age: 29
+    hr_max: 193
+    hr_max_source: declared
+    hr_rest: 51
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 68
+
+  - id: edge_plan_tres_long
+    description: >
+      Expert Power, plan de 32 semaines (8 mois), charge maximale.
+      Test : la périodisation tient-elle sur une durée aussi longue ?
+      Risque de progression incohérente sur 32 semaines, blocs mal découpés,
+      ou TSS pic trop élevé / trop tardif dans le plan.
+    level: expert
+    coaching_mode: power
+    objective_type: etape_du_tour
+    target_weeks: 32
+    hours_per_week: 15
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 375
+    ftp_source: declared
+    age: 27
+    hr_max: 196
+    hr_max_source: declared
+    hr_rest: 44
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 63

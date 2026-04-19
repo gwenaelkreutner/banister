@@ -1,0 +1,34 @@
+{
+  "objective": {
+    "type": "cyclosportive",
+    "target_date": "2026-09-20"
+  },
+  "availability": {
+    "hours_per_week": 8,
+    "preferred_days": [
+      "tuesday",
+      "thursday",
+      "saturday",
+      "sunday"
+    ]
+  },
+  "level": "intermediate",
+  "structured_plan_history": true,
+  "equipment": {
+    "power_meter": false,
+    "ftp": null,
+    "ftp_source": "estimated"
+  },
+  "physio": {
+    "age": 35,
+    "hr_max": 185,
+    "hr_max_source": "declared",
+    "hr_rest": 55,
+    "hr_rest_source": "declared"
+  },
+  "coaching_mode": "hr",
+  "health_constraints": false,
+  "current_ctl": 52.0,
+  "current_atl": 48.0,
+  "current_tsb": 4.0
+}

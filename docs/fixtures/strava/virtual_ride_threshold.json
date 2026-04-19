@@ -1,0 +1,13 @@
+{
+  "name": "Home trainer - Seuil",
+  "sport_type": "VirtualRide",
+  "elapsed_time": 4200,
+  "suffer_score": 98,
+  "start_date_local": "2026-01-17T18:45:00Z",
+  "average_heartrate": 156.0,
+  "average_watts": 235.1,
+  "weighted_average_watts": 257.8,
+  "kilojoules": 1243.7,
+  "distance": 38120.0,
+  "trainer": true
+}

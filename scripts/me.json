@@ -1,0 +1,40 @@
+{
+  "sex": "M",
+  "level": "advanced",
+  "physio": {
+    "age": 35,
+    "hr_max": 200,
+    "hr_rest": 60,
+    "hr_max_source": "declared",
+    "hr_rest_source": "estimated"
+  },
+  "equipment": {
+    "ftp": 275,
+    "ftp_source": "declared",
+    "power_meter": false
+  },
+  "objective": {
+    "type": "cyclosportive",
+    "target_date": "2026-05-23"
+  },
+  "weight_kg": 68,
+  "user_level": 1,
+  "current_atl": 52.4,
+  "current_ctl": 53.2,
+  "current_tsb": 0.8,
+  "availability": {
+    "hours_per_week": 10,
+    "preferred_days": [
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "saturday",
+      "friday",
+      "sunday"
+    ]
+  },
+  "coaching_mode": "hr",
+  "injury_status": null,
+  "health_constraints": false,
+  "structured_plan_history": false
+}

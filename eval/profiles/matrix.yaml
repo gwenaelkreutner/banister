@@ -1,0 +1,1396 @@
+# Matrice de profils de test systématiques — Banister
+# ~65 profils couvrant les axes : level × coaching_mode × hours × target_weeks × objective
+#
+# Champs requis pour chaque profil :
+#   id, level, coaching_mode, objective_type, target_weeks (null = pas de date cible),
+#   hours_per_week, preferred_days, power_meter, ftp (null si pas de capteur),
+#   ftp_source, age, hr_max, hr_max_source, hr_rest, hr_rest_source,
+#   structured_plan_history, health_constraints
+# Champs optionnels : sex, weight_kg, description
+
+profiles:
+
+  # ──────────────────────────────────────────────────────────────────
+  # DÉBUTANTS (8 profils)
+  # ──────────────────────────────────────────────────────────────────
+
+  - id: beginner_hr_8w_3h_cyclosportive
+    description: "Débutant HR, 3h/sem, plan court 8 semaines, cyclosportive"
+    level: beginner
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 8
+    hours_per_week: 3
+    preferred_days: [tuesday, saturday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 38
+    hr_max: 182
+    hr_max_source: estimated
+    hr_rest: 65
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 78
+
+  - id: beginner_hr_12w_3h_cyclosportive
+    description: "Débutant HR, 3h/sem, plan 12 semaines, cyclosportive"
+    level: beginner
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 3
+    preferred_days: [tuesday, saturday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 38
+    hr_max: 182
+    hr_max_source: estimated
+    hr_rest: 65
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 78
+
+  - id: beginner_hr_12w_5h_cyclosportive
+    description: "Débutant HR, 5h/sem, plan 12 semaines, cyclosportive"
+    level: beginner
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 5
+    preferred_days: [tuesday, thursday, saturday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 40
+    hr_max: 180
+    hr_max_source: estimated
+    hr_rest: 67
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 82
+
+  - id: beginner_hr_20w_5h_cyclosportive
+    description: "Débutant HR, 5h/sem, plan long 20 semaines, cyclosportive"
+    level: beginner
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 20
+    hours_per_week: 5
+    preferred_days: [tuesday, thursday, saturday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 35
+    hr_max: 185
+    hr_max_source: estimated
+    hr_rest: 63
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 74
+
+  - id: beginner_hr_12w_3h_sante
+    description: "Débutant HR, 3h/sem, plan santé 12 semaines"
+    level: beginner
+    coaching_mode: hr
+    objective_type: sante
+    target_weeks: null
+    hours_per_week: 3
+    preferred_days: [wednesday, saturday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 48
+    hr_max: 172
+    hr_max_source: estimated
+    hr_rest: 70
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 88
+
+  - id: beginner_hr_12w_5h_sante
+    description: "Débutant HR, 5h/sem, objectif santé, pas de date cible"
+    level: beginner
+    coaching_mode: hr
+    objective_type: sante
+    target_weeks: null
+    hours_per_week: 5
+    preferred_days: [tuesday, thursday, saturday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 45
+    hr_max: 175
+    hr_max_source: estimated
+    hr_rest: 68
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: F
+    weight_kg: 65
+
+  - id: beginner_power_12w_3h_cyclosportive
+    description: "Débutant avec capteur de puissance, 3h/sem, 12 semaines, FTP faible"
+    level: beginner
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 3
+    preferred_days: [tuesday, saturday]
+    power_meter: true
+    ftp: 155
+    ftp_source: estimated
+    age: 36
+    hr_max: 183
+    hr_max_source: estimated
+    hr_rest: 64
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 75
+
+  - id: beginner_power_12w_5h_cyclosportive
+    description: "Débutant avec capteur de puissance, 5h/sem, 12 semaines"
+    level: beginner
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 5
+    preferred_days: [tuesday, thursday, saturday]
+    power_meter: true
+    ftp: 165
+    ftp_source: estimated
+    age: 33
+    hr_max: 186
+    hr_max_source: estimated
+    hr_rest: 62
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 72
+
+  # ──────────────────────────────────────────────────────────────────
+  # INTERMÉDIAIRES (18 profils)
+  # ──────────────────────────────────────────────────────────────────
+
+  - id: intermediate_hr_10w_6h_cyclosportive
+    description: "Intermédiaire HR, 6h/sem, plan 10 semaines"
+    level: intermediate
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 10
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 34
+    hr_max: 188
+    hr_max_source: declared
+    hr_rest: 60
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 72
+
+  - id: intermediate_hr_12w_6h_cyclosportive
+    description: "Intermédiaire HR, 6h/sem, plan 12 semaines"
+    level: intermediate
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 36
+    hr_max: 187
+    hr_max_source: declared
+    hr_rest: 59
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 74
+
+  - id: intermediate_hr_12w_8h_cyclosportive
+    description: "Intermédiaire HR, 8h/sem, plan 12 semaines"
+    level: intermediate
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 8
+    preferred_days: [monday, tuesday, thursday, saturday, sunday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 31
+    hr_max: 190
+    hr_max_source: declared
+    hr_rest: 57
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 70
+
+  - id: intermediate_hr_14w_6h_sante
+    description: "Intermédiaire HR, 6h/sem, objectif santé 14 semaines"
+    level: intermediate
+    coaching_mode: hr
+    objective_type: sante
+    target_weeks: null
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 42
+    hr_max: 178
+    hr_max_source: estimated
+    hr_rest: 63
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: F
+    weight_kg: 62
+
+  - id: intermediate_power_10w_6h_cyclosportive
+    description: "Intermédiaire Power, 6h/sem, plan court 10 semaines, cyclosportive"
+    level: intermediate
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 10
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 230
+    ftp_source: declared
+    age: 32
+    hr_max: 189
+    hr_max_source: declared
+    hr_rest: 57
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 71
+
+  - id: intermediate_power_12w_6h_cyclosportive
+    description: "RÉFÉRENCE — Intermédiaire Power, 6h/sem, 12 semaines, cyclosportive"
+    level: intermediate
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 230
+    ftp_source: declared
+    age: 34
+    hr_max: 188
+    hr_max_source: declared
+    hr_rest: 58
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 72
+
+  - id: intermediate_power_12w_8h_cyclosportive
+    description: "Intermédiaire Power, 8h/sem, 12 semaines, cyclosportive"
+    level: intermediate
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 8
+    preferred_days: [monday, tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 245
+    ftp_source: declared
+    age: 30
+    hr_max: 191
+    hr_max_source: declared
+    hr_rest: 55
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 68
+
+  - id: intermediate_power_14w_8h_cyclosportive
+    description: "Intermédiaire Power, 8h/sem, 14 semaines, cyclosportive"
+    level: intermediate
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 14
+    hours_per_week: 8
+    preferred_days: [monday, tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 240
+    ftp_source: declared
+    age: 35
+    hr_max: 186
+    hr_max_source: declared
+    hr_rest: 58
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 73
+
+  - id: intermediate_power_20w_6h_cyclosportive
+    description: "Intermédiaire Power, 6h/sem, plan long 20 semaines"
+    level: intermediate
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 20
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 225
+    ftp_source: declared
+    age: 37
+    hr_max: 185
+    hr_max_source: declared
+    hr_rest: 60
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 76
+
+  - id: intermediate_power_20w_10h_cyclosportive
+    description: "Intermédiaire Power, 10h/sem, plan long 20 semaines"
+    level: intermediate
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 20
+    hours_per_week: 10
+    preferred_days: [monday, tuesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 255
+    ftp_source: declared
+    age: 29
+    hr_max: 192
+    hr_max_source: declared
+    hr_rest: 54
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 69
+
+  - id: intermediate_power_12w_6h_sante
+    description: "Intermédiaire Power, 6h/sem, objectif santé"
+    level: intermediate
+    coaching_mode: power
+    objective_type: sante
+    target_weeks: null
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 220
+    ftp_source: estimated
+    age: 44
+    hr_max: 176
+    hr_max_source: estimated
+    hr_rest: 63
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 80
+
+  - id: intermediate_power_14w_8h_etape_du_tour
+    description: "Intermédiaire Power, 8h/sem, 14 semaines, étape du Tour"
+    level: intermediate
+    coaching_mode: power
+    objective_type: etape_du_tour
+    target_weeks: 14
+    hours_per_week: 8
+    preferred_days: [monday, tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 250
+    ftp_source: declared
+    age: 33
+    hr_max: 188
+    hr_max_source: declared
+    hr_rest: 57
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 71
+
+  - id: intermediate_hr_12w_6h_no_history
+    description: "Intermédiaire HR, 6h/sem, sans historique plan structuré"
+    level: intermediate
+    coaching_mode: hr
+    objective_type: sante
+    target_weeks: null
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 39
+    hr_max: 183
+    hr_max_source: estimated
+    hr_rest: 61
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 77
+
+  - id: intermediate_power_10w_6h_sante
+    description: "Intermédiaire Power, 6h/sem, objectif santé, plan court"
+    level: intermediate
+    coaching_mode: power
+    objective_type: sante
+    target_weeks: null
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 215
+    ftp_source: estimated
+    age: 41
+    hr_max: 179
+    hr_max_source: estimated
+    hr_rest: 62
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 79
+
+  - id: intermediate_power_12w_6h_older
+    description: "Intermédiaire Power, 6h/sem, 12 semaines, athlète senior (52 ans)"
+    level: intermediate
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 205
+    ftp_source: declared
+    age: 52
+    hr_max: 168
+    hr_max_source: estimated
+    hr_rest: 65
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 82
+
+  - id: intermediate_hr_12w_6h_female
+    description: "Intermédiaire HR, femme, 6h/sem, 12 semaines, cyclosportive"
+    level: intermediate
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 31
+    hr_max: 192
+    hr_max_source: declared
+    hr_rest: 56
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: F
+    weight_kg: 58
+
+  - id: intermediate_power_6w_6h_cyclosportive
+    description: "Intermédiaire Power, 6h/sem, plan très court 6 semaines"
+    level: intermediate
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 6
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 230
+    ftp_source: declared
+    age: 34
+    hr_max: 188
+    hr_max_source: declared
+    hr_rest: 58
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 72
+
+  - id: intermediate_power_16w_8h_other_no_target
+    description: "Intermédiaire Power, 8h/sem, objectif other sans date cible"
+    level: intermediate
+    coaching_mode: power
+    objective_type: other
+    target_weeks: null
+    hours_per_week: 8
+    preferred_days: [monday, tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 240
+    ftp_source: declared
+    age: 36
+    hr_max: 186
+    hr_max_source: declared
+    hr_rest: 58
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 73
+
+  # ──────────────────────────────────────────────────────────────────
+  # AVANCÉS (16 profils)
+  # ──────────────────────────────────────────────────────────────────
+
+  - id: advanced_hr_12w_8h_cyclosportive
+    description: "Avancé HR, 8h/sem, 12 semaines, cyclosportive"
+    level: advanced
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 8
+    preferred_days: [monday, tuesday, thursday, saturday, sunday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 30
+    hr_max: 192
+    hr_max_source: declared
+    hr_rest: 54
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 70
+
+  - id: advanced_hr_16w_10h_cyclosportive
+    description: "Avancé HR, 10h/sem, 16 semaines, cyclosportive"
+    level: advanced
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 16
+    hours_per_week: 10
+    preferred_days: [monday, tuesday, thursday, friday, saturday, sunday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 28
+    hr_max: 194
+    hr_max_source: declared
+    hr_rest: 52
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 68
+
+  - id: advanced_power_12w_8h_cyclosportive
+    description: "Avancé Power, 8h/sem, 12 semaines, cyclosportive"
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 8
+    preferred_days: [monday, tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 295
+    ftp_source: declared
+    age: 31
+    hr_max: 191
+    hr_max_source: declared
+    hr_rest: 52
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 69
+
+  - id: advanced_power_12w_10h_cyclosportive
+    description: "Avancé Power, 10h/sem, 12 semaines, cyclosportive"
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 10
+    preferred_days: [monday, tuesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 310
+    ftp_source: declared
+    age: 29
+    hr_max: 193
+    hr_max_source: declared
+    hr_rest: 50
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 67
+
+  - id: advanced_power_16w_10h_cyclosportive
+    description: "Avancé Power, 10h/sem, 16 semaines, cyclosportive"
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 16
+    hours_per_week: 10
+    preferred_days: [monday, tuesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 305
+    ftp_source: declared
+    age: 32
+    hr_max: 190
+    hr_max_source: declared
+    hr_rest: 51
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 70
+
+  - id: advanced_power_16w_12h_cyclosportive
+    description: "Avancé Power, 12h/sem, 16 semaines, cyclosportive"
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 16
+    hours_per_week: 12
+    preferred_days: [monday, tuesday, wednesday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 315
+    ftp_source: declared
+    age: 27
+    hr_max: 194
+    hr_max_source: declared
+    hr_rest: 50
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 65
+
+  - id: advanced_power_20w_10h_cyclosportive
+    description: "Avancé Power, 10h/sem, plan long 20 semaines, cyclosportive"
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 20
+    hours_per_week: 10
+    preferred_days: [monday, tuesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 300
+    ftp_source: declared
+    age: 30
+    hr_max: 192
+    hr_max_source: declared
+    hr_rest: 52
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 70
+
+  - id: advanced_power_20w_15h_cyclosportive
+    description: "Avancé Power, 15h/sem, plan long 20 semaines, cyclosportive"
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 20
+    hours_per_week: 15
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 325
+    ftp_source: declared
+    age: 26
+    hr_max: 196
+    hr_max_source: declared
+    hr_rest: 48
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 64
+
+  - id: advanced_power_12w_8h_etape_du_tour
+    description: "Avancé Power, 8h/sem, 12 semaines, étape du Tour"
+    level: advanced
+    coaching_mode: power
+    objective_type: etape_du_tour
+    target_weeks: 12
+    hours_per_week: 8
+    preferred_days: [monday, tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 295
+    ftp_source: declared
+    age: 31
+    hr_max: 191
+    hr_max_source: declared
+    hr_rest: 52
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 69
+
+  - id: advanced_power_16w_12h_etape_du_tour
+    description: "Avancé Power, 12h/sem, 16 semaines, étape du Tour"
+    level: advanced
+    coaching_mode: power
+    objective_type: etape_du_tour
+    target_weeks: 16
+    hours_per_week: 12
+    preferred_days: [monday, tuesday, wednesday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 310
+    ftp_source: declared
+    age: 29
+    hr_max: 193
+    hr_max_source: declared
+    hr_rest: 51
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 66
+
+  - id: advanced_power_20w_15h_etape_du_tour
+    description: "Avancé Power, 15h/sem, 20 semaines, étape du Tour"
+    level: advanced
+    coaching_mode: power
+    objective_type: etape_du_tour
+    target_weeks: 20
+    hours_per_week: 15
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 320
+    ftp_source: declared
+    age: 27
+    hr_max: 195
+    hr_max_source: declared
+    hr_rest: 49
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 64
+
+  - id: advanced_hr_12w_8h_sante
+    description: "Avancé HR, 8h/sem, objectif santé"
+    level: advanced
+    coaching_mode: hr
+    objective_type: sante
+    target_weeks: null
+    hours_per_week: 8
+    preferred_days: [monday, tuesday, thursday, saturday, sunday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 35
+    hr_max: 188
+    hr_max_source: declared
+    hr_rest: 53
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 71
+
+  - id: advanced_power_16w_10h_sante
+    description: "Avancé Power, 10h/sem, objectif santé, 16 semaines"
+    level: advanced
+    coaching_mode: power
+    objective_type: sante
+    target_weeks: null
+    hours_per_week: 10
+    preferred_days: [monday, tuesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 290
+    ftp_source: declared
+    age: 40
+    hr_max: 182
+    hr_max_source: declared
+    hr_rest: 54
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 73
+
+  - id: advanced_power_16w_12h_young
+    description: "Avancé Power, 12h/sem, 16 semaines, jeune athlète (23 ans)"
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 16
+    hours_per_week: 12
+    preferred_days: [monday, tuesday, wednesday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 330
+    ftp_source: declared
+    age: 23
+    hr_max: 198
+    hr_max_source: declared
+    hr_rest: 46
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 63
+
+  - id: advanced_power_16w_12h_female
+    description: "Avancé Power, femme, 12h/sem, 16 semaines, cyclosportive"
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 16
+    hours_per_week: 12
+    preferred_days: [monday, tuesday, wednesday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 265
+    ftp_source: declared
+    age: 27
+    hr_max: 196
+    hr_max_source: declared
+    hr_rest: 50
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: F
+    weight_kg: 58
+
+  - id: advanced_power_24w_12h_cyclosportive
+    description: "Avancé Power, 12h/sem, plan très long 24 semaines"
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 24
+    hours_per_week: 12
+    preferred_days: [monday, tuesday, wednesday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 305
+    ftp_source: declared
+    age: 30
+    hr_max: 192
+    hr_max_source: declared
+    hr_rest: 51
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 68
+
+  # ──────────────────────────────────────────────────────────────────
+  # EXPERTS (13 profils)
+  # ──────────────────────────────────────────────────────────────────
+
+  - id: expert_power_12w_10h_cyclosportive
+    description: "Expert Power, 10h/sem, plan court 12 semaines, cyclosportive"
+    level: expert
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 10
+    preferred_days: [monday, tuesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 360
+    ftp_source: declared
+    age: 28
+    hr_max: 194
+    hr_max_source: declared
+    hr_rest: 48
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 65
+
+  - id: expert_power_16w_12h_cyclosportive
+    description: "Expert Power, 12h/sem, 16 semaines, cyclosportive"
+    level: expert
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 16
+    hours_per_week: 12
+    preferred_days: [monday, tuesday, wednesday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 365
+    ftp_source: declared
+    age: 26
+    hr_max: 196
+    hr_max_source: declared
+    hr_rest: 46
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 63
+
+  - id: expert_power_16w_15h_cyclosportive
+    description: "Expert Power, 15h/sem, 16 semaines, cyclosportive"
+    level: expert
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 16
+    hours_per_week: 15
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 375
+    ftp_source: declared
+    age: 25
+    hr_max: 197
+    hr_max_source: declared
+    hr_rest: 44
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 62
+
+  - id: expert_power_20w_15h_cyclosportive
+    description: "Expert Power, 15h/sem, plan long 20 semaines, cyclosportive"
+    level: expert
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 20
+    hours_per_week: 15
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 370
+    ftp_source: declared
+    age: 27
+    hr_max: 195
+    hr_max_source: declared
+    hr_rest: 45
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 63
+
+  - id: expert_power_24w_20h_cyclosportive
+    description: "Expert Power, 20h/sem, plan très long 24 semaines, cyclosportive"
+    level: expert
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 24
+    hours_per_week: 20
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 385
+    ftp_source: declared
+    age: 24
+    hr_max: 198
+    hr_max_source: declared
+    hr_rest: 43
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 61
+
+  - id: expert_hr_16w_12h_cyclosportive
+    description: "Expert HR (sans capteur), 12h/sem, 16 semaines"
+    level: expert
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 16
+    hours_per_week: 12
+    preferred_days: [monday, tuesday, wednesday, friday, saturday, sunday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 29
+    hr_max: 193
+    hr_max_source: declared
+    hr_rest: 47
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 65
+
+  - id: expert_hr_20w_15h_cyclosportive
+    description: "Expert HR (sans capteur), 15h/sem, 20 semaines"
+    level: expert
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 20
+    hours_per_week: 15
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 27
+    hr_max: 196
+    hr_max_source: declared
+    hr_rest: 45
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 63
+
+  - id: expert_power_20w_15h_etape_du_tour
+    description: "Expert Power, 15h/sem, 20 semaines, étape du Tour"
+    level: expert
+    coaching_mode: power
+    objective_type: etape_du_tour
+    target_weeks: 20
+    hours_per_week: 15
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 372
+    ftp_source: declared
+    age: 26
+    hr_max: 196
+    hr_max_source: declared
+    hr_rest: 44
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 62
+
+  - id: expert_power_24w_20h_etape_du_tour
+    description: "Expert Power, 20h/sem, 24 semaines, étape du Tour"
+    level: expert
+    coaching_mode: power
+    objective_type: etape_du_tour
+    target_weeks: 24
+    hours_per_week: 20
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 390
+    ftp_source: declared
+    age: 25
+    hr_max: 197
+    hr_max_source: declared
+    hr_rest: 43
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 61
+
+  - id: expert_power_16w_12h_sante
+    description: "Expert Power, 12h/sem, objectif santé"
+    level: expert
+    coaching_mode: power
+    objective_type: sante
+    target_weeks: null
+    hours_per_week: 12
+    preferred_days: [monday, tuesday, wednesday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 350
+    ftp_source: declared
+    age: 35
+    hr_max: 188
+    hr_max_source: declared
+    hr_rest: 49
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 66
+
+  - id: expert_power_20w_15h_high_ftp
+    description: "Expert Power, 15h/sem, 20 semaines, FTP très élevé (400W)"
+    level: expert
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 20
+    hours_per_week: 15
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 400
+    ftp_source: declared
+    age: 24
+    hr_max: 199
+    hr_max_source: declared
+    hr_rest: 42
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 60
+
+  - id: expert_power_6w_15h_cyclosportive
+    description: "Expert Power, 15h/sem, plan très court 6 semaines"
+    level: expert
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 6
+    hours_per_week: 15
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 368
+    ftp_source: declared
+    age: 28
+    hr_max: 195
+    hr_max_source: declared
+    hr_rest: 46
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 63
+
+  - id: expert_power_20w_20h_all_days
+    description: "Expert Power, 20h/sem, 20 semaines, disponibilité 7 jours"
+    level: expert
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 20
+    hours_per_week: 20
+    preferred_days: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+    power_meter: true
+    ftp: 382
+    ftp_source: declared
+    age: 26
+    hr_max: 197
+    hr_max_source: declared
+    hr_rest: 44
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 62
+
+  # ──────────────────────────────────────────────────────────────────
+  # VARIANTES SPÉCIALES (10 profils)
+  # ──────────────────────────────────────────────────────────────────
+
+  - id: intermediate_power_12w_6h_estimated_ftp
+    description: "Intermédiaire Power, FTP estimé (non déclaré), 12 semaines"
+    level: intermediate
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 210
+    ftp_source: estimated
+    age: 35
+    hr_max: 186
+    hr_max_source: declared
+    hr_rest: 60
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 74
+
+  - id: beginner_hr_12w_3h_estimated_hr
+    description: "Débutant HR, FCmax estimée (220-age), 3h/sem"
+    level: beginner
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 3
+    preferred_days: [wednesday, saturday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 42
+    hr_max: 178
+    hr_max_source: estimated
+    hr_rest: 68
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 80
+
+  - id: advanced_power_16w_12h_minimal_days
+    description: "Avancé Power, seulement 2 jours disponibles (week-end), 12h/sem"
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 16
+    hours_per_week: 12
+    preferred_days: [saturday, sunday]
+    power_meter: true
+    ftp: 305
+    ftp_source: declared
+    age: 33
+    hr_max: 190
+    hr_max_source: declared
+    hr_rest: 52
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 70
+
+  - id: intermediate_power_20w_6h_etape_du_tour
+    description: "Intermédiaire Power, 6h/sem, 20 semaines, étape du Tour (objectif ambitieux)"
+    level: intermediate
+    coaching_mode: power
+    objective_type: etape_du_tour
+    target_weeks: 20
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 235
+    ftp_source: declared
+    age: 36
+    hr_max: 185
+    hr_max_source: declared
+    hr_rest: 60
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 75
+
+  - id: beginner_hr_6w_3h_sante
+    description: "Débutant HR, plan très court 6 semaines, objectif santé"
+    level: beginner
+    coaching_mode: hr
+    objective_type: sante
+    target_weeks: 6
+    hours_per_week: 3
+    preferred_days: [wednesday, saturday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 50
+    hr_max: 170
+    hr_max_source: estimated
+    hr_rest: 72
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 90
+
+  - id: intermediate_power_12w_6h_low_ftp
+    description: "Intermédiaire classifié mais FTP faible (200W) — possible surestimation niveau"
+    level: intermediate
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 200
+    ftp_source: declared
+    age: 46
+    hr_max: 174
+    hr_max_source: declared
+    hr_rest: 64
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: M
+    weight_kg: 83
+
+  - id: advanced_power_12w_15h_weekend_heavy
+    description: "Avancé Power, 15h/sem avec charge concentrée sur week-end (sam+dim)"
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 15
+    preferred_days: [tuesday, wednesday, saturday, sunday]
+    power_meter: true
+    ftp: 310
+    ftp_source: declared
+    age: 33
+    hr_max: 190
+    hr_max_source: declared
+    hr_rest: 52
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 70
+
+  - id: beginner_hr_12w_3h_cyclosportive_female
+    description: "Débutante HR, 3h/sem, 12 semaines, cyclosportive"
+    level: beginner
+    coaching_mode: hr
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 3
+    preferred_days: [tuesday, saturday]
+    power_meter: false
+    ftp: null
+    ftp_source: estimated
+    age: 36
+    hr_max: 187
+    hr_max_source: estimated
+    hr_rest: 63
+    hr_rest_source: declared
+    structured_plan_history: false
+    health_constraints: false
+    sex: F
+    weight_kg: 60
+
+  - id: intermediate_power_12w_6h_high_ftp
+    description: "Intermédiaire avec FTP élevé (260W) — proche du niveau avancé"
+    level: intermediate
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 12
+    hours_per_week: 6
+    preferred_days: [tuesday, thursday, saturday, sunday]
+    power_meter: true
+    ftp: 260
+    ftp_source: declared
+    age: 28
+    hr_max: 193
+    hr_max_source: declared
+    hr_rest: 54
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 68
+
+  - id: advanced_power_16w_10h_weekdays_only
+    description: "Avancé Power, 10h/sem, uniquement jours de semaine (lun-ven)"
+    level: advanced
+    coaching_mode: power
+    objective_type: cyclosportive
+    target_weeks: 16
+    hours_per_week: 10
+    preferred_days: [monday, tuesday, wednesday, thursday, friday]
+    power_meter: true
+    ftp: 300
+    ftp_source: declared
+    age: 30
+    hr_max: 192
+    hr_max_source: declared
+    hr_rest: 52
+    hr_rest_source: declared
+    structured_plan_history: true
+    health_constraints: false
+    sex: M
+    weight_kg: 70
