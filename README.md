@@ -1,171 +1,232 @@
 # Banister
 
-Bot Telegram de coaching cyclisme basé sur l'IA. Génère des plans d'entraînement personnalisés, suit la progression, et s'adapte aux retours de l'athlète via une conversation naturelle.
+Self-hosted AI training coach in Telegram. Generates personalized training plans based on the Banister impulse-response model (ATL/CTL/TSB), tracks your progress, and adapts through natural conversation.
 
-## Fonctionnalités
+**Single-user. Runs locally. No cloud dependency.**
 
-- **Onboarding Strava** (4 questions) — import automatique de 49 jours d'activités, détection du niveau, volume, FTP et FC max
-- **Onboarding classique** (8 questions) — sans Strava
-- **Plan d'entraînement personnalisé** — périodisation déterministe (Base/Build/Peak/Taper), zones puissance et FC
-- **Logging RPE** — suivi TSS réel après chaque sortie
-- **Chat IA** — modification du plan par conversation, questions libres
-- **Forme du jour** — ATL/CTL/TSB calculés depuis l'historique
+---
 
-## Stack technique
+## What it does
 
-| Composant | Technologie |
-|-----------|-------------|
-| Bot Telegram | aiogram v3 (async FSM) |
-| API | FastAPI |
-| Base de données | Supabase (PostgreSQL) |
-| ORM | SQLAlchemy (asyncpg) |
-| LLM | OpenRouter / Anthropic Claude |
-| Intégration sport | Strava API v3 |
-| Runtime | Python 3.13 |
+- Generates a structured training plan (Base / Build / Peak / Taper) calibrated to your available hours, FTP or heart rate, and target event
+- Automatically logs activities from Strava via webhook — computes TSS, zones, quality metrics
+- Tracks your fitness curve (ATL/CTL/TSB) after every session
+- Sends morning reminders with the day's session
+- Weekly adherence recap with KPI score
+- Free-form coaching chat with your context (plan, recent load, fitness metrics)
 
-## Installation
+**Core principle: the LLM never computes load. All calculations (TSS, zones, ATL/CTL/TSB) are deterministic. The LLM handles narration, coaching tone, and conversational adaptation.**
 
-### Pré-requis
+---
 
-- Python 3.13
-- Compte Supabase (ou PostgreSQL)
-- Bot Telegram ([@BotFather](https://t.me/BotFather))
-- App Strava (optionnel) — [developers.strava.com](https://developers.strava.com)
-- Clé API OpenRouter ou Anthropic
+## Stack
 
-### 1. Cloner et installer
+| Layer | Technology |
+|---|---|
+| Bot | aiogram v3 (async FSM) |
+| API | FastAPI (webhooks + OAuth) |
+| Database | PostgreSQL 16 (local Docker) |
+| ORM | SQLAlchemy async + asyncpg |
+| LLM | Anthropic Claude / OpenRouter |
+| Sport integration | Strava API v3 |
+| Runtime | Python 3.13 + uv |
+
+---
+
+## Quick start
+
+### Prerequisites
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- A Telegram bot token — create one with [@BotFather](https://t.me/BotFather)
+- Your Telegram user ID — get it with [@userinfobot](https://t.me/userinfobot)
+- An Anthropic or OpenRouter API key
+
+Strava is optional. The bot works without it — you log sessions manually.
+
+### 1. Clone
 
 ```bash
 git clone <repo>
 cd banister
-pip install -e .
 ```
 
-### 2. Variables d'environnement
+### 2. Configure
 
-Créer un fichier `.env` à la racine :
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your values. Minimum required:
 
 ```env
-# Telegram
-TELEGRAM_BOT_TOKEN=7443057909:AAF...
-
-# Base de données (Supabase — SSL obligatoire)
-DATABASE_URL=postgresql+asyncpg://postgres:<password>@<host>.supabase.co:5432/postgres?ssl=require
-
-# LLM
-LLM_PROVIDER=openrouter          # ou "anthropic"
-LLM_MODEL=arcee-ai/trinity-large-preview:free
-OPENROUTER_API_KEY=sk-or-...
-# ANTHROPIC_API_KEY=sk-ant-...   # si LLM_PROVIDER=anthropic
-CHAT_MODEL=anthropic/claude-sonnet-4-6  # modèle pour le chat agentique (via OpenRouter)
-
-# Strava (optionnel)
-STRAVA_CLIENT_ID=12345
-STRAVA_CLIENT_SECRET=abc123...
-STRAVA_REDIRECT_URI=https://<votre-domaine>/auth/strava/callback
-STRAVA_STATE_SECRET=<secret-aleatoire-32-chars>
-STRAVA_WEBHOOK_VERIFY_TOKEN=<token-webhook>
-
-# App
-ENVIRONMENT=development
-LOG_LEVEL=INFO
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_OWNER_ID=your_telegram_user_id
+DATABASE_URL=postgresql+asyncpg://banister:password@db:5432/banister
+ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-### 3. Migrations base de données
-
-Exécuter dans l'ordre sur Supabase SQL Editor :
-
-```
-migrations/001_add_oauth_connections.sql
-migrations/002_add_session_logs.sql
-migrations/003_add_activity_details.sql
-migrations/004_add_chat_messages.sql
-migrations/005_add_environment.sql
-migrations/006_add_activities.sql
-```
-
-### 4. Lancer en développement
+### 3. Start
 
 ```bash
-python -m uvicorn app.main:app --port 8000 --reload
+make up
 ```
 
-Le bot démarre en mode **polling** automatiquement (pas besoin de webhook en dev).
+This builds the Docker image, starts PostgreSQL, runs `migrations/init.sql` automatically, and starts the bot in polling mode.
 
-Pour tester le flow OAuth Strava en local, exposer le port avec ngrok :
+### 4. Configure your profile
 
-```bash
-ngrok http 8000
-# puis mettre l'URL ngrok dans STRAVA_REDIRECT_URI et dans les settings de l'app Strava
+Open Telegram, find your bot, and run `/setup`. Answer 7 questions — your plan is generated immediately.
+
+---
+
+## Strava integration (optional)
+
+### Setup
+
+1. Create a Strava app at [strava.com/settings/api](https://www.strava.com/settings/api)
+2. Set the **Authorization Callback Domain** to your public domain
+3. Add to `.env`:
+
+```env
+STRAVA_CLIENT_ID=your_client_id
+STRAVA_CLIENT_SECRET=your_client_secret
+STRAVA_REDIRECT_URI=https://your.domain.com/auth/strava/callback
+STRAVA_STATE_SECRET=a_random_32_char_secret
+STRAVA_WEBHOOK_VERIFY_TOKEN=another_random_secret
 ```
 
-## Structure du projet
-
-```
-app/
-├── main.py              # Point d'entrée FastAPI + callback OAuth Strava
-├── config.py            # Configuration (pydantic-settings)
-├── bot/
-│   ├── routers/         # Handlers Telegram (onboarding, plan, chat, strava...)
-│   ├── keyboards/       # Claviers inline
-│   ├── middlewares/     # Session DB + chargement utilisateur
-│   ├── states.py        # États FSM
-│   └── setup.py         # Création bot + dispatcher
-├── db/
-│   ├── models/          # Modèles SQLAlchemy
-│   └── repositories/    # Accès base de données
-├── engine/
-│   ├── plan_builder.py  # Génération du plan
-│   ├── plan_modifier.py # Modification via LLM
-│   ├── periodization.py # Blocs périodisation
-│   ├── zones.py         # Zones puissance/FC
-│   ├── tss.py           # Calcul TSS
-│   └── atl_ctl.py       # Fitness (ATL/CTL/TSB)
-├── llm/
-│   ├── chat.py          # Orchestration chat agentique
-│   ├── chat_client.py   # Boucle outil LLM
-│   ├── prompts.py       # System prompt
-│   └── providers/       # Anthropic, OpenRouter
-└── strava/
-    ├── oauth.py         # Flux OAuth + HMAC state
-    ├── client.py        # Appels API Strava
-    ├── history.py       # Import historique + calcul TSS
-    └── webhook.py       # Réception événements
-migrations/              # SQL à exécuter manuellement sur Supabase
-tests/                   # Tests engine (zones, TSS, périodisation, plan)
-```
-
-## Commandes bot disponibles
-
-| Commande | Description |
-|----------|-------------|
-| `/start` | Démarrer ou reprendre l'onboarding |
-| `/plan` | Voir le programme de la semaine courante |
-| `/week N` | Voir la semaine N du plan |
-| `/forme` | Voir ATL/CTL/TSB (forme du jour) |
-| `/connect_strava` | Connecter son compte Strava |
-| `/disconnect_strava` | Déconnecter Strava |
-| `/cancel` | Annuler l'action en cours |
-| `/help` | Aide |
-
-## Déploiement production
-
-En production, définir `ENVIRONMENT=production` et `TELEGRAM_WEBHOOK_URL=https://<domaine>/webhook/telegram`. Le bot passe automatiquement en mode webhook.
+4. In production, expose port 8000 via a reverse proxy (see `nginx/`) and set:
 
 ```env
 ENVIRONMENT=production
-TELEGRAM_WEBHOOK_URL=https://banister.example.com/webhook/telegram
-TELEGRAM_WEBHOOK_SECRET=<secret>
+TELEGRAM_WEBHOOK_URL=https://your.domain.com/webhook/telegram
 ```
+
+### Local development with Strava
+
+Use [ngrok](https://ngrok.com) to expose your local port:
+
+```bash
+ngrok http 8000
+# Set the ngrok URL as STRAVA_REDIRECT_URI in .env and in your Strava app settings
+```
+
+---
+
+## Bot commands
+
+| Command | Description |
+|---|---|
+| `/setup` | Configure your profile and generate a plan (re-run to regenerate) |
+| `/plan` | View the current week's sessions |
+| `/week N` | View week N of your plan |
+| `/forme` | Current fitness metrics (ATL / CTL / TSB) |
+| `/recap` | Weekly adherence recap and KPI score |
+| `/strava` | Connect or disconnect Strava |
+| `/reminders` | Manage morning session reminders |
+| `/cancel` | Cancel current action |
+| `/help` | Command list |
+
+---
+
+## Project structure
+
+```
+app/
+├── main.py              # FastAPI entry point + Strava OAuth callback
+├── config.py            # Settings (pydantic-settings, loaded from .env)
+├── bot/
+│   ├── routers/
+│   │   ├── setup.py     # /setup FSM — profile + plan generation
+│   │   ├── plan.py      # /plan, /week N
+│   │   ├── forme.py     # /forme — ATL/CTL/TSB display
+│   │   ├── recap.py     # /recap — weekly adherence
+│   │   ├── strava.py    # Strava connect/disconnect
+│   │   ├── session_log.py  # Manual session logging + RPE
+│   │   ├── reminders.py # Reminder settings
+│   │   ├── chat.py      # Free-form coaching chat (catch-all)
+│   │   └── common.py    # /start, /help, /cancel
+│   ├── middlewares/
+│   │   ├── db_session.py   # Injects AsyncSession into every handler
+│   │   └── single_user.py  # Owner guard + user injection (no upsert)
+│   ├── keyboards/       # Inline keyboard builders
+│   ├── states.py        # FSM states: SetupStates, PlanStates, SessionLogStates
+│   └── setup.py         # Dispatcher + middleware + router registration
+├── db/
+│   ├── client.py        # AsyncEngine (local PostgreSQL)
+│   ├── models/          # SQLAlchemy ORM models
+│   └── repositories/    # Data access layer — no SQL in handlers
+├── engine/              # Deterministic engine — zero LLM
+│   ├── plan_builder.py  # Main plan generator
+│   ├── periodization.py # Phase sequencing (Base/Build/Peak/Taper)
+│   ├── zones.py         # Power and HR zone computation
+│   ├── tss.py           # TSS / HRSS calculation
+│   ├── atl_ctl.py       # ATL/CTL/TSB (Banister impulse-response model)
+│   ├── adherence_kpi.py # Session KPI scoring (0–2.0 pts)
+│   └── schemas.py       # Pydantic: AthleteProfileSchema, TrainingPlanSchema
+├── llm/
+│   ├── providers/       # Anthropic + OpenRouter (common interface)
+│   ├── chat.py          # Conversation orchestration
+│   ├── activity_analysis.py  # Post-session narrative
+│   ├── narrator.py      # Plan narration
+│   └── prompts.py       # System prompts
+└── strava/
+    ├── oauth.py         # OAuth flow + HMAC state signing
+    ├── webhook.py       # Activity event handler (TSS, zones, KPI, notification)
+    ├── analyzer.py      # RawActivity → AnalyzedSession
+    ├── matching.py      # Activity ↔ planned session semantic scoring
+    └── history.py       # Historical activity import
+migrations/
+└── init.sql             # Full schema — auto-run by Docker on first start
+tests/                   # Engine unit tests (zones, TSS, periodization, plan, matching)
+eval/                    # Offline plan quality evaluation framework
+```
+
+---
+
+## Make commands
+
+```bash
+make up          # Build and start (Docker)
+make down        # Stop containers
+make logs        # Follow app logs
+make backup      # Dump database to backup_YYYYMMDD_HHMMSS.sql
+make reset-db    # Wipe and reinitialize the database
+make shell       # Open a shell in the app container
+```
+
+---
+
+## Development (without Docker)
+
+```bash
+# Install dependencies
+uv sync
+
+# Start a local PostgreSQL and create the database
+psql -U postgres -c "CREATE USER banister WITH PASSWORD 'password';"
+psql -U postgres -c "CREATE DATABASE banister OWNER banister;"
+psql -U banister -d banister -f migrations/init.sql
+
+# Update .env
+DATABASE_URL=postgresql+asyncpg://banister:password@localhost:5432/banister
+
+# Run
+python -m uvicorn app.main:app --port 8000 --reload
+```
+
+---
 
 ## Tests
 
 ```bash
-pytest tests/
+uv run pytest tests/ -v
+uv run ruff check app/ tests/
 ```
 
-Les tests couvrent : zones puissance/FC, calcul TSS, périodisation, génération de plan.
+---
 
-## Principe fondateur
+## Security note
 
-> Le LLM ne calcule jamais la charge d'entraînement. Tout calcul (TSS, zones, ATL/CTL) est déterministe. Le LLM sert uniquement à la narration, l'adaptation conversationnelle et la proposition de modifications.
+`TELEGRAM_OWNER_ID` is enforced at the middleware level — all messages from other Telegram users are silently dropped. Set it to your own Telegram ID before starting the bot.
