@@ -34,12 +34,23 @@ class Settings(BaseSettings):
     # Redis (optionnel)
     redis_url: str | None = None
 
-    # Strava OAuth
+    # Strava OAuth (secondary provider — see docs/STRAVA_COMPLIANCE.md)
     strava_client_id: str = ""
     strava_client_secret: str = ""
-    strava_redirect_uri: str = ""   # ex: https://your.domain.com/auth/strava/callback
-    strava_state_secret: str = ""   # secret HMAC pour signer le paramètre state
-    strava_webhook_verify_token: str = ""  # token de vérification webhook Strava
+    strava_redirect_uri: str = ""
+    strava_state_secret: str = ""
+    strava_webhook_verify_token: str = ""
+
+    # Sport provider
+    sport_provider: str = "intervals_icu"  # intervals_icu | strava | manual
+
+    # intervals.icu (primary provider)
+    intervals_api_key: str = ""
+    intervals_athlete_id: str = ""
+    intervals_poll_interval_minutes: int = 15
+
+    # Persona
+    persona: str = "coach-default"  # filename in personas/ without .yaml
 
     @property
     def is_dev(self) -> bool:
