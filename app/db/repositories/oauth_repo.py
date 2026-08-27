@@ -1,11 +1,11 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import select, delete
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.oauth_connection import OAuthConnection
+from app.db.upsert import dialect_insert
 
 
 async def get_connection(
@@ -33,10 +33,10 @@ async def upsert_connection(
     Crée ou met à jour la connexion OAuth d'un utilisateur pour un provider donné.
     `tokens` doit contenir : access_token, refresh_token, expires_at (Unix timestamp int).
     """
-    token_expires_at = datetime.fromtimestamp(tokens["expires_at"], tz=timezone.utc)
+    token_expires_at = datetime.fromtimestamp(tokens["expires_at"], tz=UTC)
 
     stmt = (
-        insert(OAuthConnection)
+        dialect_insert(session)(OAuthConnection)
         .values(
             id=uuid.uuid4(),
             user_id=user_id,
@@ -47,13 +47,16 @@ async def upsert_connection(
             provider_user_id=provider_user_id,
         )
         .on_conflict_do_update(
-            constraint="uq_oauth_user_provider",
+            # index_elements rather than constraint="..." (spec 003 research R4): the
+            # named-constraint form is PostgreSQL-only, but the columns it targets are
+            # portable to both dialects.
+            index_elements=["user_id", "provider"],
             set_={
                 "access_token": tokens["access_token"],
                 "refresh_token": tokens["refresh_token"],
                 "token_expires_at": token_expires_at,
                 "provider_user_id": provider_user_id,
-                "updated_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(UTC),
             },
         )
         .returning(OAuthConnection)
@@ -85,6 +88,6 @@ async def update_tokens(
     """Met à jour les tokens après un refresh."""
     conn.access_token = tokens["access_token"]
     conn.refresh_token = tokens["refresh_token"]
-    conn.token_expires_at = datetime.fromtimestamp(tokens["expires_at"], tz=timezone.utc)
-    conn.updated_at = datetime.now(timezone.utc)
+    conn.token_expires_at = datetime.fromtimestamp(tokens["expires_at"], tz=UTC)
+    conn.updated_at = datetime.now(UTC)
     await session.flush()

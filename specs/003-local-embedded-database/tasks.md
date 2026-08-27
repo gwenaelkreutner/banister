@@ -39,9 +39,9 @@ end. The independently verifiable checkpoints are the phase boundaries, not the 
 
 **Purpose**: Dependencies and the measurement baseline everything else is judged against
 
-- [ ] T001 Add `aiosqlite>=0.20.0` to `dependencies` in `pyproject.toml` and run `uv lock` to regenerate `uv.lock`
-- [ ] T002 [P] Create `tests/test_db/__init__.py` and `tests/test_db/conftest.py` with fixtures yielding both a PostgreSQL-backed and a SQLite-backed session, so every portability test can run against both
-- [ ] T003 [P] Record the pre-change baseline in `specs/003-local-embedded-database/baseline.md`: exact passing test count (164), exact `ruff check app/ tests/` violation count (291), and the command used for each
+- [X] T001 Add `aiosqlite>=0.20.0` to `dependencies` in `pyproject.toml` and run `uv lock` to regenerate `uv.lock`
+- [X] T002 [P] Create `tests/test_db/__init__.py` and `tests/test_db/conftest.py` with fixtures yielding both a PostgreSQL-backed and a SQLite-backed session, so every portability test can run against both
+- [X] T003 [P] Record the pre-change baseline in `specs/003-local-embedded-database/baseline.md`: exact passing test count (164), exact `ruff check app/ tests/` violation count (291), and the command used for each
 
 **Why T003 matters**: Principle V requires lint to pass, which is currently impossible. The adopted gate is
 "no new violations", and that is only enforceable against a recorded number.
@@ -58,20 +58,20 @@ validates them against a known-good baseline.
 **⚠️ CRITICAL**: This phase blocks everything after it. A failure here is unambiguously a type bug; the same
 failure discovered after the engine change would be ambiguous between a type bug and an engine difference.
 
-- [ ] T004 [US2] Create `UtcDateTime` type decorator in `app/db/types.py` that normalises any aware datetime to UTC on write and re-attaches UTC on read, and rejects naive datetimes on write rather than guessing their zone
-- [ ] T005 [US2] Write `tests/test_db/test_types.py` asserting a datetime written with a non-UTC offset reads back as the same instant with `tzinfo` set — this test MUST fail against plain `DateTime(timezone=True)` on SQLite (see research R2)
-- [ ] T006 [US2] Replace the timestamp columns in `app/db/models/base.py` (`TimestampMixin`) with `UtcDateTime`, and replace `server_default=func.now()` with a portable default producing the same instant on both backends
-- [ ] T007 [P] [US2] Convert `app/db/models/user.py` to `sqlalchemy.Uuid(as_uuid=True)`, and make the boolean `server_default="true"` portable
-- [ ] T008 [P] [US2] Convert `app/db/models/profile.py` to `Uuid` and `sqlalchemy.JSON`, preserving the `[]` vs `{}` defaults currently expressed as PostgreSQL-cast literals
-- [ ] T009 [P] [US2] Convert `app/db/models/training_plan.py` to `Uuid` and `JSON` for `plan_technical` and `plan_narrative`
-- [ ] T010 [P] [US2] Convert `app/db/models/session_log.py` to `Uuid` (×3) and `JSON` for `time_in_zones_s`, keeping `logged_date` a date rather than a timestamp
-- [ ] T011 [P] [US2] Convert `app/db/models/chat_message.py` to `Uuid`
-- [ ] T012 [P] [US2] Convert `app/db/models/activity.py` to `Uuid`, preserving the three-state nullable boolean `device_watts`
-- [ ] T013 [P] [US2] Convert `app/db/models/weekly_adherence.py` to `Uuid`
-- [ ] T014 [P] [US2] Convert `app/db/models/oauth_connection.py` to `Uuid` and `UtcDateTime` for `token_expires_at` — this table must survive the port intact and is dropped later by spec 002, not here
-- [ ] T015 [US2] Write `tests/test_db/test_roundtrip.py` asserting a document containing nesting, `None`, `{}` and `[]` returns identical, and that `None`, `0`, `False` and `{}` remain four distinct stored states
-- [ ] T016 [US2] Write a test in `tests/test_db/test_roundtrip.py` asserting a document mutated in place is persisted, covering the `flag_modified` hazard the project already documents
-- [ ] T017 Run `uv run pytest tests/ -q` against PostgreSQL and confirm the count still matches the T003 baseline
+- [X] T004 [US2] Create `UtcDateTime` type decorator in `app/db/types.py` that normalises any aware datetime to UTC on write and re-attaches UTC on read, and rejects naive datetimes on write rather than guessing their zone
+- [X] T005 [US2] Write `tests/test_db/test_types.py` asserting a datetime written with a non-UTC offset reads back as the same instant with `tzinfo` set — this test MUST fail against plain `DateTime(timezone=True)` on SQLite (see research R2)
+- [X] T006 [US2] Replace the timestamp columns in `app/db/models/base.py` (`TimestampMixin`) with `UtcDateTime`, and replace `server_default=func.now()` with a portable default producing the same instant on both backends
+- [X] T007 [P] [US2] Convert `app/db/models/user.py` to `sqlalchemy.Uuid(as_uuid=True)`, and make the boolean `server_default="true"` portable
+- [X] T008 [P] [US2] Convert `app/db/models/profile.py` to `Uuid` and `sqlalchemy.JSON`, preserving the `[]` vs `{}` defaults currently expressed as PostgreSQL-cast literals
+- [X] T009 [P] [US2] Convert `app/db/models/training_plan.py` to `Uuid` and `JSON` for `plan_technical` and `plan_narrative`
+- [X] T010 [P] [US2] Convert `app/db/models/session_log.py` to `Uuid` (×3) and `JSON` for `time_in_zones_s`, keeping `logged_date` a date rather than a timestamp
+- [X] T011 [P] [US2] Convert `app/db/models/chat_message.py` to `Uuid`
+- [X] T012 [P] [US2] Convert `app/db/models/activity.py` to `Uuid`, preserving the three-state nullable boolean `device_watts`
+- [X] T013 [P] [US2] Convert `app/db/models/weekly_adherence.py` to `Uuid`
+- [X] T014 [P] [US2] Convert `app/db/models/oauth_connection.py` to `Uuid` and `UtcDateTime` for `token_expires_at` — this table must survive the port intact and is dropped later by spec 002, not here
+- [X] T015 [US2] Write `tests/test_db/test_roundtrip.py` asserting a document containing nesting, `None`, `{}` and `[]` returns identical, and that `None`, `0`, `False` and `{}` remain four distinct stored states
+- [X] T016 [US2] Write a test in `tests/test_db/test_roundtrip.py` asserting a document mutated in place is persisted, covering the `flag_modified` hazard the project already documents
+- [X] T017 Run `uv run pytest tests/ -q` against PostgreSQL and confirm the count still matches the T003 baseline
 
 **Checkpoint**: All models use dialect-neutral types. Suite green on PostgreSQL. Nothing about the engine
 has changed yet, and this phase is revertible on its own.
@@ -82,14 +82,30 @@ has changed yet, and this phase is revertible on its own.
 
 **Purpose**: Remove the last dialect-specific construct, still on PostgreSQL.
 
-- [ ] T018 [P] [US2] Replace the PostgreSQL-specific `insert` import in `app/db/repositories/activity_repo.py` with a dialect-selected construct, preserving `on_conflict_do_nothing` behaviour in `bulk_insert`
-- [ ] T019 [P] [US2] Replace the PostgreSQL-specific `insert` in `app/db/repositories/oauth_repo.py`, preserving `on_conflict_do_update` behaviour in `upsert_connection`
-- [ ] T020 [P] [US2] Replace the PostgreSQL-specific `insert` in `app/db/repositories/weekly_adherence_repo.py`, preserving `on_conflict_do_update` on key `(user_id, week_start_date)`
-- [ ] T021 [US2] Write `tests/test_db/test_upsert.py` asserting that calling each upsert twice with the same key yields one row carrying the second call's values, never two rows
-- [ ] T022 Run the full suite against PostgreSQL and confirm it matches the T003 baseline
+- [X] T018 [P] [US2] Replace the PostgreSQL-specific `insert` import in `app/db/repositories/activity_repo.py` with a dialect-selected construct, preserving `on_conflict_do_nothing` behaviour in `bulk_insert`
+- [X] T019 [P] [US2] Replace the PostgreSQL-specific `insert` in `app/db/repositories/oauth_repo.py`, preserving `on_conflict_do_update` behaviour in `upsert_connection`
+- [X] T020 [P] [US2] Replace the PostgreSQL-specific `insert` in `app/db/repositories/weekly_adherence_repo.py`, preserving `on_conflict_do_update` on key `(user_id, week_start_date)`
+- [X] T021 [US2] Write `tests/test_db/test_upsert.py` asserting that calling each upsert twice with the same key yields one row carrying the second call's values, never two rows
+- [X] T022 Run the full suite against PostgreSQL and confirm it matches the T003 baseline
 
 **Checkpoint**: No dialect-specific SQL remains in the repositories. Repository signatures are unchanged, as
 required by [contracts/persistence.md](./contracts/persistence.md).
+
+**Two real findings from Phases 2–3, once actually run against both backends** (Docker was unavailable at
+plan time; both were caught only once PostgreSQL was reachable and the SQLite half stopped being the only
+signal):
+
+1. **`activities` had no unique constraint in the ORM model.** `migrations/init.sql` declares a partial
+   unique index (`(user_id, source, source_activity_id) WHERE source_activity_id IS NOT NULL`) that the
+   SQLAlchemy model never expressed. `bulk_insert`'s `on_conflict_do_nothing()` therefore targeted nothing —
+   it silently permitted duplicates rather than deduplicating, on either backend, the whole time. Added the
+   `Index(...)` to `app/db/models/activity.py` and pointed the conflict target at it explicitly. Without
+   this, Phase 4's Alembic baseline would have generated a schema missing the constraint entirely.
+2. **`bulk_insert` bound `user_id` as `str(user_id)` against a `Uuid(as_uuid=True)` column.** PostgreSQL's
+   driver accepted the string leniently; SQLite's did not, and failed loudly with
+   `AttributeError: 'str' object has no attribute 'hex'`. This is precisely the class of bug the
+   portability work exists to surface — a dialect's tolerance masking a type mismatch — and it only
+   surfaced once both backends actually ran side by side.
 
 ---
 

@@ -1,8 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import BigInteger, Boolean, Date, SmallInteger, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import BigInteger, Boolean, Date, SmallInteger, String, Uuid, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import Base, TimestampMixin
@@ -11,14 +10,14 @@ from app.db.models.base import Base, TimestampMixin
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     first_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Rappels de séance
-    reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     reminder_hour: Mapped[int] = mapped_column(SmallInteger, default=7)
     reminder_minute: Mapped[int] = mapped_column(SmallInteger, default=30)
     reminder_last_sent_at: Mapped[date | None] = mapped_column(Date, nullable=True)

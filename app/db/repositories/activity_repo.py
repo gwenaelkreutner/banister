@@ -1,25 +1,35 @@
 from datetime import date, timedelta
 
-from sqlalchemy import delete, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.activity import Activity
+from app.db.upsert import dialect_insert
 
 
 async def bulk_insert(session: AsyncSession, user_id, rows: list[dict]) -> int:
     """
     Upsert d'activités Strava.
-    Ignore les doublons sur (user_id, source, source_activity_id).
+    Ignore les doublons sur (user_id, source, source_activity_id) — cible le même index
+    unique partiel que le modèle déclare (spec 003: ce n'était auparavant qu'implicite,
+    l'ancien on_conflict_do_nothing() sans cible ne visait aucune contrainte réelle).
     Retourne le nombre d'activités insérées.
     """
     if not rows:
         return 0
 
-    enriched = [{**r, "user_id": str(user_id)} for r in rows]
+    # Bind the real UUID object, not its string form: the generic Uuid(as_uuid=True) type
+    # (spec 003) expects a uuid.UUID to bind on SQLite, where asyncpg's leniency toward text
+    # representations previously masked this. Found by test_upsert.py failing on SQLite
+    # while passing on PostgreSQL — the exact class of dialect-specific tolerance the
+    # portability work exists to surface.
+    enriched = [{**r, "user_id": user_id} for r in rows]
 
-    stmt = pg_insert(Activity).values(enriched)
-    stmt = stmt.on_conflict_do_nothing()
+    stmt = dialect_insert(session)(Activity).values(enriched)
+    stmt = stmt.on_conflict_do_nothing(
+        index_elements=["user_id", "source", "source_activity_id"],
+        index_where=text("source_activity_id IS NOT NULL"),
+    )
     result = await session.execute(stmt)
     return result.rowcount
 

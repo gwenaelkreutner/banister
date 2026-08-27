@@ -1,8 +1,18 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import BigInteger, Boolean, Date, ForeignKey, Integer, SmallInteger, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Date,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Uuid,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import Base, TimestampMixin
@@ -16,10 +26,26 @@ class Activity(Base, TimestampMixin):
     """
 
     __tablename__ = "activities"
+    __table_args__ = (
+        # This partial unique index existed only in migrations/init.sql, not in the ORM
+        # model — found while porting bulk_insert's upsert (spec 003 T018). Without it here,
+        # Alembic's baseline (Phase 4) would silently omit it, and on_conflict_do_nothing
+        # would have no constraint to target. `text(...)` renders identically on SQLite and
+        # PostgreSQL, verified empirically.
+        Index(
+            "idx_activities_source_id",
+            "user_id",
+            "source",
+            "source_activity_id",
+            unique=True,
+            postgresql_where=text("source_activity_id IS NOT NULL"),
+            sqlite_where=text("source_activity_id IS NOT NULL"),
+        ),
+    )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="strava")

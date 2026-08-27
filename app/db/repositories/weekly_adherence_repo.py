@@ -1,11 +1,11 @@
 import uuid
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.weekly_adherence import WeeklyAdherence
+from app.db.upsert import dialect_insert
 
 
 async def upsert(
@@ -21,7 +21,7 @@ async def upsert(
 ) -> None:
     """Insert ou met à jour l'adhérence pour (user_id, week_start_date)."""
     stmt = (
-        insert(WeeklyAdherence)
+        dialect_insert(session)(WeeklyAdherence)
         .values(
             id=uuid.uuid4(),
             user_id=user_id,
@@ -34,7 +34,7 @@ async def upsert(
             tss_7d=tss_7d,
         )
         .on_conflict_do_update(
-            constraint="uq_weekly_adherence_user_week",
+            index_elements=["user_id", "week_start_date"],
             set_={
                 "plan_id": plan_id,
                 "week_number": week_number,
@@ -42,7 +42,7 @@ async def upsert(
                 "sessions_planned": sessions_planned,
                 "compliance_pct": compliance_pct,
                 "tss_7d": tss_7d,
-                "computed_at": datetime.now(timezone.utc),
+                "computed_at": datetime.now(UTC),
             },
         )
     )

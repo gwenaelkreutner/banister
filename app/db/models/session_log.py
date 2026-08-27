@@ -1,8 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import BigInteger, Date, ForeignKey, Integer, SmallInteger, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON, BigInteger, Date, ForeignKey, SmallInteger, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import Base, TimestampMixin
@@ -13,12 +12,12 @@ class SessionLog(Base, TimestampMixin):
 
     __tablename__ = "session_logs"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     plan_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("training_plans.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("training_plans.id", ondelete="CASCADE"), nullable=False
     )
 
     week_number: Mapped[int] = mapped_column(SmallInteger, nullable=False)
@@ -39,7 +38,7 @@ class SessionLog(Base, TimestampMixin):
     avg_power: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)        # average_watts
     normalized_power: Mapped[int | None] = mapped_column(SmallInteger, nullable=True) # weighted_average_watts
     kilojoules: Mapped[float | None] = mapped_column(nullable=True)
-    time_in_zones_s: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    time_in_zones_s: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # Métriques qualité calculées au moment du webhook (absent pour les logs manuels)
     cardiac_drift_index: Mapped[float | None] = mapped_column(nullable=True)
