@@ -55,7 +55,7 @@ async def handle_chat_message(
     # Restauration d'état après redémarrage du bot (MemoryStorage perd les états)
     current_state = await state.get_state()
     if current_state is None:
-        if not (user and user.onboarding_completed and user.disclaimer_accepted):
+        if not (user and user.onboarding_completed):
             return  # Pas encore onboardé — laisser passer aux autres handlers
         await state.set_state(PlanStates.ACTIVE)
 

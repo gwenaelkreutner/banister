@@ -14,7 +14,3 @@ class PlanStates(StatesGroup):
     ACTIVE = State()               # Utilisation normale post-setup
     SUSPENDED = State()            # Suspendu (contraintes santé détectées)
     PENDING_MODIFICATION = State() # En attente de confirmation d'une modification de plan
-
-
-class SessionLogStates(StatesGroup):
-    AWAITING_DURATION = State()    # Attente de la durée réelle (mode manuel)

@@ -23,13 +23,13 @@ classification of the activity, so these are computed here rather than consumed.
 icu_ctl/icu_atl are NOT mapped here even though data-model.md lists them as consumed:
 AnalyzedSession has no ctl/atl/tsb fields — the current fitness state
 (ctl_at_session/atl_at_session/tsb_at_session) is written straight onto SessionLog by
-app/strava/webhook.py, from the local atl_ctl engine, after analysis. Switching that
-write to consume icu_ctl/icu_atl instead is a webhook.py/cutover-phase change (spec 002
-Phase 6), not something this mapper can do on its own.
+app/services/activity_feedback.py, from the local atl_ctl engine, after analysis.
+Switching that write to consume icu_ctl/icu_atl instead is a separate, not-yet-done
+change — this mapper cannot do it alone, since it never touches SessionLog itself.
 """
 from __future__ import annotations
 
-from app.strava.analysis_models import AnalyzedSession, SessionTypeReal, SportType
+from app.providers.analysis.analysis_models import AnalyzedSession, SessionTypeReal, SportType
 
 _SPORT_TYPE_MAP: dict[str, SportType] = {
     "Ride": "ride",
@@ -209,7 +209,6 @@ def map_activity_to_analyzed_session(
         has_gps="latlng" in (payload.get("stream_types") or []),
         avg_power=payload.get("icu_average_watts"),
         normalized_power=payload.get("icu_weighted_avg_watts"),
-        normalized_power_source=None,  # single source now — nothing left to discriminate
         max_power=None,  # not exposed per-activity by the source (research R9a)
         avg_hr=payload.get("average_heartrate"),
         max_hr=payload.get("max_heartrate"),

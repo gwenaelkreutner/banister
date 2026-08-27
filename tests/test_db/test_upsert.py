@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.db.models.activity import Activity
 from app.db.models.user import User
-from app.db.repositories import activity_repo, oauth_repo, weekly_adherence_repo
+from app.db.repositories import activity_repo, weekly_adherence_repo
 
 
 async def _make_user(session, telegram_id: int) -> User:
@@ -24,8 +24,8 @@ async def _make_user(session, telegram_id: int) -> User:
 async def test_activity_bulk_insert_ignores_duplicate_on_second_call(db_session):
     user = await _make_user(db_session, 100)
     row = {
-        "source": "strava",
-        "source_activity_id": 999,
+        "source": "intervals_icu",
+        "source_activity_id": "999",
         "activity_date": date(2026, 8, 20),
         "tss": 50.0,
     }
@@ -43,7 +43,7 @@ async def test_activity_bulk_insert_ignores_duplicate_on_second_call(db_session)
 
     result = await db_session.execute(
         select(Activity).where(
-            Activity.user_id == user.id, Activity.source_activity_id == 999
+            Activity.user_id == user.id, Activity.source_activity_id == "999"
         )
     )
     rows = result.scalars().all()
@@ -62,32 +62,6 @@ async def test_activity_bulk_insert_allows_multiple_null_source_activity_id(db_s
     inserted = await activity_repo.bulk_insert(db_session, user.id, rows)
     await db_session.commit()
     assert inserted == 2
-
-
-async def test_oauth_upsert_connection_updates_rather_than_duplicates(db_session):
-    user = await _make_user(db_session, 102)
-    tokens_v1 = {"access_token": "a1", "refresh_token": "r1", "expires_at": 1893456000}
-    tokens_v2 = {"access_token": "a2", "refresh_token": "r2", "expires_at": 1893456100}
-
-    await oauth_repo.upsert_connection(db_session, user.id, "strava", tokens_v1, "athlete-1")
-    await db_session.commit()
-
-    await oauth_repo.upsert_connection(db_session, user.id, "strava", tokens_v2, "athlete-1")
-    await db_session.commit()
-
-    conn = await oauth_repo.get_connection(db_session, user.id, "strava")
-    assert conn.access_token == "a2"
-
-    from sqlalchemy import func
-
-    from app.db.models.oauth_connection import OAuthConnection
-
-    count = await db_session.scalar(
-        select(func.count()).select_from(OAuthConnection).where(
-            OAuthConnection.user_id == user.id, OAuthConnection.provider == "strava"
-        )
-    )
-    assert count == 1
 
 
 async def test_weekly_adherence_upsert_updates_rather_than_duplicates(db_session):

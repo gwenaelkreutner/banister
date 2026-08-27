@@ -14,8 +14,8 @@ Formule par séance :
 
 Composantes du score :
   tss_ratio   = min(tss_actual / tss_planned, 1.20)   → volume (flexible)
-  zone_mult   = 1.0 si zones respectées (Strava)
-              = 0.85 si RPE uniquement (pas de Strava)
+  zone_mult   = 1.0 si zones respectées (source)
+              = 0.85 si RPE uniquement (pas de données source)
               = 0.75 si zones incorrectes
   bonus       = +0.10 si long_ride planifié et réalisé (≥ 85% TSS)
               = +0.15 si intervals planifié ET session_type_real == "intervals"
@@ -84,7 +84,7 @@ def compute_session_kpi(
         weeks_total         : Nombre de semaines du plan (TrainingPlanSchema.weeks_count)
         tss_actual          : TSS réellement réalisé (session_log.tss_actual)
         workout_type        : Type planifié ("long_ride" | "intervals" | "endurance" | "recovery")
-        session_type_real   : Type détecté Strava, None si RPE uniquement
+        session_type_real   : Type détecté par la source, None si RPE uniquement
         tsb_after           : TSB post-séance (proxy de la fatigue accumulée)
         level               : Niveau athlète pour le seuil de surcharge
     """

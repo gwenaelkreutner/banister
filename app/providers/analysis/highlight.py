@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from app.db.models.session_log import SessionLog
     from app.engine.atl_ctl import FitnessMetrics
     from app.engine.weekly_snapshot import WeeklySnapshot
-    from app.strava.analysis_models import AnalyzedSession
+    from app.providers.analysis.analysis_models import AnalyzedSession
 
 
 # ---------------------------------------------------------------------------
@@ -265,27 +265,36 @@ def select_highlight(
 
 def detect_personal_records(
     all_logs: list["SessionLog"],
-    analyzed: "AnalyzedSession",
+    *,
+    session_type_real: str | None,
+    tss: float | None,
+    intensity_factor: float | None,
+    intervals_consistency_index: float | None,
+    respect_zones_score: float | None,
     current_log_id: object,
 ) -> PersonalRecord | None:
     """
     Détecte si la séance courante établit un record personnel.
 
+    Accepte les valeurs de la séance courante directement (spec 002 T064, FR-040) — un
+    SessionLog les porte déjà toutes, donc il n'y a jamais besoin de fabriquer un objet
+    factice pour satisfaire cette interface, que l'appelant ait un SessionLog ou un
+    AnalyzedSession sous la main.
+
     Reçoit all_logs déjà chargé (évite une requête DB supplémentaire).
     Filtre par session_type_real identique à la séance courante.
-    Compare sur : tss_actual, intensity_factor, intervals_consistency_index, respect_zones_score.
+    Compare sur : tss, intensity_factor, intervals_consistency_index, respect_zones_score.
 
     Retourne le record le plus impressionnant, ou None si aucun.
     """
-    session_type = analyzed.session_type_real
-    if session_type == "unknown":
+    if session_type_real == "unknown" or session_type_real is None:
         return None
 
     # Logs de référence : même type, déjà terminés, pas le log courant
     pool = [
         lg for lg in all_logs
         if lg.status == "done"
-        and lg.session_type_real == session_type
+        and lg.session_type_real == session_type_real
         and lg.id != current_log_id
         and lg.tss_actual is not None
     ]
@@ -293,14 +302,12 @@ def detect_personal_records(
         # Pas assez d'historique pour déclarer un record significatif
         return None
 
-    n = len(pool)
-
     # Candidats records, par ordre de "wow factor"
     checks: list[PersonalRecord | None] = [
-        _check_pr_consistency(analyzed, pool, n),
-        _check_pr_if(analyzed, pool, n),
-        _check_pr_zones_score(analyzed, pool, n),
-        _check_pr_tss(analyzed, pool, n),
+        _check_pr_consistency(intervals_consistency_index, pool),
+        _check_pr_if(intensity_factor, pool),
+        _check_pr_zones_score(respect_zones_score, pool),
+        _check_pr_tss(tss, pool),
     ]
     # Retourner le premier record trouvé (ordre = priorité)
     for pr in checks:
@@ -309,14 +316,13 @@ def detect_personal_records(
     return None
 
 
-def _check_pr_consistency(analyzed: "AnalyzedSession", pool: list, n: int) -> PersonalRecord | None:
-    if analyzed.intervals_consistency_index is None:
+def _check_pr_consistency(current: float | None, pool: list) -> PersonalRecord | None:
+    if current is None:
         return None
     values = [lg.intervals_consistency_index for lg in pool if lg.intervals_consistency_index is not None]
     if len(values) < 3:
         return None
     best = max(values)
-    current = analyzed.intervals_consistency_index
     if current > best:
         return PersonalRecord(
             metric="consistency",
@@ -328,14 +334,13 @@ def _check_pr_consistency(analyzed: "AnalyzedSession", pool: list, n: int) -> Pe
     return None
 
 
-def _check_pr_if(analyzed: "AnalyzedSession", pool: list, n: int) -> PersonalRecord | None:
-    if analyzed.intensity_factor is None:
+def _check_pr_if(current: float | None, pool: list) -> PersonalRecord | None:
+    if current is None:
         return None
     values = [lg.intensity_factor for lg in pool if lg.intensity_factor is not None]
     if len(values) < 3:
         return None
     best = max(values)
-    current = analyzed.intensity_factor
     if current > best:
         return PersonalRecord(
             metric="if",
@@ -347,14 +352,13 @@ def _check_pr_if(analyzed: "AnalyzedSession", pool: list, n: int) -> PersonalRec
     return None
 
 
-def _check_pr_zones_score(analyzed: "AnalyzedSession", pool: list, n: int) -> PersonalRecord | None:
-    if analyzed.respect_zones_score is None:
+def _check_pr_zones_score(current: float | None, pool: list) -> PersonalRecord | None:
+    if current is None:
         return None
     values = [lg.respect_zones_score for lg in pool if lg.respect_zones_score is not None]
     if len(values) < 3:
         return None
     best = max(values)
-    current = analyzed.respect_zones_score
     if current > best:
         return PersonalRecord(
             metric="zones_score",
@@ -366,14 +370,13 @@ def _check_pr_zones_score(analyzed: "AnalyzedSession", pool: list, n: int) -> Pe
     return None
 
 
-def _check_pr_tss(analyzed: "AnalyzedSession", pool: list, n: int) -> PersonalRecord | None:
-    if analyzed.tss is None:
+def _check_pr_tss(current: float | None, pool: list) -> PersonalRecord | None:
+    if current is None:
         return None
     values = [lg.tss_actual for lg in pool if lg.tss_actual is not None]
     if len(values) < 3:
         return None
     best = max(values)
-    current = analyzed.tss
     if current > best:
         return PersonalRecord(
             metric="tss",

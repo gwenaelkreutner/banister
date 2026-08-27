@@ -11,7 +11,7 @@ from datetime import date, datetime
 from app.db.models.user import User
 from app.db.repositories import plan_repo
 from app.services.activity_feedback import assemble_activity_feedback
-from app.strava.analysis_models import AnalyzedSession
+from app.providers.analysis.analysis_models import AnalyzedSession
 
 
 async def _make_user(session, telegram_id: int) -> User:
@@ -132,7 +132,7 @@ class TestMatchedActivity:
         assert result.log is not None
         assert result.log.status == "done"
         assert result.log.source == "intervals_icu"
-        assert result.log.strava_activity_id == "i-test-1"
+        assert result.log.source_activity_id == "i-test-1"
         assert result.highlight is not None
         assert result.match_result is not None
         assert result.match_result.is_aligned
@@ -282,7 +282,7 @@ class TestRetryAfterPartialFailure:
 
         count = await db_session.scalar(
             select(func.count()).select_from(SessionLog).where(
-                SessionLog.user_id == user.id, SessionLog.strava_activity_id == "i-retry-1"
+                SessionLog.user_id == user.id, SessionLog.source_activity_id == "i-retry-1"
             )
         )
         assert count == 1

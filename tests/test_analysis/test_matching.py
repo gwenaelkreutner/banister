@@ -2,8 +2,8 @@ from datetime import date, datetime
 from types import SimpleNamespace
 
 from app.engine.schemas import SessionSpec
-from app.strava.analysis_models import AnalyzedSession
-from app.strava.matching import evaluate_activity_plan_match, score_activity_vs_session
+from app.providers.analysis.analysis_models import AnalyzedSession
+from app.providers.analysis.matching import evaluate_activity_plan_match, score_activity_vs_session
 
 
 def _analyzed(
@@ -16,7 +16,7 @@ def _analyzed(
 ) -> AnalyzedSession:
     return AnalyzedSession(
         session_id="test-1",
-        source="strava",
+        source="intervals_icu",
         sport_type="ride",
         start_datetime=datetime(2026, 1, 6, 10, 0),
         duration_s=duration_s,

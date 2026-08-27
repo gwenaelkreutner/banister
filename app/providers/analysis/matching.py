@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from app.engine.schemas import SessionSpec, TrainingPlanSchema
-from app.strava.analysis_models import AnalyzedSession
+from app.providers.analysis.analysis_models import AnalyzedSession
 
 # ── Paires plan / réalisé ─────────────────────────────────────────────────────
 

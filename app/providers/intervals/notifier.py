@@ -1,12 +1,9 @@
-"""Points the staged post-activity notification at the poller instead of Strava's
-inbound webhook (spec 002 T045-T049, FR-030..FR-034, Plan Phase E — the cutover).
+"""Points the staged post-activity notification at the poller instead of an inbound
+webhook (spec 002 T045-T049, FR-030..FR-034, Plan Phase E — the cutover).
 
-Reuses the RPE capture/reveal machinery already in app/bot/routers/session_log.py
-(`cb_rpe_strava`, keyboard `rpe_emoji_keyboard_strava`) unchanged: that handler works
-entirely on `SessionLog` rows, not raw Strava objects, so nothing about it is actually
-Strava-specific — only its naming is historical. Renaming it, and the structural-debt
-cleanup inside it (T063-T065), is Phase 7's job once app/strava/ is deleted outright;
-touching it now would be risk on already-working code for no benefit this phase.
+Reuses the RPE capture/reveal machinery in app/bot/routers/session_log.py
+(`cb_rpe`, keyboard `rpe_emoji_keyboard`) — that handler works entirely on `SessionLog`
+rows, so it needed no logic changes to serve this path.
 """
 from __future__ import annotations
 
@@ -22,7 +19,7 @@ from app.db.repositories import sync_state_repo
 from app.providers.intervals.client import IntervalsClient
 from app.providers.intervals.mapper import map_activity_to_analyzed_session
 from app.services.activity_feedback import ActivityFeedbackContext, assemble_activity_feedback
-from app.strava.highlight import build_message_a, build_message_b, build_message_c_session_card
+from app.providers.analysis.highlight import build_message_a, build_message_b, build_message_c_session_card
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +32,7 @@ def _parse_activity_date(payload: dict):
 
 
 def _build_rpe_prompt(session_type_real: str | None, tsb: float) -> str:
-    """Duplicated from app/strava/webhook.py rather than imported — that module is
-    deleted whole in Phase 7."""
+    """Same prompt pool the (now-removed) inbound webhook path used."""
     if tsb <= -25:
         return "Comment tu te sens physiquement là ?"
     if tsb >= 10:
@@ -150,7 +146,7 @@ async def send_staged_notification(bot, telegram_id: int, context: ActivityFeedb
         await bot.send_chat_action(telegram_id, "typing")
         await asyncio.sleep(1.0)
 
-        from app.bot.keyboards.session_log import rpe_emoji_keyboard_strava
+        from app.bot.keyboards.session_log import rpe_emoji_keyboard
 
         match_score = context.match_result.score if context.match_result else None
         candidate = context.match_result.candidate if context.match_result else None
@@ -167,7 +163,7 @@ async def send_staged_notification(bot, telegram_id: int, context: ActivityFeedb
             telegram_id,
             card,
             parse_mode="HTML",
-            reply_markup=rpe_emoji_keyboard_strava(str(context.log.id)),
+            reply_markup=rpe_emoji_keyboard(str(context.log.id)),
         )
         return True
     except Exception:
@@ -227,8 +223,9 @@ async def notify_detected_activity(
     )
 
     if context.outcome == "no_plan":
-        # No active plan to match against at all — same silent skip as the Strava path
-        # (nothing to ingest without a plan_id, SessionLog.plan_id is NOT NULL). Left
+        # No active plan to match against at all — same silent skip the inbound webhook
+        # path used to have (nothing to ingest without a plan_id, SessionLog.plan_id is
+        # NOT NULL). Left
         # unreported deliberately: once a plan exists, a later poll within the 7-day
         # window should still pick this activity up.
         logger.debug(

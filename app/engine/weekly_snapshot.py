@@ -48,7 +48,7 @@ def _item_is_done(it) -> bool:
 def compute_weekly_snapshot(logs: list, today: date) -> WeeklySnapshot:
     """
     Calcule le snapshot hebdomadaire depuis la liste de logs déjà en mémoire.
-    Accepte des SessionLog et/ou des Activity Strava (duck-typing).
+    Accepte des SessionLog et/ou des Activity (duck-typing).
 
     Args:
         logs  : liste mixte SessionLog / Activity, triée ou non
@@ -67,7 +67,7 @@ def compute_weekly_snapshot(logs: list, today: date) -> WeeklySnapshot:
         and cutoff_7d <= (_item_date(it) or date.min) <= today
     ]
     tss_7d = sum(_item_tss(it) for it in recent)
-    # sessions_done_7d : uniquement les SessionLog (status explicite) — pas les Activity Strava
+    # sessions_done_7d : uniquement les SessionLog (status explicite) — pas les Activity
     sessions_done_7d = sum(1 for it in recent if getattr(it, "status", None) == "done")
 
     # TSS par jour (plusieurs séances/jour cumulées)

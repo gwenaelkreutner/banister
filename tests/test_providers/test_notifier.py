@@ -59,7 +59,7 @@ def _plan_technical(day_of_week: int) -> dict:
     # Matches activity_full.json's real, mapped characteristics closely (long_ride,
     # ~127 min, TSS 108, dominant zone Z1) so the match score clears is_aligned's
     # threshold — these tests are about delivery gating, not matching itself (that's
-    # covered separately in tests/test_strava/test_matching.py).
+    # covered separately in tests/test_analysis/test_matching.py).
     return {
         "weeks": [
             {
@@ -191,7 +191,7 @@ class TestNotifyDetectedActivityDeliveryGating:
 
         count = await db_session.scalar(
             select(func.count()).select_from(SessionLog).where(
-                SessionLog.user_id == user.id, SessionLog.strava_activity_id == activity_id
+                SessionLog.user_id == user.id, SessionLog.source_activity_id == activity_id
             )
         )
         assert count == 1

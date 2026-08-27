@@ -3,10 +3,9 @@
 Verified against the live account (spec 002 T043's check doubled as verification here):
 `list_activities` returns the full payload — the same 183 fields `get_activity` would —
 in a single request regardless of window size (73 activities across 120 days, one call,
-no pagination). That removes the multi-request/pagination complexity Strava's own
-history import (app/strava/history.py) needed, and with it most of the ways an import
-could be interrupted partway through: either the one request (+ one bulk insert)
-succeeds, or nothing was written at all.
+no pagination). That removes the multi-request/pagination complexity a paginated import
+would need, and with it most of the ways an import could be interrupted partway through:
+either the one request (+ one bulk insert) succeeds, or nothing was written at all.
 
 Resumability (FR-027) therefore reduces to idempotence: `sync_state.history_import_complete`
 gates whether this runs at all, and activity_repo.bulk_insert's on_conflict_do_nothing
@@ -59,7 +58,7 @@ def _to_activity_row(payload: dict) -> dict:
         "device_watts": bool(payload.get("device_watts")),
         "avg_heartrate": payload.get("average_heartrate"),
         "max_heartrate": payload.get("max_heartrate"),
-        "suffer_score": None,  # Strava-specific concept; the source has no equivalent
+        "suffer_score": None,  # a legacy field from the previous provider; intervals.icu has no equivalent
         "kilojoules": (icu_joules / 1000) if icu_joules is not None else None,
         "tss": payload.get("icu_training_load"),  # stays None, not 0.0, when absent (FR-020)
         "tss_method": "source" if payload.get("icu_training_load") is not None else None,

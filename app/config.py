@@ -48,26 +48,14 @@ class Settings(BaseSettings):
     # Redis (optionnel)
     redis_url: str | None = None
 
-    # Strava OAuth (secondary provider — see docs/STRAVA_COMPLIANCE.md)
-    strava_client_id: str = ""
-    strava_client_secret: str = ""
-    strava_redirect_uri: str = ""
-    strava_state_secret: str = ""
-    strava_webhook_verify_token: str = ""
-
-    # Sport provider
-    sport_provider: str = "intervals_icu"  # intervals_icu | strava | manual
-    # ^ removed once Strava is deleted in Phase 7 (T060) — kept during the migration
-    # while both integrations coexist.
-
-    # intervals.icu (spec 002) — the sole mandatory training data source once this
-    # feature reaches Phase 6. Required, not defaulted: FR-003 requires startup to refuse
-    # with a message naming this setting when it is absent.
+    # intervals.icu (spec 002) — the sole mandatory training data source. Required, not
+    # defaulted: FR-003 requires startup to refuse with a message naming this setting
+    # when it is absent.
     #
     # On FR-004 ("store the credential encrypted at rest, refuse to persist unencrypted
     # if secure storage is unavailable"): that requirement was written with an
     # OAuth-token-in-a-database model in mind (the app receives a token via a callback
-    # and must decide how to store it — the shape oauth_connections used for Strava).
+    # and must decide how to store it — the shape the old OAuth-based provider used).
     # This key does not fit that model. The operator writes it directly into .env before
     # the app ever starts; the app only reads it, and never persists it anywhere else.
     # There is no persistence step for FR-004's "refuse to write unencrypted" half to

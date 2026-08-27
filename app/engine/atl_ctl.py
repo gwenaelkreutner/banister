@@ -108,7 +108,7 @@ def compute_fitness_from_any(
     l'historique disponible est court (< 84j) pour éviter la sous-estimation EMA.
 
     seed_date : date à laquelle initial_ctl est appliqué (ex: date.today() - 49j pour
-    l'historique Strava). Si fourni, le gap jusqu'à la première activité est calculé
+    l'historique importé). Si fourni, le gap jusqu'à la première activité est calculé
     depuis seed_date (et non depuis 1 jour par convention), ce qui permet à l'EMA de
     décroître correctement entre le point d'amorçage et la première activité réelle.
     ATL n'est pas amorcé (τ=7j → convergence en ~3 semaines, suffisant avec 49j).
@@ -131,7 +131,7 @@ def compute_fitness_from_any(
 
     # Si un seed_date est fourni, la boucle commence depuis cette date
     # → le gap jusqu'à la première activité reflétera les jours de repos réels
-    # entre T-49 (début import Strava) et la première séance trouvée.
+    # entre T-49 (début de l'historique importé) et la première séance trouvée.
     prev_date = seed_date  # None si pas de seed → gap=1 convention (comportement original)
     for item in valid:
         d = _date(item)
@@ -237,10 +237,3 @@ def tsb_label(tsb: float) -> str:
     if tsb <= 20:
         return "🔵 Très frais"
     return "⚪ Transition — risque de désentraînement"
-
-
-def tss_from_rpe(duration_minutes: int, rpe_emoji: str) -> float:
-    """Calcule un TSS approximatif depuis la durée et le ressenti."""
-    rpe_values = {"hard": 8, "normal": 5, "easy": 3}
-    rpe = rpe_values.get(rpe_emoji, 5)
-    return round((duration_minutes / 60) * rpe * rpe * 10, 1)

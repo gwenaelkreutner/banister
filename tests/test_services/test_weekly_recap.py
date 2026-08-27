@@ -69,12 +69,12 @@ class TestWeeklyRecapWithSourceComputedLoads:
         await session_log_repo.create(
             db_session, user.id, plan_id=(await plan_repo.get_active_plan(db_session, user.id)).id,
             week_number=1, day_of_week=0, logged_date=monday, status="done",
-            tss_actual=80.0, source="intervals_icu", strava_activity_id="i-1",
+            tss_actual=80.0, source="intervals_icu", source_activity_id="i-1",
         )
         await session_log_repo.create(
             db_session, user.id, plan_id=(await plan_repo.get_active_plan(db_session, user.id)).id,
             week_number=1, day_of_week=2, logged_date=monday + timedelta(days=2), status="done",
-            tss_actual=60.0, source="intervals_icu", strava_activity_id="i-2",
+            tss_actual=60.0, source="intervals_icu", source_activity_id="i-2",
         )
         await db_session.commit()
 
@@ -98,7 +98,7 @@ class TestWeeklyRecapWithSourceComputedLoads:
         await session_log_repo.create(
             db_session, user.id, plan_id=plan.id,
             week_number=1, day_of_week=0, logged_date=monday, status="done",
-            tss_actual=None, source="intervals_icu", strava_activity_id="i-null-tss",
+            tss_actual=None, source="intervals_icu", source_activity_id="i-null-tss",
         )
         await db_session.commit()
 
@@ -118,7 +118,7 @@ class TestWeeklyRecapWithSourceComputedLoads:
         await session_log_repo.create(
             db_session, user.id, plan_id=plan.id,
             week_number=1, day_of_week=0, logged_date=monday, status="done",
-            tss_actual=80.0, source="intervals_icu", strava_activity_id="i-3",
+            tss_actual=80.0, source="intervals_icu", source_activity_id="i-3",
         )
         await db_session.commit()
 

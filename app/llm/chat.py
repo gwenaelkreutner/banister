@@ -50,7 +50,7 @@ async def run_chat(
     logs = await repo.session_log_repo.get_all_for_user(session, user.id)
     history = await repo.chat_repo.get_conversation(session, user.id, limit=8)
 
-    # Activités Strava pré-plan (sans double-comptage avec session_logs)
+    # Activités importées pré-plan (sans double-comptage avec session_logs)
     activities = await repo.activity_repo.get_for_user(session, user.id, days=365)
     plan_start = plan.start_date if plan else date.today()
     pre_plan_acts = [a for a in activities if a.activity_date < plan_start]
@@ -183,7 +183,7 @@ def _tool_get_fitness_data(logs: list, activities: list) -> dict:
         recent.append({
             "date": str(_date(it)),
             "tss": _tss(it),
-            "source": "plan" if hasattr(it, "rpe_emoji") else "strava",
+            "source": "plan" if hasattr(it, "rpe_emoji") else "intervals_icu",
         })
 
     return {

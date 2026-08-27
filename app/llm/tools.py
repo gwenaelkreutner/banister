@@ -385,7 +385,7 @@ def build_system_prompt(
                 hr_str = f"{item.avg_heart_rate}bpm" if item.avg_heart_rate else "—"
                 pw_str = f"{item.avg_power}W" if item.avg_power else "—"
                 env_str = f" ({item.environment})" if getattr(item, "environment", None) else ""
-            else:  # Activity (Strava pré-plan)
+            else:  # Activity (importée, pré-plan)
                 item_date = item.activity_date
                 dur_str = f"{item.duration_seconds // 60}min" if item.duration_seconds else "—"
                 rpe_str = "—"
@@ -406,7 +406,7 @@ def build_system_prompt(
         if current_week:
             lines.append("")
             if session_logs is not None:
-                from app.strava.matching import build_activity_session_pairs
+                from app.providers.analysis.matching import build_activity_session_pairs
                 pairs = build_activity_session_pairs(plan, plan.start_date, session_logs, week_num)
                 lines += _format_week_pairs(pairs, week_num, current_week.phase, today)
             else:

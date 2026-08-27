@@ -9,7 +9,7 @@ from app.db.upsert import dialect_insert
 
 async def bulk_insert(session: AsyncSession, user_id, rows: list[dict]) -> int:
     """
-    Upsert d'activités Strava.
+    Upsert d'activités importées.
     Ignore les doublons sur (user_id, source, source_activity_id) — cible le même index
     unique partiel que le modèle déclare (spec 003: ce n'était auparavant qu'implicite,
     l'ancien on_conflict_do_nothing() sans cible ne visait aucune contrainte réelle).

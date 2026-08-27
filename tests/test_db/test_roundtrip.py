@@ -56,7 +56,7 @@ async def test_unknown_stays_distinguishable_from_zero_false_and_empty(db_sessio
         day_of_week=0,
         logged_date=date(2026, 8, 24),
         status="done",
-        source="strava",
+        source="intervals_icu",
         cardiac_drift_index=None,  # genuinely not measured
     )
     measured_zero = SessionLog(
@@ -66,7 +66,7 @@ async def test_unknown_stays_distinguishable_from_zero_false_and_empty(db_sessio
         day_of_week=1,
         logged_date=date(2026, 8, 25),
         status="done",
-        source="strava",
+        source="intervals_icu",
         cardiac_drift_index=0.0,  # genuinely measured as exactly zero
     )
     db_session.add_all([unmeasured, measured_zero])

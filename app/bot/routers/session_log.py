@@ -1,12 +1,14 @@
 """
-Router : logging des séances (mode manuel).
+Router : capture du ressenti (RPE) post-séance.
 
-Flux :
-  /log → affiche séance du jour → [✅ Faite][⏭️ Sautée]
-  ✅ → demande durée → demande RPE emoji → sauvegarde
-  ⏭️ → sauvegarde directement comme sautée
+Toute activité vient désormais de la source (intervals.icu) via le poller — voir
+app/providers/intervals/notifier.py, qui déclenche la notification stagée se terminant
+par le clavier RPE géré ici (callback log:rpe:*).
 
-Pour le flux Strava (webhook), voir app/strava/webhook.py + callback log:strava_rpe:*
+Le log manuel de séance (spec 002 FR-035) a été retiré : plus de saisie de durée, plus
+de bouton "Séance faite/Sautée", plus d'état FSM dédié. La capture du ressenti, elle,
+est préservée à l'identique (FR-031, FR-037) — les deux flux partageaient déjà cette
+même implémentation.
 """
 
 import asyncio
@@ -16,20 +18,12 @@ from html import escape
 from datetime import date, timedelta
 
 from aiogram import F, Router
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.keyboards.session_log import (
-    duration_keyboard,
-    rpe_emoji_keyboard_manual,
-    session_action_keyboard,
-)
-from app.bot.states import SessionLogStates
 from app.db import repositories as repo
 from app.db.models.user import User
-from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any, estimate_initial_ctl, tss_from_rpe
+from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any, estimate_initial_ctl
 from app.engine.adherence_kpi import compute_session_kpi, compute_weekly_kpi_block
 from app.engine.tss import tss_from_weekly_hours
 from app.engine.schemas import TrainingPlanSchema
@@ -39,8 +33,8 @@ from app.engine.weekly_snapshot import WeeklySnapshot, compute_weekly_snapshot
 logger = logging.getLogger(__name__)
 router = Router()
 
-DAY_NAMES_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-WORKOUT_FR = {
+_DOW_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+_TYPE_FR = {
     "long_ride": "Sortie longue",
     "intervals": "Intervalles",
     "endurance": "Endurance",
@@ -49,25 +43,6 @@ WORKOUT_FR = {
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _get_today_session(plan, today: date):
-    """
-    Retourne (week_number, day_of_week, session_spec) pour la date donnée,
-    ou (None, None, None) si pas de séance prévue.
-    """
-    schema = TrainingPlanSchema.model_validate(plan.plan_technical)
-    week_num = (today - plan.start_date).days // 7 + 1
-    dow = today.weekday()
-
-    for week in schema.weeks:
-        if week.week_number == week_num:
-            for sess in week.sessions:
-                if sess.day_of_week == dow:
-                    return week_num, dow, sess
-            break
-
-    return None, None, None
-
 
 def _get_session_spec(plan, week_num: int, dow: int):
     """Retourne le SessionSpec pour une séance donnée (semaine, jour), ou None."""
@@ -92,15 +67,6 @@ def _get_sessions_planned_week(plan, week_num: int) -> int | None:
         if week.week_number == week_num:
             return len(week.sessions)
     return None
-
-
-_DOW_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-_TYPE_FR = {
-    "long_ride": "Sortie longue",
-    "intervals": "Intervalles",
-    "endurance": "Endurance",
-    "recovery": "Récupération",
-}
 
 
 def _get_next_session_info(plan, week_num: int, current_dow: int) -> str | None:
@@ -141,13 +107,11 @@ def _get_next_session_info(plan, week_num: int, current_dow: int) -> str | None:
 
 
 async def _get_fitness_metrics(session, user_id, logs: list) -> tuple[FitnessMetrics, list]:
-    """Calcule ATL/CTL/TSB en combinant activités Strava pré-plan + session_logs.
+    """Calcule ATL/CTL/TSB en combinant activités pré-plan + session_logs.
 
     Même logique que forme.py : évite le double-comptage et amorce le CTL si < 84j.
     Retourne (metrics, all_items) pour que l'appelant puisse passer all_items au snapshot.
     """
-    from datetime import timedelta
-
     plan = await repo.plan_repo.get_active_plan(session, user_id)
     plan_start = plan.start_date if plan else date.today()
 
@@ -219,36 +183,8 @@ def _build_coach_message(
     return text
 
 
-async def _send_activity_analysis(message, *, kpi_block: str | None = None, **kwargs) -> None:
-    """Envoie l'analyse coach structurée (Message D) — flux manuel."""
-    try:
-        from app.llm.activity_analysis import generate_coach_blocks
-        from app.engine.atl_ctl import tsb_label as _tsb_label
-
-        snap = kwargs.get("weekly_snapshot")
-        tsb = kwargs.get("tsb")
-        blocks = await generate_coach_blocks(
-            tsb=tsb,
-            tsb_label_str=_tsb_label(tsb) if tsb is not None else None,
-            load_trend_pct=snap.load_trend_pct if snap else None,
-            tss_6w_daily_avg=(snap.tss_6w_avg / 7) if snap and snap.tss_6w_avg else None,
-            sessions_done_week=kwargs.get("sessions_done_week"),
-            sessions_planned_week=kwargs.get("sessions_planned_week"),
-            tss_actual=kwargs.get("actual_tss"),
-            tss_planned=kwargs.get("planned_tss"),
-            rpe_emoji=kwargs.get("rpe_emoji"),
-            next_session_info=kwargs.get("next_session_info"),
-            user_level=kwargs.get("user_level", 0),
-        )
-        next_day = _extract_next_day(kwargs.get("next_session_info"))
-        pts_weekly = kwargs.get("pts_weekly")
-        await message.answer(_build_coach_message(blocks, next_day, kpi_block, pts_weekly), parse_mode="HTML")
-    except Exception:
-        pass  # Fallback silencieux
-
-
 async def _reveal_activity_analysis(message, *, kpi_block: str | None = None, **kwargs) -> None:
-    """Révèle l'analyse coach en éditant C puis en envoyant le Message D (flux Strava)."""
+    """Révèle l'analyse coach en éditant C puis en envoyant le Message D."""
     try:
         await message.bot.send_chat_action(message.chat.id, "typing")
         await asyncio.sleep(1.5)
@@ -330,296 +266,27 @@ def _highlight_category_from_log(log) -> str | None:
     return None
 
 
-# ── /log ─────────────────────────────────────────────────────────────────────
+# ── RPE ──────────────────────────────────────────────────────────────────────
 
-@router.message(Command("log"))
-async def cmd_log(message: Message, session: AsyncSession, user: User):
-    if not user.onboarding_completed:
-        await message.answer("Complète d'abord ton onboarding avec /start.")
-        return
-
-    plan = await repo.plan_repo.get_active_plan(session, user.id)
-    if plan is None:
-        await message.answer("Pas de plan actif. Génère un plan d'abord avec /start.")
-        return
-
-    today = date.today()
-    week_num, dow, sess = _get_today_session(plan, today)
-
-    if sess is None:
-        await message.answer(
-            f"Pas de séance prévue aujourd'hui ({DAY_NAMES_FR[today.weekday()]}).\n"
-            "Profite de ta journée de repos ! 🛋️"
-        )
-        return
-
-    # Vérifier si déjà loggée
-    if await repo.session_log_repo.already_logged(session, user.id, week_num, dow):
-        await message.answer("✅ Séance déjà enregistrée aujourd'hui !")
-        return
-
-    workout_label = WORKOUT_FR.get(sess.workout_type, sess.workout_type)
-    await message.answer(
-        f"📋 <b>Séance du jour</b>\n\n"
-        f"{workout_label} {sess.zone_code} — {sess.duration_minutes} min\n"
-        f"TSS cible : {sess.tss_target:.0f}\n\n"
-        f"Tu l'as faite ?",
-        parse_mode="HTML",
-        reply_markup=session_action_keyboard(week_num, dow),
-    )
-
-
-# ── Séance faite ──────────────────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("log:done:"))
-async def cb_session_done(callback: CallbackQuery, state: FSMContext, session: AsyncSession, user: User):
-    parts = callback.data.split(":")
-    week_num, dow = int(parts[2]), int(parts[3])
-
-    plan = await repo.plan_repo.get_active_plan(session, user.id)
-    if plan is None:
-        await callback.answer("Plan introuvable.", show_alert=True)
-        return
-
-    # Récupérer la durée planifiée pour les boutons
-    schema = TrainingPlanSchema.model_validate(plan.plan_technical)
-    planned_minutes = 60
-    for week in schema.weeks:
-        if week.week_number == week_num:
-            for sess in week.sessions:
-                if sess.day_of_week == dow:
-                    planned_minutes = sess.duration_minutes
-                    break
-            break
-
-    await state.set_state(SessionLogStates.AWAITING_DURATION)
-    await state.update_data(week_num=week_num, dow=dow, plan_id=str(plan.id))
-
-    await callback.message.edit_text(
-        "✅ Super ! Quelle était la durée réelle ?",
-        reply_markup=duration_keyboard(planned_minutes),
-    )
-    await callback.answer()
-
-
-# ── Séance sautée ─────────────────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("log:skip:"))
-async def cb_session_skipped(callback: CallbackQuery, session: AsyncSession, user: User):
-    parts = callback.data.split(":")
-    week_num, dow = int(parts[2]), int(parts[3])
-
-    plan = await repo.plan_repo.get_active_plan(session, user.id)
-    if plan is None:
-        await callback.answer()
-        return
-
-    await repo.session_log_repo.create(
-        session=session,
-        user_id=user.id,
-        plan_id=plan.id,
-        week_number=week_num,
-        day_of_week=dow,
-        logged_date=date.today(),
-        status="skipped",
-    )
-    await callback.message.edit_text("⏭️ Séance sautée — notée dans ton historique.")
-    await callback.answer()
-
-
-# ── Durée ─────────────────────────────────────────────────────────────────────
-
-@router.callback_query(SessionLogStates.AWAITING_DURATION, F.data.startswith("log:dur:"))
-async def cb_duration(callback: CallbackQuery, state: FSMContext):
-    value = callback.data.split(":")[-1]
-
-    if value == "custom":
-        await callback.message.edit_text("✏️ Entre la durée en minutes (ex: 75) :")
-        await callback.answer()
-        return
-
-    duration = int(value)
-    fsm = await state.get_data()
-    await state.clear()
-
-    await callback.message.edit_text(
-        f"⏱️ {duration} min noté. Comment c'était ?",
-        reply_markup=rpe_emoji_keyboard_manual(fsm["week_num"], fsm["dow"], duration),
-    )
-    await callback.answer()
-
-
-@router.message(SessionLogStates.AWAITING_DURATION)
-async def msg_duration_custom(message: Message, state: FSMContext):
-    try:
-        duration = int(message.text.strip().replace("min", "").replace("m", "").strip())
-        if not (5 <= duration <= 600):
-            await message.answer("⚠️ Durée entre 5 et 600 minutes. Réessaie :")
-            return
-    except ValueError:
-        await message.answer("⚠️ Entre un nombre entier (ex: 75). Réessaie :")
-        return
-
-    fsm = await state.get_data()
-    await state.clear()
-
-    await message.answer(
-        f"⏱️ {duration} min noté. Comment c'était ?",
-        reply_markup=rpe_emoji_keyboard_manual(fsm["week_num"], fsm["dow"], duration),
-    )
-
-
-# ── RPE manuel ───────────────────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("log:rpe:") & ~F.data.startswith("log:strava_rpe:"))
-async def cb_rpe_manual(callback: CallbackQuery, session: AsyncSession, user: User):
-    # Format : log:rpe:{week}:{day}:{duration}:{emoji}
-    parts = callback.data.split(":")
-    week_num, dow, duration, rpe_emoji = int(parts[2]), int(parts[3]), int(parts[4]), parts[5]
-
-    plan = await repo.plan_repo.get_active_plan(session, user.id)
-    if plan is None:
-        await callback.answer()
-        return
-
-    tss = None
-    if rpe_emoji != "skip":
-        tss = tss_from_rpe(duration, rpe_emoji)
-
-    log = await repo.session_log_repo.create(
-        session=session,
-        user_id=user.id,
-        plan_id=plan.id,
-        week_number=week_num,
-        day_of_week=dow,
-        logged_date=date.today(),
-        status="done",
-        rpe_emoji=rpe_emoji if rpe_emoji != "skip" else None,
-        duration_minutes_actual=duration,
-        tss_actual=tss,
-        source="manual",
-    )
-
-    tss_str = f"TSS estimé : {tss}" if tss else ""
-    await callback.message.edit_text(
-        f"✅ <b>Séance enregistrée !</b>\n{tss_str}",
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-    # Charger les logs + activités Strava pré-plan pour fitness cohérente avec /forme
-    logs = await repo.session_log_repo.get_all_for_user(session, user.id)
-    metrics, all_items = await _get_fitness_metrics(session, user.id, logs)
-
-    # Séances réalisées cette semaine calendaire (lundi → aujourd'hui)
-    _today = date.today()
-    _monday = _today - timedelta(days=_today.weekday())
-    _sessions_done_week = sum(
-        1 for it in all_items
-        if getattr(it, "status", None) == "done"
-        and getattr(it, "logged_date", None) is not None
-        and it.logged_date >= _monday
-    )
-
-    # KPI d'adhérence (log manuel — pas de session_type_real Strava)
-    pts_weekly_m: int | None = None
-    profile_db = await repo.profile_repo.get_by_user_id(session, user.id)
-    profile_data = profile_db.profile if profile_db else {}
-    kpi_block: str | None = None
-    if tss:
-        plan_schema = TrainingPlanSchema.model_validate(plan.plan_technical)
-        kpi_week = next(
-            (w for w in plan_schema.weeks if w.week_number == week_num), None
-        )
-        session_spec = next(
-            (s for s in kpi_week.sessions if s.day_of_week == dow), None
-        ) if kpi_week else None
-        if kpi_week and session_spec:
-            kpi = compute_session_kpi(
-                tss_planned=session_spec.tss_target,
-                week_tss_planned=kpi_week.total_tss_target,
-                weeks_total=plan_schema.weeks_count,
-                tss_actual=tss,
-                workout_type=session_spec.workout_type,
-                session_type_real=None,  # RPE uniquement, pas de données Strava
-                tsb_after=metrics.tsb if metrics else None,
-                level=profile_data.get("level", "intermediate"),
-            )
-            log.kpi_contribution = kpi.pts
-
-            # Display KPI semaine
-            session_logs_manual = [it for it in all_items if hasattr(it, "kpi_contribution")]
-            week_pts_list_m = [
-                getattr(lg, "kpi_contribution", None) or 0.0
-                for lg in session_logs_manual
-                if getattr(lg, "week_number", None) == week_num
-            ]
-            logged_slots_manual = {
-                (getattr(lg, "week_number", 0), getattr(lg, "day_of_week", 0))
-                for lg in session_logs_manual
-                if getattr(lg, "status", "") == "done"
-            }
-            kpi_block = compute_weekly_kpi_block(
-                pts_this_session=kpi.pts,
-                weeks_total=plan_schema.weeks_count,
-                week_pts_list=week_pts_list_m,
-                sessions_done=_sessions_done_week,
-                sessions_planned=_get_sessions_planned_week(plan, week_num) or 1,
-                plan=plan_schema,
-                week_number=week_num,
-                logged_slots=logged_slots_manual,
-            )
-            pts_weekly_m = int(round(kpi.pts * plan_schema.weeks_count))
-
-    # Analyse LLM post-RPE (non-bloquant)
-    _spec = _get_session_spec(plan, week_num, dow)
-    planned_tss = _spec.tss_target if _spec else None
-    planned_duration = _spec.duration_minutes if _spec else None
-    user_level: int = profile_data.get("user_level", 0)
-    snap = compute_weekly_snapshot(all_items, date.today())
-    asyncio.create_task(_send_activity_analysis(
-        callback.message,
-        kpi_block=kpi_block,
-        pts_weekly=pts_weekly_m if tss else None,
-        planned_tss=planned_tss,
-        actual_tss=tss,
-        rpe_emoji=rpe_emoji if rpe_emoji != "skip" else None,
-        duration_minutes=duration,
-        planned_duration_minutes=planned_duration,
-        user_level=user_level,
-        ctl=metrics.ctl,
-        atl=metrics.atl,
-        tsb=metrics.tsb,
-        weekly_snapshot=snap,
-        sessions_planned_week=_get_sessions_planned_week(plan, week_num),
-        sessions_done_week=_sessions_done_week,
-        next_session_info=_get_next_session_info(plan, week_num, dow),
-    ))
-
-
-# ── RPE Strava ────────────────────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("log:strava_rpe:"))
-async def cb_rpe_strava(callback: CallbackQuery, session: AsyncSession, user: User):
-    # Format : log:strava_rpe:{log_id}:{emoji}
+@router.callback_query(F.data.startswith("log:rpe:"))
+async def cb_rpe(callback: CallbackQuery, session: AsyncSession, user: User):
+    # Format : log:rpe:{log_id}:{emoji}
     parts = callback.data.split(":")
     log_id_str = parts[2]
     rpe_emoji = parts[3]
 
-    from sqlalchemy import select
-    from app.db.models.session_log import SessionLog
-
-    result = await session.execute(
-        select(SessionLog).where(SessionLog.id == uuid.UUID(log_id_str))
-    )
-    log: SessionLog | None = result.scalar_one_or_none()
+    log = await repo.session_log_repo.get_by_id(session, uuid.UUID(log_id_str))
 
     if log is None or log.user_id != user.id:
         await callback.answer("Log introuvable.", show_alert=True)
         return
 
-    if rpe_emoji != "skip":
-        log.rpe_emoji = rpe_emoji
+    # Calculée une fois — spec 002 T065 (FR-041) : une seconde évaluation identique de
+    # cette condition plus loin aurait laissé une variable dont la disponibilité dépend
+    # de deux endroits restant en phase, un NameError latent si un seul est édité.
+    rpe_effective = rpe_emoji if rpe_emoji != "skip" else None
+    if rpe_effective is not None:
+        log.rpe_emoji = rpe_effective
 
     # Édition immédiate : supprime le clavier RPE, affiche l'état "chargement"
     await callback.message.edit_text(
@@ -628,11 +295,9 @@ async def cb_rpe_strava(callback: CallbackQuery, session: AsyncSession, user: Us
     )
     await callback.answer()
 
-    # Charger les logs + activités Strava pré-plan pour fitness cohérente avec /forme
+    # Charger les logs + activités pré-plan pour fitness cohérente avec /forme
     logs = await repo.session_log_repo.get_all_for_user(session, user.id)
     metrics, all_items = await _get_fitness_metrics(session, user.id, logs)
-    # Note : _show_fitness_summary() supprimé — les données CTL/ATL/TSB
-    # sont déjà dans le Message C envoyé par le webhook.
 
     # Analyse LLM post-RPE (non-bloquant) — contexte enrichi depuis SessionLog
     plan = await repo.plan_repo.get_active_plan(session, user.id)
@@ -646,7 +311,6 @@ async def cb_rpe_strava(callback: CallbackQuery, session: AsyncSession, user: Us
 
     # ── Détection anomalie fatigue (HRSS scalaire) ────────────────────────
     fatigue_anomaly: dict | None = None
-    rpe_effective = rpe_emoji if rpe_emoji != "skip" else None
     if rpe_effective and log.avg_heart_rate:
         hr_max = profile_data.get("physio", {}).get("hr_max")
         hr_rest = profile_data.get("physio", {}).get("hr_rest")
@@ -665,27 +329,22 @@ async def cb_rpe_strava(callback: CallbackQuery, session: AsyncSession, user: Us
                 fatigue_anomaly = dataclasses.asdict(fa)
 
     # ── Variable Reward — sélection du mode et détection PR ───────────────
-    from app.strava.highlight import detect_personal_records
+    from app.providers.analysis.highlight import detect_personal_records
+    from app.db.models.session_log import SessionLog as SessionLogModel
 
     storytelling_mode = _select_storytelling_mode(log.session_type_real)
     highlight_category = _highlight_category_from_log(log)
 
-    # PR detection : on utilise all_items déjà chargé, mais detect_personal_records
-    # attend des SessionLog. On filtre uniquement les SessionLog depuis all_items.
-    from app.db.models.session_log import SessionLog as SessionLogModel
     session_logs_only = [it for it in all_items if isinstance(it, SessionLogModel)]
-    pr_result = None
-    if log.session_type_real and log.session_type_real != "unknown":
-        from app.strava.analysis_models import AnalyzedSession as _AS  # pour le type
-        # On reconstruit un objet minimal pour detect_personal_records
-        class _FakeAnalyzed:
-            session_type_real = log.session_type_real
-            tss = log.tss_actual or 0.0
-            intensity_factor = log.intensity_factor
-            intervals_consistency_index = log.intervals_consistency_index
-            respect_zones_score = log.respect_zones_score
-
-        pr_result = detect_personal_records(session_logs_only, _FakeAnalyzed(), log.id)
+    pr_result = detect_personal_records(
+        session_logs_only,
+        session_type_real=log.session_type_real,
+        tss=log.tss_actual,
+        intensity_factor=log.intensity_factor,
+        intervals_consistency_index=log.intervals_consistency_index,
+        respect_zones_score=log.respect_zones_score,
+        current_log_id=log.id,
+    )
 
     personal_record_dict = None
     if pr_result is not None:
@@ -703,7 +362,12 @@ async def cb_rpe_strava(callback: CallbackQuery, session: AsyncSession, user: Us
     )
 
     # ── KPI block (semaine en cours) ──────────────────────────────────────────
+    # spec 002 T065 (FR-041): kpi_block and pts_weekly_s both need plan_schema_kpi, and
+    # both are only meaningful under the same "a contribution and a plan exist" gate —
+    # computed together in the one place that condition is checked, rather than in two
+    # separate blocks that would have to keep an identical guard in sync by hand.
     kpi_block: str | None = None
+    pts_weekly_s: int | None = None
     if log.kpi_contribution is not None and plan:
         plan_schema_kpi = TrainingPlanSchema.model_validate(plan.plan_technical)
         session_logs_for_kpi = [it for it in all_items if isinstance(it, SessionLogModel)]
@@ -728,12 +392,7 @@ async def cb_rpe_strava(callback: CallbackQuery, session: AsyncSession, user: Us
             week_number=_log_week_num,
             logged_slots=logged_slots_kpi,
         )
-
-    pts_weekly_s = (
-        int(round(log.kpi_contribution * plan_schema_kpi.weeks_count))
-        if log.kpi_contribution is not None and plan
-        else None
-    )
+        pts_weekly_s = int(round(log.kpi_contribution * plan_schema_kpi.weeks_count))
 
     # VI ignoré si durée < 30 min (géré aussi dans activity_analysis.py, double-sécurité)
     vi = log.variability_index if (log.duration_minutes_actual or 0) >= 30 else None

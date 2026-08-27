@@ -6,7 +6,7 @@ Output : TrainingPlanSchema   (Pydantic)
 Aucun I/O — pure Python, 100% testable.
 
 Principes :
-- Baseline TSS depuis CTL Strava (CTL × 7) si disponible, sinon hours × 40
+- Baseline TSS depuis le CTL de la source (CTL × 7) si disponible, sinon hours × 40
 - Nombre de séances déterminé par le volume, pas par les jours disponibles
 - Chaque semaine (hors récup) = long_ride + threshold + VO2 (si volume suffisant) + endurance
 - Distribution pyramidale : Z1/Z2 ≈ 70-75 %, Z3/Z4 ≈ 15-20 %, Z5+ ≈ 5-8 %
@@ -189,7 +189,7 @@ def _build_race_week(
       fatigue significative.
     - Veille course : repos complet.
     - Marqueur course : 20min Z2 échauffement symbolique (15 TSS) — la sortie
-      réelle sera loguée via Strava.
+      réelle sera importée depuis la source de données.
 
     Math ATL (τ=7j) : avec ATL≈63 en fin de S10, la structure ci-dessus
     livre ATL≈41 le samedi matin → TSB ≈ +13/+14 ✓
@@ -265,7 +265,7 @@ def _build_race_week(
         description_fr=(
             "JOUR DE COURSE — Bonne chance ! "
             "Échauffement 20min Z1-Z2 avant le départ. "
-            "Ta sortie sera automatiquement importée depuis Strava."
+            "Ta sortie sera automatiquement importée depuis intervals.icu."
         ),
     ))
 
@@ -287,7 +287,7 @@ def generate_plan(profile: AthleteProfileSchema, start_date: date | None = None)
     current_ctl = profile.current_ctl
     current_tsb = profile.current_tsb
 
-    # Baseline TSS depuis le CTL Strava (steady-state réel) si disponible,
+    # Baseline TSS depuis le CTL de la source (steady-state réel) si disponible,
     # sinon estimation depuis les heures déclarées (hypothèse Z2 dominant).
     if current_ctl is not None:
         initial_tss = round(current_ctl * 7, 1)

@@ -17,10 +17,10 @@ class SessionLog(Base, TimestampMixin):
         # baseline against the live schema.
         Index("idx_session_logs_user_date", "user_id", "logged_date"),
         Index(
-            "idx_session_logs_strava_activity",
-            "strava_activity_id",
-            postgresql_where=text("strava_activity_id IS NOT NULL"),
-            sqlite_where=text("strava_activity_id IS NOT NULL"),
+            "idx_session_logs_source_activity",
+            "source_activity_id",
+            postgresql_where=text("source_activity_id IS NOT NULL"),
+            sqlite_where=text("source_activity_id IS NOT NULL"),
         ),
     )
 
@@ -40,23 +40,22 @@ class SessionLog(Base, TimestampMixin):
     rpe_emoji: Mapped[str | None] = mapped_column(String(8), nullable=True)  # "hard"|"normal"|"easy"
     duration_minutes_actual: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     tss_actual: Mapped[float | None] = mapped_column(nullable=True)
-    # String, not numeric (spec 002 T038/T044's discovery applies here too): Strava's
-    # ids happen to be integers, intervals.icu's are not (e.g. "i180170537"). Kept under
-    # its historical name — renaming is Phase 7's job, alongside deleting app/strava/.
-    strava_activity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # "manual"|"strava"|"intervals_icu"
+    # String, not numeric: the source's activity ids are not guaranteed numeric (e.g.
+    # intervals.icu's "i180170537").
+    source_activity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # "manual"|"intervals_icu"
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
 
     environment: Mapped[str | None] = mapped_column(String(16), nullable=True)  # "outdoor" | "indoor"
 
-    # Données physiologiques (Strava)
+    # Données physiologiques (source externe)
     avg_heart_rate: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     avg_power: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)        # average_watts
     normalized_power: Mapped[int | None] = mapped_column(SmallInteger, nullable=True) # weighted_average_watts
     kilojoules: Mapped[float | None] = mapped_column(nullable=True)
     time_in_zones_s: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
-    # Métriques qualité calculées au moment du webhook (absent pour les logs manuels)
+    # Métriques qualité calculées à l'ingestion (absent pour les logs manuels)
     cardiac_drift_index: Mapped[float | None] = mapped_column(nullable=True)
     intervals_consistency_index: Mapped[float | None] = mapped_column(nullable=True)
     respect_zones_score: Mapped[float | None] = mapped_column(nullable=True)
@@ -65,7 +64,7 @@ class SessionLog(Base, TimestampMixin):
     intensity_factor: Mapped[float | None] = mapped_column(nullable=True)  # FTP de l'époque, immuable
     dominant_zone: Mapped[str | None] = mapped_column(String(4), nullable=True)
 
-    # Contexte Strava (absent pour les logs manuels)
+    # Contexte externe (absent pour les logs manuels)
     elevation_gain_m: Mapped[float | None] = mapped_column(nullable=True)
     average_temp_c: Mapped[float | None] = mapped_column(nullable=True)
     athlete_count: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)

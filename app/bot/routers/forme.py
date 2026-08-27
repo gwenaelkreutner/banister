@@ -2,7 +2,7 @@
 Router : /forme — affichage ATL/CTL/TSB avec interprétation LLM.
 
 Sources de données (sans double-comptage) :
-  - activities avec activity_date < plan.start_date → historique Strava pré-plan
+  - activities avec activity_date < plan.start_date → historique pré-plan (intervals.icu)
   - session_logs → exécution du plan en cours
 """
 
@@ -49,7 +49,7 @@ async def cmd_forme(message: Message, session: AsyncSession, user: User):
     plan = await repo.plan_repo.get_active_plan(session, user.id)
     plan_start = plan.start_date if plan else date.today()
 
-    # Historique Strava pré-plan (évite le double-comptage avec session_logs)
+    # Historique pré-plan (évite le double-comptage avec session_logs)
     activities = await repo.activity_repo.get_for_user(session, user.id, days=365)
     pre_plan_acts = [a for a in activities if a.activity_date < plan_start]
 
@@ -61,7 +61,7 @@ async def cmd_forme(message: Message, session: AsyncSession, user: User):
     if not all_items:
         await message.answer(
             "📊 Pas encore de données.\n\n"
-            "Log tes premières séances avec /log pour voir ta forme évoluer !"
+            "Fais une sortie et connecte intervals.icu pour voir ta forme évoluer !"
         )
         return
 
@@ -109,13 +109,13 @@ async def _generate_fitness_interpretation(
 
         done_count = sum(1 for l in logs if l.status == "done")
         skipped_count = sum(1 for l in logs if l.status == "skipped")
-        strava_count = len(activities)
+        pre_plan_count = len(activities)
 
         # Contexte source des données — adapté selon la situation
-        if done_count == 0 and strava_count > 0:
+        if done_count == 0 and pre_plan_count > 0:
             context_line = (
                 f"- L'athlète vient de démarrer son plan structuré. "
-                f"Les données proviennent de son historique Strava ({strava_count} sorties pré-plan)."
+                f"Les données proviennent de son historique intervals.icu ({pre_plan_count} sorties pré-plan)."
             )
         elif done_count > 0:
             context_line = (
@@ -151,7 +151,7 @@ async def _generate_fitness_interpretation(
         return await provider.generate(
             system_prompt=build_ux_system_prompt(user_level),
             user_message=prompt,
-            max_tokens=300,
+            max_tokens=4000,
         )
 
     except Exception as e:

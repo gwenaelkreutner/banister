@@ -7,7 +7,7 @@ Flow FSM (SetupStates) :
 Peut être relancé à tout moment : /setup repart depuis le début et régénère le plan.
 """
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -289,7 +289,7 @@ async def _finalize_setup(
             first_name=tg.first_name,
         )
 
-    # Fetch Strava history for CTL seed if connected
+    # Fetch imported history for CTL seed, if any exists
     fitness = None
     try:
         activities = await activity_repo.get_for_user(session, user.id, days=120)
@@ -326,6 +326,9 @@ async def _finalize_setup(
         await repo.profile_repo.create(session, user.id, profile_data)
     else:
         await repo.profile_repo.update(session, existing_profile, profile_data)
+
+    if user.onboarding_completed_at is None:
+        user.onboarding_completed_at = datetime.now(UTC)
 
     await state.set_state(PlanStates.ACTIVE)
     await state.clear()

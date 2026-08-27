@@ -6,12 +6,9 @@ assembles everything a post-activity notification needs — plan matching, the
 — so the whole sequence is testable without simulating a Telegram conversation
 (tests/test_services/test_activity_feedback.py).
 
-Deliberately not shared with `app/strava/webhook.py` (the Strava path, still live during
-this migration): that module is deleted whole in Phase 7, and refactoring still-working
-code to share this layer now would add regression risk to a path with days left to live,
-for no benefit once it is gone. The logic here mirrors `handle_activity_event`'s
-non-Telegram steps closely on purpose — it is the same business rule, just relocated and
-made provider-agnostic (FR-033: matching's behaviour is explicitly unchanged).
+Built during the cutover (spec 002 Phase 6) as a standalone replacement for the
+now-deleted inbound webhook handler's non-Telegram logic — same business rule, relocated
+and made provider-agnostic (FR-033: matching's behaviour is explicitly unchanged).
 """
 from __future__ import annotations
 
@@ -36,9 +33,9 @@ from app.engine.atl_ctl import (
 from app.engine.schemas import TrainingPlanSchema
 from app.engine.tss import tss_from_weekly_hours
 from app.engine.weekly_snapshot import WeeklySnapshot, compute_weekly_snapshot
-from app.strava.analysis_models import AnalyzedSession
-from app.strava.highlight import HighlightResult, select_highlight
-from app.strava.matching import ActivitySessionMatch, evaluate_activity_plan_match
+from app.providers.analysis.analysis_models import AnalyzedSession
+from app.providers.analysis.highlight import HighlightResult, select_highlight
+from app.providers.analysis.matching import ActivitySessionMatch, evaluate_activity_plan_match
 
 Outcome = Literal["matched", "no_plan", "unplanned", "bonus"]
 
@@ -47,7 +44,7 @@ Outcome = Literal["matched", "no_plan", "unplanned", "bonus"]
 class ActivityFeedbackContext:
     """Everything the staged notification needs to render. `outcome` tells the caller
     which of the three (four, counting "no_plan") notification shapes applies —
-    mirroring webhook.py's existing branches (FR-034: never presented as an error)."""
+    training outside the plan is never presented as an error (FR-034)."""
 
     outcome: Outcome
     analyzed: AnalyzedSession
@@ -75,9 +72,8 @@ async def assemble_activity_feedback(
     """`reanalyze_with_plan(planned_zone, planned_target_time_in_zone_s)` lets the
     caller re-derive `AnalyzedSession` once a matching planned session is known, so
     `respect_zones_score` can be computed against it — provider-specific (intervals.icu:
-    a cheap local re-map of the same payload; Strava's own equivalent, an extra streams
-    fetch, is not reproduced here since that path isn't calling this function). Omit it
-    to skip that refinement and use `initial_analyzed` as final.
+    a cheap local re-map of the same payload). Omit it to skip that refinement and use
+    `initial_analyzed` as final.
     """
     plan = await repo.plan_repo.get_active_plan(session, user.id)
     if plan is None:
@@ -89,7 +85,7 @@ async def assemble_activity_feedback(
     # that row rather than creating a duplicate; everything else below (matching,
     # fitness, highlight) is cheap, pure computation and safe to simply redo so the
     # caller has what it needs to retry the notification.
-    existing_log = await repo.session_log_repo.get_by_strava_activity(session, source_activity_id)
+    existing_log = await repo.session_log_repo.get_by_source_activity(session, source_activity_id)
     if existing_log is not None and existing_log.user_id == user.id:
         return await _reuse_existing_log(
             session, user, plan, existing_log, initial_analyzed, activity_date
@@ -122,7 +118,7 @@ async def assemble_activity_feedback(
             status="unplanned",
             duration_minutes_actual=elapsed_minutes,
             tss_actual=initial_analyzed.tss,
-            strava_activity_id=_as_legacy_activity_id(source_activity_id),
+            source_activity_id=source_activity_id,
             source=source,
             avg_heart_rate=int(initial_analyzed.avg_hr) if initial_analyzed.avg_hr else None,
             avg_power=int(initial_analyzed.avg_power) if initial_analyzed.avg_power else None,
@@ -196,7 +192,7 @@ async def assemble_activity_feedback(
         rpe_emoji=None,
         duration_minutes_actual=elapsed_minutes,
         tss_actual=analyzed.tss,
-        strava_activity_id=_as_legacy_activity_id(source_activity_id),
+        source_activity_id=source_activity_id,
         source=source,
         avg_heart_rate=int(analyzed.avg_hr) if analyzed.avg_hr else None,
         avg_power=int(analyzed.avg_power) if analyzed.avg_power else None,
@@ -304,22 +300,10 @@ async def _reuse_existing_log(
     )
 
 
-def _as_legacy_activity_id(source_activity_id: str) -> str:
-    """SessionLog.strava_activity_id is a plain string column (widened alongside
-    Activity.source_activity_id — spec 002 T038's discovery applies here too: source
-    activity ids are not numeric). Kept under its historical name; renaming it belongs
-    to Phase 7's structural cleanup alongside deleting app/strava/ (T057-T060), not this
-    phase's cutover."""
-    return source_activity_id
-
-
 async def _build_fitness_feedback(
     session: AsyncSession, user_id: uuid.UUID
 ) -> tuple[FitnessMetrics | None, str]:
-    """Identical to webhook.py's private helper of the same name — duplicated rather
-    than imported, since the Strava module it lives in is deleted whole in Phase 7 and
-    importing from a module about to disappear would be a needless coupling in the
-    meantime."""
+    """Same fitness-state computation used by the (now-removed) inbound webhook path."""
     plan = await repo.plan_repo.get_active_plan(session, user_id)
     plan_start = plan.start_date if plan else date.today()
 

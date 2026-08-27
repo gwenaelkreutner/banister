@@ -18,7 +18,7 @@ async def create(
     rpe_emoji: str | None = None,
     duration_minutes_actual: int | None = None,
     tss_actual: float | None = None,
-    strava_activity_id: str | None = None,
+    source_activity_id: str | None = None,
     source: str = "manual",
     avg_heart_rate: int | None = None,
     avg_power: int | None = None,
@@ -52,7 +52,7 @@ async def create(
         rpe_emoji=rpe_emoji,
         duration_minutes_actual=duration_minutes_actual,
         tss_actual=tss_actual,
-        strava_activity_id=strava_activity_id,
+        source_activity_id=source_activity_id,
         source=source,
         avg_heart_rate=avg_heart_rate,
         avg_power=avg_power,
@@ -80,6 +80,11 @@ async def create(
     return log
 
 
+async def get_by_id(session: AsyncSession, log_id: uuid.UUID) -> SessionLog | None:
+    result = await session.execute(select(SessionLog).where(SessionLog.id == log_id))
+    return result.scalar_one_or_none()
+
+
 async def get_by_date(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -99,8 +104,8 @@ async def get_all_for_user(
 ) -> list[SessionLog]:
     """Retourne tous les logs de l'utilisateur, triés par date (pour ATL/CTL).
 
-    Inclut "done" (séances du plan) et "unplanned" (activités Strava hors-plan
-    avec TSS calculé) — les deux contribuent à la charge réelle.
+    Inclut "done" (séances du plan) et "unplanned" (activités hors-plan avec TSS
+    calculé) — les deux contribuent à la charge réelle.
     """
     result = await session.execute(
         select(SessionLog)
@@ -113,27 +118,11 @@ async def get_all_for_user(
     return list(result.scalars().all())
 
 
-async def already_logged(
+async def get_by_source_activity(
     session: AsyncSession,
-    user_id: uuid.UUID,
-    week_number: int,
-    day_of_week: int,
-) -> bool:
-    result = await session.execute(
-        select(SessionLog).where(
-            SessionLog.user_id == user_id,
-            SessionLog.week_number == week_number,
-            SessionLog.day_of_week == day_of_week,
-        )
-    )
-    return result.scalar_one_or_none() is not None
-
-
-async def get_by_strava_activity(
-    session: AsyncSession,
-    strava_activity_id: str,
+    source_activity_id: str,
 ) -> SessionLog | None:
     result = await session.execute(
-        select(SessionLog).where(SessionLog.strava_activity_id == strava_activity_id)
+        select(SessionLog).where(SessionLog.source_activity_id == source_activity_id)
     )
     return result.scalar_one_or_none()

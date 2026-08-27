@@ -10,7 +10,7 @@ En mode HR (sans capteur de puissance) — HRSS via TRIMP de Banister :
   TRIMP    = Σ stress_i
   HRSS     = TRIMP / TRIMP_1h_LTHR × 100
 
-Calcul continu sur la série temporelle secondaire (streams Strava).
+Calcul continu sur la série temporelle secondaire (streams de la source).
 NumPy utilisé pour les performances sur sorties > 6h (≥ 21 600 points).
 """
 
@@ -48,7 +48,7 @@ ZONE_TSS_PER_HOUR_HR = {
 _K_TRIMP: dict[str, float] = {"M": 1.92, "F": 1.67}
 _K_DEFAULT = 1.92  # défaut si sexe inconnu
 
-# Correspondance emoji RPE → entier 1-10 (cohérent avec tss_from_rpe dans atl_ctl.py)
+# Correspondance emoji RPE → entier 1-10
 RPE_EMOJI_INT_MAP: dict[str, int] = {
     "easy": 3,
     "normal": 5,

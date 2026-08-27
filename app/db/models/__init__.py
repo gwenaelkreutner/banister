@@ -1,7 +1,6 @@
 from app.db.models.activity import Activity
 from app.db.models.base import Base
 from app.db.models.chat_message import ChatMessage
-from app.db.models.oauth_connection import OAuthConnection
 from app.db.models.profile import AthleteProfile
 from app.db.models.session_log import SessionLog
 from app.db.models.sync_state import ReportedActivity, SyncState
@@ -15,7 +14,6 @@ __all__ = [
     "User",
     "AthleteProfile",
     "TrainingPlan",
-    "OAuthConnection",
     "SessionLog",
     "ChatMessage",
     "Activity",

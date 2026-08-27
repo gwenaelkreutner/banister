@@ -1,7 +1,6 @@
 from app.db.repositories import (
     activity_repo,
     chat_repo,
-    oauth_repo,
     plan_repo,
     profile_repo,
     session_log_repo,
@@ -12,7 +11,6 @@ from app.db.repositories import (
 __all__ = [
     "activity_repo",
     "chat_repo",
-    "oauth_repo",
     "plan_repo",
     "profile_repo",
     "session_log_repo",

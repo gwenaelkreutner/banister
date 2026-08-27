@@ -4,12 +4,9 @@ import logging.config
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from html import escape
-from typing import Any
 
-from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from app.bot.setup import create_bot, create_dispatcher
 from app.config import settings
@@ -120,11 +117,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Banister", lifespan=lifespan)
 
-class DevStravaSimulatePayload(BaseModel):
-    owner_id: int = Field(..., description="Athlete Strava id (oauth_connections.provider_user_id)")
-    object_id: int = Field(..., description="Strava activity id simulé")
-    activity: dict[str, Any] = Field(..., description="Payload activité Strava-like complet")
-
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -140,154 +132,6 @@ async def telegram_webhook(request: Request):
     from aiogram.types import Update
     update = Update.model_validate(update_data)
     await dp.feed_update(bot, update)
-    return JSONResponse({"ok": True})
-
-@app.get("/auth/strava/callback")
-async def strava_oauth_callback(
-    code: str,
-    state: str,
-    session: AsyncSession = Depends(get_session),
-):
-    """Callback OAuth Strava — échange le code contre des tokens et notifie l'utilisateur."""
-    from app.db import repositories as repo
-    from app.strava.oauth import exchange_code, verify_state
-
-    result = verify_state(state)
-    if result is None:
-        return HTMLResponse("<h2>❌ Lien invalide ou expiré.</h2>", status_code=400)
-    telegram_id, context = result
-
-    user = await repo.user_repo.get_by_telegram_id(session, telegram_id)
-    if user is None:
-        return HTMLResponse("<h2>❌ Utilisateur introuvable.</h2>", status_code=404)
-
-    try:
-        tokens = await exchange_code(code)
-    except Exception:
-        logger.exception("Erreur lors de l'échange du code Strava")
-        return HTMLResponse("<h2>❌ Erreur lors de la connexion Strava. Réessaie.</h2>", status_code=502)
-
-    provider_user_id = str(tokens.get("athlete", {}).get("id", ""))
-    await repo.oauth_repo.upsert_connection(session, user.id, "strava", tokens, provider_user_id)
-    await session.commit()
-
-    if context == "onboarding":
-        access_token = tokens.get("access_token", "")
-        await bot.send_message(
-            telegram_id,
-            "✅ *Strava connecté !* Import de tes activités en cours...\n\n"
-            "_Cela peut prendre quelques secondes._",
-            parse_mode="Markdown",
-        )
-        asyncio.create_task(_run_strava_onboarding_import(telegram_id, user.id, access_token))
-    else:
-        await bot.send_message(
-            telegram_id,
-            "✅ *Strava connecté avec succès !*\n\nTu peux fermer cette page.",
-            parse_mode="Markdown",
-        )
-
-    return HTMLResponse(
-        "<html><body style='font-family:sans-serif;text-align:center;padding:60px'>"
-        "<h2>✅ Strava connecté !</h2>"
-        "<p>Tu peux fermer cette fenêtre et revenir sur Telegram.</p>"
-        "</body></html>"
-    )
-
-async def _run_strava_onboarding_import(telegram_id: int, user_id, access_token: str):
-    """Importe l'historique Strava et stocke l'analyse dans onboarding_state."""
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-    from app.db import repositories as repo
-    from app.db.client import AsyncSessionFactory
-    from app.strava.history import generate_strava_intro, import_history
-
-    try:
-        async with AsyncSessionFactory() as session:
-            async with session.begin():
-                analysis = await import_history(session, user_id, access_token)
-
-                onboarding = await repo.onboarding_repo.get_or_create(session, user_id)
-                data = dict(onboarding.session_data)
-                data["strava_analysis"] = analysis
-                data.update({
-                    "level":                   analysis["level_detected"],
-                    "volume_suggested":        analysis["volume_suggested"],
-                    # hours_per_week intentionnellement absent — saisi par l'utilisateur à l'étape 3
-                    "power_meter":             analysis["has_power_meter"],
-                    "ftp":                     analysis.get("ftp_detected"),
-                    "ftp_source":              "declared" if analysis.get("ftp_detected") else "estimated",
-                    "hr_max":                  analysis.get("hr_max_detected"),
-                    "hr_max_source":           "declared" if analysis.get("hr_max_detected") else "estimated",
-                    "hr_rest":                 60,
-                    "hr_rest_source":          "estimated",
-                    "age":                     35,
-                    "sex":                     analysis.get("athlete_sex"),
-                    "weight_kg":               analysis.get("athlete_weight_kg"),
-                    "structured_plan_history": analysis.get("volume_suggested", 0) > 5,
-                })
-                await repo.onboarding_repo.update_step(session, onboarding, 0, data)
-
-        # Générer l'intro narrative LLM
-        intro_text = await generate_strava_intro(analysis)
-
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text="➤ Continuer l'onboarding",
-                callback_data="strava:continue_onboarding",
-            )
-        ]])
-        await bot.send_message(telegram_id, escape(intro_text), parse_mode="HTML")
-        await bot.send_message(
-            telegram_id,
-            "Ces données sont intégrées automatiquement. Plus que 5 questions !",
-            reply_markup=kb,
-        )
-    except Exception:
-        logger.exception("Erreur import historique Strava onboarding")
-        await bot.send_message(
-            telegram_id,
-            "⚠️ L'import Strava a rencontré un problème. "
-            "Tu peux continuer sans les données automatiques — tape /start.",
-        )
-
-@app.post("/dev/strava/simulate-activity")
-async def dev_strava_simulate_activity(payload: DevStravaSimulatePayload):
-    """Simule un event webhook Strava en environnement de développement uniquement."""
-    if not settings.is_dev:
-        return JSONResponse({"error": "forbidden"}, status_code=403)
-
-    from app.strava.webhook import handle_activity_event
-
-    event = {
-        "object_type": "activity",
-        "aspect_type": "create",
-        "owner_id": payload.owner_id,
-        "object_id": payload.object_id,
-    }
-    asyncio.create_task(handle_activity_event(event, bot, injected_activity=payload.activity))
-    return JSONResponse({"ok": True, "simulated": True})
-
-@app.get("/auth/strava/webhook")
-async def strava_webhook_verify(request: Request):
-    """Validation de la souscription webhook Strava (challenge)."""
-    params = dict(request.query_params)
-    if params.get("hub.verify_token") != settings.strava_webhook_verify_token:
-        return JSONResponse({"error": "invalid verify_token"}, status_code=403)
-    return JSONResponse({"hub.challenge": params.get("hub.challenge", "")})
-
-@app.post("/auth/strava/webhook")
-async def strava_webhook_event(request: Request):
-    """Réception des événements d'activité Strava."""
-    try:
-        event = await request.json()
-        # Traitement asynchrone sans bloquer la réponse (Strava attend < 2s)
-        import asyncio
-
-        from app.strava.webhook import handle_activity_event
-        asyncio.create_task(handle_activity_event(event, bot))
-    except Exception:
-        logger.exception("Erreur traitement webhook Strava")
     return JSONResponse({"ok": True})
 
 async def _run_intervals_poller() -> None:

@@ -57,7 +57,7 @@ async def test_cascade_delete_removes_dependents(db_session):
         day_of_week=0,
         logged_date=date(2026, 8, 24),
         status="done",
-        source="strava",
+        source="intervals_icu",
     )
     db_session.add(log)
     await db_session.commit()

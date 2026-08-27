@@ -18,7 +18,7 @@ from app.db.models.base import Base, TimestampMixin
 
 
 class Activity(Base, TimestampMixin):
-    """Activité historique importée depuis Strava (ou saisie manuelle future).
+    """Activité historique importée depuis la source de données d'entraînement.
 
     Séparée de session_logs qui est lié aux séances du plan (plan_id NOT NULL).
     Sert de base pour CTL/ATL/TSB et l'auto-détection du niveau à l'onboarding.
@@ -50,12 +50,10 @@ class Activity(Base, TimestampMixin):
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
-    source: Mapped[str] = mapped_column(String(16), nullable=False, default="strava")
-    # String, not numeric (spec 002 T038): Strava's ids happen to be integers, but
-    # intervals.icu's are not (e.g. "i180170537", confirmed against the live account) —
-    # an opaque external id should never have been typed as BigInteger to begin with.
-    # Existing Strava-sourced rows keep working unchanged; SQLite has no strict column
-    # typing to violate, and this project targets SQLite only (spec 003 cutover).
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="intervals_icu")
+    # String, not numeric: an opaque external activity id should never have been typed
+    # as BigInteger to begin with — intervals.icu's ids are not numeric (e.g.
+    # "i180170537", confirmed against the live account).
     source_activity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     activity_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)

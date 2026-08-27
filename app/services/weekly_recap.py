@@ -313,7 +313,7 @@ async def _generate_coach_section(
         return await provider.generate(
             system_prompt=WEEKLY_RECAP_SYSTEM_PROMPT,
             user_message=prompt,
-            max_tokens=2048,
+            max_tokens=4000,
         )
     except Exception as e:
         logger.warning(f"Erreur LLM coach section : {e} — fallback")
@@ -343,7 +343,7 @@ async def _generate_nextweek_section(
         return await provider.generate(
             system_prompt=WEEKLY_RECAP_SYSTEM_PROMPT,
             user_message=prompt,
-            max_tokens=2048,
+            max_tokens=4000,
         )
     except Exception as e:
         logger.warning(f"Erreur LLM nextweek section : {e} — fallback")

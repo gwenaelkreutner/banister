@@ -45,7 +45,6 @@ async def cmd_help(message: Message) -> None:
         "• /setup — Configurer ton profil et générer un plan\n"
         "• /plan — Voir ton programme de la semaine\n"
         "• /week N — Voir la semaine N de ton plan\n"
-        "• /strava — Connecter / déconnecter Strava\n"
         "• /forme — Voir tes métriques de forme (CTL/ATL/TSB)\n"
         "• /recap — Récapitulatif hebdomadaire\n"
         "• /reminders — Gérer les rappels de séance\n"

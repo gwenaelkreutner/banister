@@ -5,3 +5,9 @@ venv/
 .env
 *.egg-info/
 eval/results
+
+# Runtime data (spec 001 FR-004): the athlete's own SQLite database and instance lock —
+# never belongs in the repo, and data/ now holds real personal training data from live
+# testing during this session.
+data/
+.scratch_migration/

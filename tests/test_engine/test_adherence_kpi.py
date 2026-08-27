@@ -100,9 +100,9 @@ def test_zone_incorrect_reduces_pts():
     assert r_correct.pts > r_wrong.pts
 
 
-def test_no_strava_neutral():
+def test_no_session_type_neutral():
     r = _kpi(session_type_real=None)
-    assert r.pts > 0  # pas de pénalité pour absence Strava
+    assert r.pts > 0  # pas de pénalité pour absence de classification source
     assert "RPE" in r.reason
 
 

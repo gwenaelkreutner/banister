@@ -48,14 +48,6 @@ async def update_narrative(
     await session.flush()
 
 
-async def get_all_active(session: AsyncSession) -> list[TrainingPlan]:
-    """Retourne tous les plans actifs (utilisé par le webhook Strava)."""
-    result = await session.execute(
-        select(TrainingPlan).where(TrainingPlan.status == "active")
-    )
-    return list(result.scalars().all())
-
-
 async def set_start_date(session: AsyncSession, plan: TrainingPlan, start_date: date) -> None:
     """Met à jour la date de début du plan."""
     plan.start_date = start_date

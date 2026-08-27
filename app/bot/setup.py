@@ -24,7 +24,6 @@ def create_dispatcher() -> Dispatcher:
     from app.bot.routers.common import router as common_router
     from app.bot.routers.setup import router as setup_router
     from app.bot.routers.plan import router as plan_router
-    from app.bot.routers.strava import router as strava_router
     from app.bot.routers.session_log import router as session_log_router
     from app.bot.routers.forme import router as forme_router
     from app.bot.routers.recap import router as recap_router
@@ -34,7 +33,6 @@ def create_dispatcher() -> Dispatcher:
     dp.include_router(common_router)
     dp.include_router(setup_router)
     dp.include_router(plan_router)
-    dp.include_router(strava_router)
     dp.include_router(session_log_router)
     dp.include_router(forme_router)
     dp.include_router(recap_router)
