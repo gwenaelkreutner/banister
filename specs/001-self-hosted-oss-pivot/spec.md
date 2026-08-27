@@ -80,7 +80,39 @@ the same date, and verify they agree.
 
 ---
 
-### User Story 3 - The athlete trusts the coach not to act behind their back (Priority: P2)
+### User Story 3 - The athlete is told about a ride shortly after finishing it (Priority: P2)
+
+The athlete finishes a ride. Their device syncs to their training log as it always has. Without the athlete
+asking for anything, the coach reaches out in Telegram: it recognises the ride, tells them how it went
+against what was planned, asks how it felt, and then gives them a short read on the session in the coach's
+voice. The athlete did not open the app, did not log anything, and did not request a report.
+
+**Why this priority**: This is the product's daily engagement loop and the moment the coach delivers most of
+its perceived value. A coach that only answers when spoken to is a reference tool, not a coach. It is P2
+rather than P1 because it depends on the data source connection established in the P1 stories.
+
+**Independent Test**: Complete an activity, let it reach the training log, and verify the coach initiates
+contact with a correct, plan-aware account of that activity without any prompting.
+
+**Acceptance Scenarios**:
+
+1. **Given** a new completed activity appears in the athlete's training log, **When** the system next
+   refreshes, **Then** the coach sends the athlete an unsolicited notification about that activity within
+   the documented maximum delay.
+2. **Given** an activity corresponds to a planned session, **When** the coach notifies the athlete,
+   **Then** the notification states how the activity compared to what was planned.
+3. **Given** an activity does not correspond to any planned session, **When** the coach notifies the
+   athlete, **Then** it is presented as unplanned or bonus training rather than as a failure or an error.
+4. **Given** the athlete has been notified about an activity, **When** the same activity is seen again in a
+   later refresh, **Then** no duplicate notification is sent.
+5. **Given** the athlete responds to the notification with how the session felt, **When** the coach replies,
+   **Then** the reply reflects both the recorded data and the athlete's stated perception.
+6. **Given** several activities appeared since the last refresh, **When** the coach notifies the athlete,
+   **Then** each is accounted for without flooding the athlete with an unbounded burst of messages.
+
+---
+
+### User Story 4 - The athlete trusts the coach not to act behind their back (Priority: P2)
 
 The coach proposes a training week. Nothing appears in the athlete's training calendar until the athlete
 explicitly approves it. The athlete knows exactly where their data goes and can turn off anything that
@@ -107,7 +139,7 @@ explicit approval or documented and disableable.
 
 ---
 
-### User Story 4 - A contributor can understand and extend the project (Priority: P3)
+### User Story 5 - A contributor can understand and extend the project (Priority: P3)
 
 A developer discovers the project, reads the repository, understands the architecture and the rules that
 govern it, runs the tests locally, and opens a pull request that is validated automatically.
@@ -142,6 +174,16 @@ passing local test run and a green automated check on a pull request.
   conservative defaults or explain precisely what is missing.
 - Two instances are started against the same data directory. The second must fail clearly rather than
   corrupting shared state.
+- The system was stopped for an extended period and many activities accumulated. On restart it must not
+  emit one notification per missed activity, and must not silently forget them either.
+- An activity is edited, renamed, or deleted in the training log after the athlete was already notified
+  about it. The system must not treat the edited activity as a new one.
+- An activity arrives that is not cycling, or carries no usable data at all. The coach must handle it
+  without producing a misleading performance report.
+- The athlete never answers the question about how the session felt. The feedback must still be delivered
+  rather than remaining blocked awaiting a response.
+- A notification is generated while the messaging platform is unreachable. The activity must not be marked
+  as reported until delivery actually succeeds.
 - The athlete revokes calendar write approval after previously granting it. Previously written sessions must
   be addressed by a documented, predictable behaviour.
 
@@ -178,6 +220,24 @@ passing local test run and a green automated check on a pull request.
   converse over values produced deterministically.
 - **FR-012**: When source data cannot be refreshed, the system MUST report the age of the data it is using
   and MUST NOT substitute an estimate presented as current.
+
+#### Proactive notification
+
+- **FR-N01**: The system MUST detect newly completed activities appearing in the athlete's training log
+  without the athlete taking any action.
+- **FR-N02**: The system MUST notify the athlete of a newly detected activity without being prompted, within
+  a documented maximum delay, and that delay MUST be stated in operator-facing documentation.
+- **FR-N03**: The system MUST notify the athlete exactly once per activity, and MUST NOT re-notify for an
+  activity already reported, including across restarts.
+- **FR-N04**: The notification MUST state how the activity related to the training plan, distinguishing a
+  completed planned session, a session completed differently than planned, and unplanned training.
+- **FR-N05**: The system MUST invite the athlete to record how the session felt, and MUST incorporate that
+  response into the feedback it subsequently gives.
+- **FR-N06**: The system MUST bound the number of messages produced when multiple activities are detected in
+  a single refresh, so that a backlog cannot flood the athlete.
+- **FR-N07**: The athlete MUST be able to disable proactive notifications without losing the ability to ask
+  for the same information on demand.
+- **FR-N08**: The system MUST NOT present unplanned or below-target training as an error or failure state.
 
 #### Security and privacy
 
@@ -251,9 +311,13 @@ passing local test run and a green automated check on a pull request.
   observing outbound traffic during a representative session.
 - **SC-006**: Zero calendar writes occur without a recorded explicit approval, verified across all paths
   that can produce a write.
-- **SC-007**: A contributor with no prior exposure obtains a passing local test run by following the
+- **SC-007**: 100% of newly completed activities produce exactly one unsolicited notification, with no
+  duplicates and no omissions, verified across at least twenty activities including restarts of the system.
+- **SC-008**: The athlete is notified of a completed activity within the documented maximum delay of it
+  appearing in their training log, measured across a representative sample of activities.
+- **SC-009**: A contributor with no prior exposure obtains a passing local test run by following the
   contributor documentation alone.
-- **SC-008**: Messages from non-owner accounts produce no response of any kind, verified by attempting
+- **SC-010**: Messages from non-owner accounts produce no response of any kind, verified by attempting
   contact from an unauthorized account.
 
 ## Assumptions
@@ -269,8 +333,13 @@ passing local test run and a green automated check on a pull request.
   out of scope and are not design constraints.
 - The operator is technically capable of running a container stack and editing a configuration file, but is
   not assumed to be able to administer a database, a web server, or a certificate.
-- Polling the training data source on a periodic schedule is acceptable; near-real-time reaction to a
-  completed activity is not required. Published rate limits accommodate this comfortably.
+- Proactive notification is driven by periodic refresh rather than an inbound push from the training data
+  source, because accepting an inbound push would reintroduce the public endpoint that FR-002 exists to
+  eliminate. The athlete therefore accepts a bounded delay between finishing a ride and being notified,
+  in exchange for a deployment that needs no domain, certificate, or reverse proxy. The delay is a product
+  decision to be fixed in the provider spec; published rate limits permit a frequent refresh comfortably.
+- The athlete's activities reach the training log through their own device synchronization, which may
+  itself add delay outside this system's control and outside its notification guarantee.
 - The operator pays their model provider directly; the project neither resells nor brokers model access.
 - The athlete's own device-to-intervals.icu synchronization is outside this system's responsibility.
 - Existing deployments are the author's own. No migration path for third-party existing installations is

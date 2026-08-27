@@ -52,6 +52,21 @@
    entries. The earlier "fallback" framing was withdrawn: with a mandatory data source there is no
    unconnected mode for a fallback to serve.
 
+**Iteration 2 — omission reported by the author:**
+
+5. *Missing capability: proactive post-activity notification* — the initial draft covered no unsolicited
+   outbound communication at all. The existing product notifies the athlete after every ride and treats
+   that as its main engagement loop; as written, the spec would have permitted losing that behaviour
+   during the migration without violating any requirement. Added User Story 3 (P2), FR-N01 through FR-N08,
+   six edge cases, and SC-007/SC-008. Subsequent user stories and success criteria were renumbered.
+
+6. *Contradictory assumption withdrawn* — the draft asserted that "near-real-time reaction to a completed
+   activity is not required," which directly contradicts the newly added requirement. Replaced with an
+   assumption that states the actual trade-off: notification is refresh-driven rather than push-driven
+   because accepting an inbound push would reintroduce the public endpoint FR-002 exists to eliminate, and
+   the athlete accepts a bounded delay in exchange. The specific delay is deliberately left to the provider
+   spec as a product decision rather than guessed here.
+
 **Deferred by design** — the following are stated as requirements here and specified in detail elsewhere:
 FR-019 through FR-023 (guardrails), and the implementation of FR-003, FR-007, and FR-009.
 
