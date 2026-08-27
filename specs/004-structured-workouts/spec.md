@@ -334,6 +334,10 @@ once other people deploy.
 - The current generator builds session descriptions from text templates written in French, and the
   description attribute is itself named for that language. An open source project defaulting to English
   cannot keep that, which is why description generation moves to the structure and the configured voice.
+- **Known starting point**: the mechanism for loading a configurable coach voice already exists but is not
+  yet called anywhere, and the prompt layer still holds its text inline. This work and the first-run work
+  both depend on that wiring being completed. It is small, but it is a shared prerequisite of both, and
+  doing it twice in two places would produce two different answers.
 - A device-executable session needs steps with durations and intensities. Exactly what a given destination
   requires is a concern of the push feature; this specification's obligation is that the session carries
   enough information to satisfy it.

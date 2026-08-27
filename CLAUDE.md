@@ -7,6 +7,27 @@ Architecture en un seul process : aiogram v3 (bot) + FastAPI (webhooks/OAuth) + 
 
 **Principe fondateur : le LLM ne calcule jamais la charge d'entraînement — moteur déterministe uniquement.**
 
+## ⚠️ Refonte open source en cours
+
+Ce document décrit **l'état actuel du code**, pas la cible. Une refonte vers un produit self-hosted open
+source est spécifiée dans `specs/001` à `007`, et gouvernée par `.specify/memory/constitution.md`.
+
+Ce qui va changer, et qui rendra des sections entières de ce fichier obsolètes :
+
+| Décision | Effet sur ce document |
+|---|---|
+| intervals.icu **remplace** Strava (source unique et obligatoire) | toute la section Pipeline Strava |
+| SQLite local remplace Supabase | Tables + migrations + `client.py` |
+| Le log manuel de séance **disparaît** | `/log`, `SessionLogStates`, `tss_from_rpe()` |
+| TSS/zones consommés depuis la source, plus recalculés | `tss.py`, `zones.py` supprimés |
+| `SessionSpec` gagne des étapes structurées | Schémas Pydantic + génération de plan |
+
+**Ordre de construction** (les numéros de spec sont des identifiants, pas une séquence) :
+`003` base locale → `002` intervals.icu → `004` séances structurées → `005` push calendrier →
+`006` guardrails → `007` premier lancement.
+
+Mettre ce fichier à jour **au fil de** chaque migration, pas après coup.
+
 ## Commandes essentielles
 
 ```bash
@@ -45,15 +66,20 @@ ngrok http 8000
 app/
 ├── main.py                  # FastAPI + lifespan (polling dev / webhook prod)
 ├── config.py                # Settings Pydantic
+├── core/
+│   ├── persona.py           # load_persona() → Persona depuis personas/*.yaml
+│   │                        # ⚠️ construit mais JAMAIS appelé — prompts.py a encore ses prompts en dur
+│   ├── exceptions.py        # BanisterError + PersonaNotFoundError
+│   └── types.py
 ├── bot/
 │   ├── setup.py             # Dispatcher + middlewares + routers (ordre critique)
-│   ├── states.py            # FSM : OnboardingStates, PlanStates, SessionLogStates
+│   ├── states.py            # FSM : SetupStates, PlanStates, SessionLogStates
 │   ├── middlewares/
-│   │   ├── db_session.py    # Ouvre AsyncSession (doit précéder user_loader)
-│   │   └── user_loader.py   # Upsert User + restaure PlanStates.ACTIVE depuis DB
-│   ├── keyboards/           # Prefixes callbacks : onboard_ / plan_ / log_ / strava: / chat:
-│   ├── routers/             # Ordre dans setup.py : common → onboarding → disclaimer
-│   │                        # → plan → strava → session_log → forme → recap → reminders → chat (DERNIER)
+│   │   ├── db_session.py    # Ouvre AsyncSession (doit précéder single_user)
+│   │   └── single_user.py   # Garde TELEGRAM_OWNER_ID + injection User (pas d'upsert)
+│   ├── keyboards/           # Prefixes callbacks : setup: / plan: / log: / strava: / chat: / rem:
+│   ├── routers/             # Ordre réel dans setup.py : common → setup → plan → strava
+│   │                        # → session_log → forme → recap → reminders → chat (DERNIER)
 │   └── (chat doit rester en dernier — catch-all)
 ├── db/
 │   ├── client.py            # AsyncSessionFactory (expire_on_commit=False)
@@ -69,7 +95,8 @@ app/
 │   ├── periodization.py     # Blocs Base/Build/Peak/Taper
 │   ├── plan_builder.py      # Génération plan complet
 │   ├── plan_modifier.py     # Modification plan (outil LLM)
-│   ├── atl_ctl.py           # ATL/CTL/TSB (EMA τ=7j/42j)
+│   ├── atl_ctl.py           # ATL/CTL/TSB (EMA τ=7j/42j) + tss_from_rpe()
+│   ├── adherence_kpi.py     # Score KPI par séance (0–2.0 pts) + bloc KPI hebdo
 │   └── weekly_snapshot.py   # WeeklySnapshot : tendance charge, monotonie Foster
 ├── llm/
 │   ├── factory.py           # Sélection provider (openrouter | anthropic)
@@ -164,14 +191,14 @@ Si `session_type_real == "unknown"` (Tier 1) → type score neutre à 12 pts, pa
 | `users` | Compte Telegram, flags onboarding, préférences rappels (`reminders_enabled`, `reminder_hour`, `reminder_minute`, `reminder_last_sent_at`) |
 | `athlete_profiles` | `profile` JSONB → `AthleteProfileSchema` |
 | `training_plans` | `plan_technical` JSONB → `TrainingPlanSchema`, `start_date`, `is_active` |
-| `onboarding_state` | Étape courante + `session_data` JSONB |
 | `oauth_connections` | Tokens Strava (access/refresh, expires_at, provider_user_id) |
 | `session_logs` | `plan_id` NOT NULL, `tss_actual`, `rpe_emoji`, `logged_date` ; métriques qualité (`cardiac_drift_index`, `intervals_consistency_index`, `respect_zones_score`, `session_type_real`, `variability_index`, `intensity_factor`, `dominant_zone`) ; contexte Strava (`elevation_gain_m`, `average_temp_c`, `athlete_count`) |
 | `chat_messages` | Historique LLM (role, content, intent, tool_used) |
 | `activities` | Import historique Strava (`tss`, `tss_method`, `device_watts`) |
 | `weekly_adherence` | Taux d'adhérence hebdomadaire — upsert à chaque `/recap` ; clé `(user_id, week_start_date)` ; colonnes : `sessions_done`, `sessions_planned`, `compliance_pct`, `tss_7d`, `week_number`, `plan_id` |
 
-Migrations : `migrations/001` → `013` — exécuter manuellement dans Supabase SQL Editor.
+Migrations : un seul fichier `migrations/init.sql` (schéma complet), joué automatiquement par Docker au
+premier démarrage. Les anciennes migrations numérotées `001`→`013` ont été fondues dedans.
 
 ## Schémas Pydantic clés
 
@@ -311,16 +338,17 @@ reminder_last_sent_at DATE    NULL
 - Notification en 3 messages : A (teaser, silencieux) → B (métrique héros, silencieux) → C (verdict + clavier RPE, seule vibration)
 - Post-RPE : `edit_text` sur Message C → "Ton coach analyse..." → edit → récit LLM 3 phrases (aucune notification supplémentaire)
 
-## Flux onboarding
+## Flux de configuration (`/setup`)
 
 ```
-/start
-  ↓ STRAVA_PIVOT
-  ├── [Connecter Strava] → OAuth (context=onboarding) → import 49j → flow court (4 questions)
-  └── [Questions classiques] → STEP_0 → ... 12 étapes → DISCLAIMER → plan
+/setup → SPORT → GOAL → DATE → VOLUME → POWER → AGE → _finalize_setup() → plan
 ```
 
-Auto-détecté depuis Strava : `level`, `hours_per_week`, `power_meter`, `ftp`, `hr_max`, `preferred_days`
+6 étapes, `SetupStates` dans `app/bot/states.py`, tout dans `app/bot/routers/setup.py` (~456 lignes).
+Relancer `/setup` régénère le plan intégralement.
+
+`_build_profile()` assemble l'`AthleteProfileSchema` ; si Strava est connecté, la forme actuelle
+(`current_ctl` / `current_atl` / `current_tsb`) est injectée depuis l'historique importé.
 
 ## Variables d'environnement
 

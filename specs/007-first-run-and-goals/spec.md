@@ -311,6 +311,16 @@ P3 in build order only.
 - Because the athlete may change the coach's voice at any time, voice cannot live solely in deployer
   configuration. It becomes athlete state, with the configured value as its default. This is a change from
   the present arrangement, where it is configuration only.
+- **Known starting point, verified by inspection**: the mechanism for loading a coach voice from a
+  definition file already exists and works, several voice definitions are already written, and the
+  deployer-level configuration value already exists. What does not exist is any call to it: the prompt
+  layer still holds its text inline, across roughly six places, and under two different coach identities.
+  This work is therefore not a build from nothing — it is finishing an existing, unfinished piece and
+  then making the result selectable. Whoever plans it should read the prompt layer first, because the
+  remaining work is concentrated there rather than in the loading mechanism.
+- A second, separate mechanism for narrative modes also lives in the prompt layer. It overlaps in shape
+  with coach voices but is a different axis and must not be merged into them: a voice is who the coach is,
+  a narrative mode is how one activity is recounted. Both survive.
 - Voice and narrative mode remain orthogonal: the voice is who the coach is, while a narrative mode governs
   how a single activity is recounted. Selecting a voice does not select a narrative mode.
 - Health constraints continue to be asked, since no data source knows them and they materially affect what
