@@ -1,10 +1,17 @@
 """intervals.icu activity payload -> AnalyzedSession (spec 002 T011).
 
-Consumed verbatim, never recomputed (FR-015, FR-016, FR-017; research R9a/R9b/R9c):
-tss (icu_training_load), intensity_factor (icu_intensity / 100), normalized_power
-(icu_weighted_avg_watts), time_in_zones_s (icu_zone_times), variability_index
-(icu_variability_index), cardiac_drift_index (decoupling — a different number from our
-old formula, and that disagreement is *why* we consume theirs instead of ours, per R9b).
+Consumed verbatim (never recomputed — FR-015, FR-016, FR-017; research R9a/R9b/R9c), but
+not always bit-for-bit as the source represents it: unit conversion happens at the
+boundary, not downstream. tss (icu_training_load), normalized_power
+(icu_weighted_avg_watts) and time_in_zones_s (icu_zone_times) pass straight through.
+intensity_factor is icu_intensity / 100 (the source expresses it as a percentage).
+variability_index equals icu_variability_index directly (verified identical, R9a).
+cardiac_drift_index is decoupling / 100 — decoupling is also a percentage, while
+cardiac_drift_index is a signed fraction everywhere else in this codebase (found live,
+T051: an unconverted value rendered as "+1571%" in a real notification). The underlying
+*number* disagreeing with our old formula (R9b) is a separate, expected fact — this is
+about matching the unit our own consumers already assume, not about which value is
+"more correct".
 
 A null icu_training_load is permanent, not pending (R9c) — it stays None here, never 0.0
 (FR-020). ~15% of real activities have one.
@@ -170,6 +177,13 @@ def map_activity_to_analyzed_session(
     icu_intensity = payload.get("icu_intensity")
     intensity_factor = (icu_intensity / 100) if icu_intensity is not None else None
 
+    # decoupling is already a percentage (15.7 == 15.7%), but cardiac_drift_index is a
+    # signed fraction throughout the rest of this codebase (highlight.py's threshold is
+    # 0.08, i.e. 8%) — found live: an unconverted value rendered as "+1571%" in a real
+    # notification. Divide to match the unit every consumer already assumes.
+    icu_decoupling = payload.get("decoupling")
+    cardiac_drift_index = (icu_decoupling / 100) if icu_decoupling is not None else None
+
     duration_s = int(payload.get("elapsed_time") or 0)
 
     respect_zones_score = _compute_respect_zones_score(
@@ -207,7 +221,7 @@ def map_activity_to_analyzed_session(
         variability_index=payload.get("icu_variability_index"),
         session_type_real=session_type_real,
         respect_zones_score=respect_zones_score,
-        cardiac_drift_index=payload.get("decoupling"),
+        cardiac_drift_index=cardiac_drift_index,
         intervals_consistency_index=_intervals_consistency_index(icu_intervals),
         planned_session_id=planned_session_id,
         planned_workout_type=planned_workout_type,

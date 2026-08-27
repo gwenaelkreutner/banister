@@ -157,14 +157,21 @@ async def poll_once(
         return []
 
 
-async def run_poller_scheduler(session_factory, client_factory) -> None:
+async def run_poller_scheduler(session_factory, client_factory, bot=None) -> None:
     """T037's counterpart to app/main.py's other _*_scheduler functions — kept here
     rather than in main.py because the loop itself is provider machinery (plan.md's
     structure decision), not a notification scheduler. `session_factory` and
     `client_factory` are injected rather than imported directly so this loop stays
     testable without a real DB engine or a real API key.
+
+    `bot` is optional so Phase 5-era detection-only tests keep working unmodified — when
+    omitted, detected activities are logged but never notified or marked reported (the
+    old Phase 5 behaviour), which is a deliberately safe default rather than a silent
+    notification loss: nothing gets marked reported, so a real `bot` wired in later would
+    still pick everything up on its first tick.
     """
     from app.db.repositories.user_repo import get_single_user
+    from app.providers.intervals.notifier import notify_detected_activity
 
     while True:
         interval_minutes = resolve_poll_interval_minutes()
@@ -178,14 +185,28 @@ async def run_poller_scheduler(session_factory, client_factory) -> None:
 
                 client = client_factory()
                 unreported = await poll_once(session, user.id, client)
-                if unreported:
-                    to_announce, ingest_only = bound_announcements(unreported)
-                    logger.info(
-                        "Poll detected %s unreported activity(ies): %s to announce, "
-                        "%s ingest-only this cycle. Not yet wired to notify (Phase 6).",
-                        len(unreported),
-                        len(to_announce),
-                        len(ingest_only),
+                if not unreported:
+                    continue
+
+                to_announce, ingest_only = bound_announcements(unreported)
+                logger.info(
+                    "Poll detected %s unreported activity(ies): %s to announce, "
+                    "%s ingest-only this cycle.",
+                    len(unreported),
+                    len(to_announce),
+                    len(ingest_only),
+                )
+
+                if bot is None:
+                    continue
+
+                for activity in to_announce:
+                    await notify_detected_activity(
+                        session, user, bot, client, activity, announce=True
+                    )
+                for activity in ingest_only:
+                    await notify_detected_activity(
+                        session, user, bot, client, activity, announce=False
                     )
         except IntervalsError:
             # Already logged with detail inside poll_once/detect_new_activities' callers

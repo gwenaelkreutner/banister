@@ -109,6 +109,20 @@ def test_score_activity_weak_match_type_mismatch():
     assert result.confidence_score < 65
 
 
+def test_score_null_tss_is_neutral_not_a_crash():
+    """spec 002: analyzed.tss can be None (source has no computed load for this
+    activity — research R9c, ~15% of real activities). Must score neutrally, not
+    raise on `None / float` or `f'{None:.0f}'`."""
+    session = _session()
+    analyzed = _analyzed(tss=None)
+
+    result = score_activity_vs_session(analyzed, session)
+
+    load_reasons = [r for r in result.reasons if "inconnue" in r]
+    assert load_reasons, "Devrait indiquer la charge inconnue"
+    assert result.confidence_score >= 0
+
+
 def test_score_type_unknown_is_neutral():
     """Si session_type_real='unknown', la dimension type est neutre (pas de pénalité)."""
     session = _session(workout_type="intervals")
@@ -163,8 +177,14 @@ def test_semantic_matching_prefers_type_over_proximity():
             }
         ],
         "zones": {
-            "Z1": {"name": "Récup", "code": "Z1", "lower_pct": 0, "upper_pct": 0.55, "description_fr": "Récup"},
-            "Z2": {"name": "Endurance", "code": "Z2", "lower_pct": 0.56, "upper_pct": 0.75, "description_fr": "Endurance"},
+            "Z1": {
+                "name": "Récup", "code": "Z1", "lower_pct": 0, "upper_pct": 0.55,
+                "description_fr": "Récup",
+            },
+            "Z2": {
+                "name": "Endurance", "code": "Z2", "lower_pct": 0.56, "upper_pct": 0.75,
+                "description_fr": "Endurance",
+            },
         },
         "initial_weekly_tss": 200,
         "peak_weekly_tss": 350,

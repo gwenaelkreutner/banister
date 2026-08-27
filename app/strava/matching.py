@@ -224,15 +224,26 @@ def score_activity_vs_session(
         reasons.append(f"Durée éloignée ({elapsed_minutes} min vs {planned_minutes} min prévues)")
 
     # ── 2. TSS/charge (30 pts) ────────────────────────────────────────────────
+    # analyzed.tss can be None — the source has no computed load for ~15% of real
+    # activities (spec 002 research R9c). Neutral score, same treatment as an
+    # unrecognized session_type_real below, rather than crashing on None / float.
     tss_target = max(1.0, float(session_spec.tss_target))
-    tss_ratio = analyzed.tss / tss_target
-    load_score = _score_load(tss_ratio)
-    total += load_score
-    margin = 0.30
-    if (1 - margin) <= tss_ratio <= (1 + margin):
-        reasons.append(f"Charge cohérente ({analyzed.tss:.0f} vs TSS cible {round(tss_target)})")
+    if analyzed.tss is None:
+        load_score = 15  # neutral midpoint of the 30-pt range
+        reasons.append("Charge inconnue (pas de TSS disponible pour cette activité)")
     else:
-        reasons.append(f"Charge éloignée ({analyzed.tss:.0f} vs TSS cible {round(tss_target)})")
+        tss_ratio = analyzed.tss / tss_target
+        load_score = _score_load(tss_ratio)
+        margin = 0.30
+        if (1 - margin) <= tss_ratio <= (1 + margin):
+            reasons.append(
+                f"Charge cohérente ({analyzed.tss:.0f} vs TSS cible {round(tss_target)})"
+            )
+        else:
+            reasons.append(
+                f"Charge éloignée ({analyzed.tss:.0f} vs TSS cible {round(tss_target)})"
+            )
+    total += load_score
 
     # ── 3. Type de séance (25 pts) ────────────────────────────────────────────
     session_type = analyzed.session_type_real or "unknown"

@@ -80,6 +80,12 @@ def _pct_fmt(val: float) -> str:
     return f"{val:+.0f}%"
 
 
+def _tss_fmt(tss: float | None) -> str:
+    """Le TSS peut être None — pas de charge calculable côté source pour cette activité
+    (spec 002 research R9c, ~15% des activités réelles). '—' plutôt qu'un crash sur None."""
+    return f"{tss:.0f}" if tss is not None else "—"
+
+
 def _select_candidates(
     analyzed: "AnalyzedSession",
     fitness: "FitnessMetrics",
@@ -193,7 +199,9 @@ def _select_candidates(
         ))
 
     # VOLUME_CONTEXT — fallback toujours valide
-    if tss_6w_daily and tss_6w_daily > 0:
+    # tss peut être None (source sans charge calculable pour cette activité — spec 002
+    # research R9c) : dans ce cas on tombe directement sur le fallback absolu ci-dessous.
+    if tss_6w_daily and tss_6w_daily > 0 and tss is not None:
         ratio = int(tss / tss_6w_daily * 100)
         candidates.append((
             HighlightResult(
@@ -359,6 +367,8 @@ def _check_pr_zones_score(analyzed: "AnalyzedSession", pool: list, n: int) -> Pe
 
 
 def _check_pr_tss(analyzed: "AnalyzedSession", pool: list, n: int) -> PersonalRecord | None:
+    if analyzed.tss is None:
+        return None
     values = [lg.tss_actual for lg in pool if lg.tss_actual is not None]
     if len(values) < 3:
         return None
@@ -442,7 +452,7 @@ def build_message_c_session_card(
     duration_min = (analyzed.moving_time_s or analyzed.duration_s) // 60
     tss = analyzed.tss
 
-    lines: list[str] = [f"{icon} {label} · {duration_min} min · TSS {tss:.0f}"]
+    lines: list[str] = [f"{icon} {label} · {duration_min} min · TSS {_tss_fmt(tss)}"]
 
     tss_planned = getattr(session_spec, "tss_target", None) if session_spec else None
     plan_line = _plan_comparison_line(match_level, tss, tss_planned)
@@ -491,7 +501,7 @@ def build_message_b(
     lines: list[str] = []
 
     # En-tête : type + durée + TSS
-    lines.append(f"{icon} {session_type.upper()} · {duration_min} min · TSS {tss:.0f}")
+    lines.append(f"{icon} {session_type.upper()} · {duration_min} min · TSS {_tss_fmt(tss)}")
     lines.append("")
 
     # Ligne héros

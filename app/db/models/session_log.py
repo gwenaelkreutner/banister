@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import JSON, BigInteger, Date, ForeignKey, Index, SmallInteger, String, Uuid, text
+from sqlalchemy import JSON, Date, ForeignKey, Index, SmallInteger, String, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import Base, TimestampMixin
@@ -40,8 +40,12 @@ class SessionLog(Base, TimestampMixin):
     rpe_emoji: Mapped[str | None] = mapped_column(String(8), nullable=True)  # "hard"|"normal"|"easy"
     duration_minutes_actual: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     tss_actual: Mapped[float | None] = mapped_column(nullable=True)
-    strava_activity_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")  # "manual"|"strava"
+    # String, not numeric (spec 002 T038/T044's discovery applies here too): Strava's
+    # ids happen to be integers, intervals.icu's are not (e.g. "i180170537"). Kept under
+    # its historical name — renaming is Phase 7's job, alongside deleting app/strava/.
+    strava_activity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # "manual"|"strava"|"intervals_icu"
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
 
     environment: Mapped[str | None] = mapped_column(String(16), nullable=True)  # "outdoor" | "indoor"
 

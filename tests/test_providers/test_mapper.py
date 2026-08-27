@@ -107,10 +107,13 @@ class TestPopulatedFixtureConsumesSourceValuesVerbatim:
         analyzed = map_activity_to_analyzed_session(payload)
         assert analyzed.variability_index == payload["icu_variability_index"]
 
-    def test_cardiac_drift_index_equals_decoupling(self):
+    def test_cardiac_drift_index_equals_decoupling_converted_to_a_fraction(self):
+        """decoupling is a percentage (15.7 == 15.7%); cardiac_drift_index is a signed
+        fraction throughout the rest of the codebase (highlight.py's threshold is 0.08).
+        Found live: an unconverted value rendered as '+1571%' in a real notification."""
         payload = _load("activity_full.json")
         analyzed = map_activity_to_analyzed_session(payload)
-        assert analyzed.cardiac_drift_index == payload["decoupling"]
+        assert analyzed.cardiac_drift_index == payload["decoupling"] / 100
 
     def test_time_in_zones_matches_icu_zone_times_verbatim(self):
         payload = _load("activity_full.json")

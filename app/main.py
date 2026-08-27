@@ -291,11 +291,12 @@ async def strava_webhook_event(request: Request):
     return JSONResponse({"ok": True})
 
 async def _run_intervals_poller() -> None:
-    """spec 002 T037. Detection only for now (Phase 5) — see poller.py's module
-    docstring. `client_factory` builds a fresh IntervalsClient per tick rather than
-    reusing one across the whole app lifetime, matching IntervalsClient's own contract
-    (it opens a new httpx.AsyncClient per request already, so there is no connection
-    state to keep alive between ticks)."""
+    """spec 002 T037/T045. `client_factory` builds a fresh IntervalsClient per tick
+    rather than reusing one across the whole app lifetime, matching IntervalsClient's
+    own contract (it opens a new httpx.AsyncClient per request already, so there is no
+    connection state to keep alive between ticks). Passing the real `bot` is what turns
+    this from Phase 5's detection-only loop into Phase 6's live notification path — see
+    run_poller_scheduler's docstring for why it is still safe to omit."""
     from app.db.client import AsyncSessionFactory
     from app.providers.intervals.client import IntervalsClient
 
@@ -305,7 +306,7 @@ async def _run_intervals_poller() -> None:
             athlete_id=settings.intervals_athlete_id,
         )
 
-    await run_poller_scheduler(AsyncSessionFactory, _client_factory)
+    await run_poller_scheduler(AsyncSessionFactory, _client_factory, bot=bot)
 
 
 async def _weekly_recap_scheduler(bot):

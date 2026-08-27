@@ -18,7 +18,7 @@ async def create(
     rpe_emoji: str | None = None,
     duration_minutes_actual: int | None = None,
     tss_actual: float | None = None,
-    strava_activity_id: int | None = None,
+    strava_activity_id: str | None = None,
     source: str = "manual",
     avg_heart_rate: int | None = None,
     avg_power: int | None = None,
@@ -131,7 +131,7 @@ async def already_logged(
 
 async def get_by_strava_activity(
     session: AsyncSession,
-    strava_activity_id: int,
+    strava_activity_id: str,
 ) -> SessionLog | None:
     result = await session.execute(
         select(SessionLog).where(SessionLog.strava_activity_id == strava_activity_id)
