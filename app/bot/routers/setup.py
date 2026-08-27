@@ -19,6 +19,7 @@ from app.bot.states import PlanStates, SetupStates
 from app.db import repositories as repo
 from app.db.repositories import activity_repo
 from app.engine.atl_ctl import compute_fitness_from_any, estimate_initial_ctl
+from app.services.fitness import get_current_fitness
 from app.engine.plan_builder import generate_plan
 from app.engine.schemas import (
     AthleteProfileSchema,
@@ -289,17 +290,24 @@ async def _finalize_setup(
             first_name=tg.first_name,
         )
 
-    # Fetch imported history for CTL seed, if any exists
+    # Forme de départ : consommée depuis la source si déjà disponible (spec 002 FR-016),
+    # sinon repli sur l'historique local importé — les deux peuvent être vides si
+    # l'athlète vient tout juste de se connecter et que le poller n'a pas encore eu son
+    # premier tick (import_history/ingest_wellness sont idempotents, voir poller.py)
     fitness = None
     try:
-        activities = await activity_repo.get_for_user(session, user.id, days=120)
-        if activities:
-            weekly_tss_seed = tss_from_weekly_hours(float(data.get("hours_per_week", 5)))
-            initial_ctl_seed = estimate_initial_ctl(weekly_tss_seed)
-            seed_date = date.today() - timedelta(days=120)
-            fitness = compute_fitness_from_any(
-                activities, initial_ctl=initial_ctl_seed, seed_date=seed_date
-            )
+        current = await get_current_fitness(session, user.id)
+        if current is not None:
+            fitness = current.metrics
+        else:
+            activities = await activity_repo.get_for_user(session, user.id, days=120)
+            if activities:
+                weekly_tss_seed = tss_from_weekly_hours(float(data.get("hours_per_week", 5)))
+                initial_ctl_seed = estimate_initial_ctl(weekly_tss_seed)
+                seed_date = date.today() - timedelta(days=120)
+                fitness = compute_fitness_from_any(
+                    activities, initial_ctl=initial_ctl_seed, seed_date=seed_date
+                )
     except Exception:
         pass
 

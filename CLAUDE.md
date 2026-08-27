@@ -88,7 +88,8 @@ app/
 │       └── weekly_adherence_repo.py  # upsert + get_recent — persistance taux d'adhérence /recap
 ├── services/                # Orchestration : repos + LLM, sans dépendance aiogram
 │   ├── weekly_recap.py      # compute_weekly_recap() → WeeklyRecapResult
-│   └── activity_feedback.py # assemble_activity_feedback() — contexte post-séance, sans dépendance bot
+│   ├── activity_feedback.py # assemble_activity_feedback() — contexte post-séance, sans dépendance bot
+│   └── fitness.py           # get_current_fitness() — CTL/ATL/TSB courants depuis la table wellness
 ├── engine/                  # Moteur déterministe — zéro LLM ici
 │   ├── schemas.py           # Pydantic : AthleteProfileSchema, TrainingPlanSchema, SessionSpec
 │   ├── periodization.py     # Blocs Base/Build/Peak/Taper
@@ -195,6 +196,7 @@ affiche message "Sortie bonus" au lieu de "hors plan" (`app/providers/intervals/
 | `chat_messages` | Historique LLM (role, content, intent, tool_used) |
 | `activities` | Import historique (`source="intervals_icu"`, `source_activity_id`, `tss`, `tss_method`, `device_watts`) |
 | `weekly_adherence` | Taux d'adhérence hebdomadaire — upsert à chaque `/recap` ; clé `(user_id, week_start_date)` ; colonnes : `sessions_done`, `sessions_planned`, `compliance_pct`, `tss_7d`, `week_number`, `plan_id` |
+| `wellness` | HRV / FC repos / sommeil / CTL / ATL quotidiens — ingérée à chaque tick du poller (`ingest_wellness`), source de `get_current_fitness()` |
 
 `oauth_connections` a été supprimée (spec 002 T059) — l'authentification intervals.icu est une clé API
 personnelle, pas un flux OAuth, donc aucune table de tokens n'est nécessaire.
@@ -247,19 +249,38 @@ await session.flush()
 
 ### Autorité de la source (spec 002, Constitution Principe IV)
 - **Consommés tels quels, jamais recalculés** : charge d'entraînement de l'activité, CTL/ATL/TSB, zones
-  puissance/FC, seuils FTP/LTHR — tout vient d'intervals.icu via `app/providers/intervals/mapper.py`
+  puissance/FC, seuils FTP/LTHR
+  - Par activité : `app/providers/intervals/mapper.py` (TSS, zones, seuils)
+  - **CTL/ATL/TSB courants** (`/forme`, `/recap`, le chat, le message post-séance, le check KPI de
+    surcharge) : `app/services/fitness.py::get_current_fitness()`, qui lit la table `wellness` — voir
+    section ATL/CTL/TSB ci-dessous, le switch a été fait (spec 002 follow-up post-Phase 8)
 - **Calculés localement** car la source ne les fournit pas : périodisation, génération/modification de
   plan, matching activité↔séance, KPI d'adhérence, projection de forme théorique
-- `app/engine/tss.py` et le calcul local de zones ont été **supprimés** (spec 002 T017-T019) — le log
-  manuel disparu, plus aucun appelant ne dépendait d'un calcul local de TSS/HRSS
+- `app/engine/tss.py` : `calc_tss()`/`calc_hrss()` (calcul par activité réelle) **supprimés** (spec 002
+  T018/T019, leur dernier appelant réel — l'import historique Strava — a disparu en Phase 7).
+  `estimate_session_tss*()`/`tss_from_weekly_hours()` (estimation pour la génération de plan, pas de
+  calcul par activité réelle) **restent** — usage légitime, pas concerné par la règle d'autorité de la
+  source. Idem `app/engine/zones.py` : reste, utilisé uniquement par `plan_builder.py`/`llm/tools.py`
+  pour dériver les zones à afficher depuis le FTP déclaré, pas pour recalculer les zones d'une activité
 - Le LLM ne calcule jamais aucune charge — voir principe fondateur en tête de ce document
 
 ### ATL/CTL/TSB
-⚠️ **Écart connu avec spec 002** : la règle ci-dessus dit CTL/ATL/TSB consommés depuis la source, mais
-`/forme` et `/recap` affichent encore le CTL/ATL/TSB **recalculé localement** par
-`compute_fitness_from_any()` — jamais basculé vers `icu_ctl`/`icu_atl` du payload intervals.icu. Signalé
-en conditions réelles, non résolu : basculer cette lecture est un changement séparé, pas encore fait.
-- `compute_fitness_from_any()` accepte liste mixte `SessionLog` + `Activity` (duck-typing)
+Consommés depuis la source pour la figure courante — `app/services/fitness.py::get_current_fitness()` lit
+la table `wellness` (CTL/ATL quotidiens, y compris les jours de repos, contrairement à un CTL dérivé des
+seules activités). Repli sur `compute_fitness_from_any()` (recalcul local) uniquement si aucune ligne
+wellness n'existe encore — athlète tout juste connecté, avant le premier tick du poller.
+
+⚠️ Trouvé en corrigeant ce switch : `app/providers/intervals/wellness.py::ingest_wellness()` et
+`app/providers/intervals/history.py::import_history()` étaient tous les deux **construits, testés, et
+jamais appelés nulle part dans l'app qui tourne** — la table `activities` était vide en conditions réelles
+malgré Phase 5 marquée complète. Les deux sont maintenant appelés à chaque tick du poller (idempotents —
+`import_history` se resume via `sync_state.history_import_complete`, `ingest_wellness` réingère une petite
+fenêtre glissante à chaque tick, sans effet si déjà à jour). Écart réel mesuré sur le compte de test après
+correction : TSB local à -36 (zone "surmenage") vs -18.8 selon la source (zone "fatigue normale") — 17
+points d'écart, pas une nuance.
+
+- `compute_fitness_from_any()` accepte liste mixte `SessionLog` + `Activity` (duck-typing) — reste le
+  repli, et sert aussi `project_fitness_from_plan()` (projection théorique, jamais depuis la source)
 - Si historique < 84j → amorcer CTL avec `estimate_initial_ctl(weekly_tss)` + `seed_date`
 - Le déclin final jusqu'à `date.today()` est appliqué automatiquement
 
@@ -363,7 +384,8 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Ajouter commande bot | `app/bot/routers/` + enregistrer dans `setup.py` avant `chat_router` |
 | Modifier génération plan | `app/engine/plan_builder.py` |
 | Modifier périodisation | `app/engine/periodization.py` |
-| Modifier ATL/CTL/TSB (calcul local — écart connu, voir section dédiée) | `app/engine/atl_ctl.py` |
+| Modifier la figure CTL/ATL/TSB courante (source) | `app/services/fitness.py` — `get_current_fitness()` |
+| Modifier le calcul local ATL/CTL/TSB (repli, projection théorique) | `app/engine/atl_ctl.py` |
 | Projection CTL théorique (suivi plan) | `app/engine/atl_ctl.py` — `project_fitness_from_plan()` |
 | Modifier snapshot hebdo (monotonie, tendance) | `app/engine/weekly_snapshot.py` |
 | Modifier récap hebdo (logique + LLM) | `app/services/weekly_recap.py` |

@@ -32,6 +32,7 @@ from app.engine.atl_ctl import (
 )
 from app.engine.schemas import TrainingPlanSchema
 from app.engine.tss import tss_from_weekly_hours
+from app.services.fitness import get_current_fitness
 from app.engine.weekly_snapshot import WeeklySnapshot, compute_weekly_snapshot
 from app.providers.analysis.analysis_models import AnalyzedSession
 from app.providers.analysis.highlight import HighlightResult, select_highlight
@@ -315,9 +316,13 @@ async def _build_fitness_feedback(
     if not all_items:
         return None, "📊 Données de forme indisponibles pour le moment."
 
-    initial_ctl = await _estimate_ctl_seed(all_items, session, user_id)
-    seed_date = (date.today() - timedelta(days=49)) if initial_ctl > 0 else None
-    metrics = compute_fitness_from_any(all_items, initial_ctl=initial_ctl, seed_date=seed_date)
+    current = await get_current_fitness(session, user_id)
+    if current is not None:
+        metrics = current.metrics
+    else:
+        initial_ctl = await _estimate_ctl_seed(all_items, session, user_id)
+        seed_date = (date.today() - timedelta(days=49)) if initial_ctl > 0 else None
+        metrics = compute_fitness_from_any(all_items, initial_ctl=initial_ctl, seed_date=seed_date)
     label = tsb_label(metrics.tsb)
     text = (
         "📊 <b>Impact forme après cette séance</b>\n"

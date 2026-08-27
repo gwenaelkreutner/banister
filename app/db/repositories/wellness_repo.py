@@ -58,6 +58,30 @@ async def get_by_date(session: AsyncSession, user_id: uuid.UUID, date_: date) ->
     return result.scalar_one_or_none()
 
 
+async def get_latest(
+    session: AsyncSession, user_id: uuid.UUID, *, on_or_before: date
+) -> Wellness | None:
+    """Le wellness le plus récent avec un CTL renseigné, à date `on_or_before` ou avant.
+
+    intervals.icu calcule CTL/ATL chaque jour, y compris les jours de repos — contrairement
+    à un CTL dérivé des seules activités, qui resterait figé tant qu'aucune sortie n'a lieu.
+    `ctl IS NOT NULL` exclut les jours capturés avant que la source ait fini son calcul du
+    jour (constaté en conditions réelles : le poller peut tourner avant que intervals.icu
+    n'ait recalculé la nuit précédente)."""
+    result = await session.execute(
+        select(Wellness)
+        .where(
+            Wellness.user_id == user_id,
+            Wellness.date <= on_or_before,
+            Wellness.ctl.is_not(None),
+            Wellness.atl.is_not(None),
+        )
+        .order_by(Wellness.date.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_range(
     session: AsyncSession,
     user_id: uuid.UUID,

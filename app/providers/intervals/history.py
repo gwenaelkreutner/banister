@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories import activity_repo, sync_state_repo
 from app.providers.intervals.client import IntervalsClient
+from app.providers.intervals.wellness import ingest_wellness
 
 # Matches app/engine/atl_ctl.py's own 2xτ_CTL (84j) threshold for when the EMA needs a
 # seeded starting CTL rather than being trusted to bootstrap from zero (FR-026: "enough
@@ -92,6 +93,14 @@ async def import_history(
     activities = await client.list_activities(oldest=oldest.isoformat(), newest=today.isoformat())
     rows = [_to_activity_row(a) for a in activities]
     inserted = await activity_repo.bulk_insert(session, user_id, rows)
+
+    # Wellness carries a daily CTL/ATL independent of whether an activity happened that
+    # day (spec 002 T072-follow-up) — ingested here too, not just going forward from the
+    # poller, so a freshly onboarded athlete's /forme reflects the source's real history
+    # immediately rather than only from the day they connect onward.
+    await ingest_wellness(
+        session, user_id, client, oldest=oldest.isoformat(), newest=today.isoformat()
+    )
 
     await sync_state_repo.advance_history_import_cursor(session, user_id, oldest)
     await sync_state_repo.mark_history_import_complete(session, user_id)

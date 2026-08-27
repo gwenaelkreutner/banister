@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from app.db.models.user import User
-from app.db.repositories import plan_repo, session_log_repo
+from app.db.repositories import plan_repo, session_log_repo, wellness_repo
 from app.services.weekly_recap import compute_weekly_recap
 
 
@@ -106,6 +106,34 @@ class TestWeeklyRecapWithSourceComputedLoads:
 
         assert result.has_data is True
         assert "0" in result.stats_section  # TSS 0 — the null-tss log contributed nothing
+
+    async def test_tsb_comes_from_wellness_not_recomputed_locally(self, db_session, monkeypatch):
+        """spec 002 FR-016: once a wellness row exists, the recap's TSB must be the
+        source's own CTL/ATL, not app/engine/atl_ctl.py's local recomputation from logs.
+        A single 60-TSS endurance log alone would land near TSB≈0 locally ("Bonne forme
+        pour aborder..."); the wellness row here is deliberately extreme (TSB=-60) so the
+        two paths produce different, distinguishable fallback text — proving which one
+        actually won."""
+        monkeypatch.setattr(
+            "app.llm.factory.get_provider", lambda: (_ for _ in ()).throw(RuntimeError())
+        )
+        monday = date.today() - timedelta(days=date.today().weekday())
+        today = monday + timedelta(days=3)
+        user = await _make_user(db_session, 1005)
+        plan = await _make_plan(db_session, user.id, start=monday)
+
+        await session_log_repo.create(
+            db_session, user.id, plan_id=plan.id,
+            week_number=1, day_of_week=0, logged_date=monday, status="done",
+            tss_actual=60.0, source="intervals_icu", source_activity_id="i-wellness-check",
+        )
+        await wellness_repo.upsert(db_session, user.id, today, ctl=30.0, atl=90.0)  # tsb = -60
+        await db_session.commit()
+
+        result = await compute_weekly_recap(db_session, user, today=today)
+
+        assert "fatigue accumulée" in result.next_week_section  # tsb < -10 fallback text
+        assert "Bonne forme" not in result.next_week_section
 
     async def test_weekly_adherence_is_persisted(self, db_session, monkeypatch):
         monkeypatch.setattr(

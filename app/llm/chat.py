@@ -21,6 +21,7 @@ from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any, tsb_lab
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
 from app.llm.chat_client import run_agentic_loop
 from app.llm.tools import TOOL_DEFINITIONS, build_context_messages, build_system_prompt
+from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,11 @@ async def run_chat(
         except Exception:
             logger.warning("Impossible de valider le profil athlète")
 
-    metrics: FitnessMetrics | None = compute_fitness_from_any(all_items) if all_items else None
+    current = await get_current_fitness(session, user.id)
+    metrics: FitnessMetrics | None = (
+        current.metrics if current is not None
+        else (compute_fitness_from_any(all_items) if all_items else None)
+    )
 
     # Convertir le plan SQLAlchemy en schema Pydantic pour build_system_prompt
     plan_schema: TrainingPlanSchema | None = None

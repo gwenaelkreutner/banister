@@ -113,3 +113,46 @@ async def test_reingesting_the_same_day_updates_rather_than_duplicates(db_sessio
     rows = await wellness_repo.get_range(db_session, user.id, date(2026, 8, 20), date(2026, 8, 27))
     dates = [r.date for r in rows]
     assert len(dates) == len(set(dates)) == len(wellness_payload)
+
+
+async def test_get_latest_returns_the_most_recent_row_with_ctl(db_session, patch_transport):
+    wellness_payload = _load("wellness_range.json")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=wellness_payload)
+
+    patch_transport(handler)
+    user = await _make_user(db_session, 403)
+    client = IntervalsClient("test-key", athlete_id="i000000")
+
+    await ingest_wellness(db_session, user.id, client, oldest="2026-08-20", newest="2026-08-27")
+    await db_session.commit()
+
+    from datetime import date
+
+    latest = await wellness_repo.get_latest(db_session, user.id, on_or_before=date(2026, 8, 27))
+    assert latest is not None
+    assert latest.date == date(2026, 8, 27)
+
+
+async def test_get_latest_falls_back_to_an_earlier_date_when_asked_for_the_future(db_session):
+    """Simulates a poll tick that ran before intervals.icu finished computing today's CTL
+    — the caller asks for `on_or_before=today` and must get yesterday's real value, not
+    nothing and not today's absent one silently treated as zero."""
+    from datetime import date
+
+    user = await _make_user(db_session, 404)
+    await wellness_repo.upsert(db_session, user.id, date(2026, 8, 26), ctl=45.5, atl=65.4)
+    await db_session.commit()
+
+    latest = await wellness_repo.get_latest(db_session, user.id, on_or_before=date(2026, 8, 27))
+    assert latest is not None
+    assert latest.date == date(2026, 8, 26)
+
+
+async def test_get_latest_returns_none_when_no_wellness_exists(db_session):
+    from datetime import date
+
+    user = await _make_user(db_session, 405)
+    latest = await wellness_repo.get_latest(db_session, user.id, on_or_before=date(2026, 8, 27))
+    assert latest is None

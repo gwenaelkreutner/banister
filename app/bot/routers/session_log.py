@@ -29,6 +29,7 @@ from app.engine.tss import tss_from_weekly_hours
 from app.engine.schemas import TrainingPlanSchema
 from app.engine.tss import RPE_EMOJI_INT_MAP, detect_fatigue_anomaly_scalar
 from app.engine.weekly_snapshot import WeeklySnapshot, compute_weekly_snapshot
+from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -107,10 +108,12 @@ def _get_next_session_info(plan, week_num: int, current_dow: int) -> str | None:
 
 
 async def _get_fitness_metrics(session, user_id, logs: list) -> tuple[FitnessMetrics, list]:
-    """Calcule ATL/CTL/TSB en combinant activités pré-plan + session_logs.
+    """ATL/CTL/TSB — consommés depuis la source (spec 002 FR-016, app/services/fitness.py),
+    recalcul local uniquement en repli si aucun wellness n'a encore été ingéré.
 
-    Même logique que forme.py : évite le double-comptage et amorce le CTL si < 84j.
-    Retourne (metrics, all_items) pour que l'appelant puisse passer all_items au snapshot.
+    Retourne (metrics, all_items) pour que l'appelant puisse passer all_items au snapshot —
+    all_items reste nécessaire même côté source, car le snapshot hebdo (tendance, monotonie)
+    n'a pas d'équivalent dans le payload wellness.
     """
     plan = await repo.plan_repo.get_active_plan(session, user_id)
     plan_start = plan.start_date if plan else date.today()
@@ -122,6 +125,10 @@ async def _get_fitness_metrics(session, user_id, logs: list) -> tuple[FitnessMet
 
     if not all_items:
         return FitnessMetrics(ctl=0.0, atl=0.0, tsb=0.0), []
+
+    current = await get_current_fitness(session, user_id)
+    if current is not None:
+        return current.metrics, all_items
 
     # Amorçage CTL si fenêtre < 84j
     oldest = min(

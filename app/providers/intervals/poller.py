@@ -171,7 +171,9 @@ async def run_poller_scheduler(session_factory, client_factory, bot=None) -> Non
     still pick everything up on its first tick.
     """
     from app.db.repositories.user_repo import get_single_user
+    from app.providers.intervals.history import import_history
     from app.providers.intervals.notifier import notify_detected_activity
+    from app.providers.intervals.wellness import ingest_wellness
 
     while True:
         interval_minutes = resolve_poll_interval_minutes()
@@ -184,6 +186,33 @@ async def run_poller_scheduler(session_factory, client_factory, bot=None) -> Non
                     continue
 
                 client = client_factory()
+
+                # T038-T041 built this but nothing ever called it (found live, T072
+                # follow-up) — the activities table stayed empty because the poller's own
+                # trailing window (DEFAULT_WINDOW_DAYS) never reaches back far enough to
+                # backfill a new athlete's chronic load on its own. Idempotent
+                # (history_import_complete gates it, see history.py), so calling it every
+                # tick is a cheap single-row check once done, and self-heals the athlete's
+                # very first connection whichever tick happens to see them first.
+                try:
+                    await import_history(session, user.id, client)
+                except IntervalsError:
+                    logger.warning("History import failed this tick — will retry next cycle.")
+
+                # Refreshes CTL/ATL for /forme, /recap, and the rest (app/services/fitness.py)
+                # — a short trailing window, cheap (list_wellness is one request regardless
+                # of range) and self-healing if a tick is missed, since it re-upserts every
+                # day in the window rather than only the newest one.
+                try:
+                    today = date.today()
+                    await ingest_wellness(
+                        session, user.id, client,
+                        oldest=(today - timedelta(days=5)).isoformat(),
+                        newest=today.isoformat(),
+                    )
+                except IntervalsError:
+                    logger.warning("Wellness refresh failed this tick — will retry next cycle.")
+
                 unreported = await poll_once(session, user.id, client)
                 if not unreported:
                     continue

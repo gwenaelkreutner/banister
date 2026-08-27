@@ -26,6 +26,9 @@ class _FakeClient:
         self.calls += 1
         return self._activities
 
+    async def list_wellness(self, *, oldest: str, newest: str) -> list[dict]:
+        return []
+
 
 async def _make_user(session, telegram_id: int) -> User:
     user = User(telegram_id=telegram_id, first_name="Test")

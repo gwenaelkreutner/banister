@@ -21,6 +21,7 @@ from app.engine.atl_ctl import compute_fitness_from_any, estimate_initial_ctl, t
 from app.engine.schemas import TrainingPlanSchema
 from app.engine.tss import tss_from_weekly_hours
 from app.engine.weekly_snapshot import WeeklySnapshot, compute_weekly_snapshot
+from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
 
@@ -155,9 +156,13 @@ async def compute_weekly_recap(
     # ── Métriques déterministes ───────────────────────────────────────────────
     snapshot = compute_weekly_snapshot(all_items, today)
 
-    initial_ctl = await _estimate_ctl_seed(all_items, session, user.id)
-    seed_date = (today - timedelta(days=49)) if initial_ctl > 0 else None
-    fitness = compute_fitness_from_any(all_items, initial_ctl=initial_ctl, seed_date=seed_date)
+    current = await get_current_fitness(session, user.id, today=today)
+    if current is not None:
+        fitness = current.metrics
+    else:
+        initial_ctl = await _estimate_ctl_seed(all_items, session, user.id)
+        seed_date = (today - timedelta(days=49)) if initial_ctl > 0 else None
+        fitness = compute_fitness_from_any(all_items, initial_ctl=initial_ctl, seed_date=seed_date)
     tsb = fitness.tsb
     tsb_lbl = tsb_label(tsb)
 

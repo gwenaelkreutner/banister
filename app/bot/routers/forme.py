@@ -19,6 +19,7 @@ from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.atl_ctl import compute_fitness_from_any, estimate_initial_ctl, tsb_label
 from app.engine.tss import tss_from_weekly_hours
+from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -65,10 +66,21 @@ async def cmd_forme(message: Message, session: AsyncSession, user: User):
         )
         return
 
-    # Amorçage CTL si fenêtre < 84j (2×τ_CTL=42j) — évite la sous-estimation EMA
-    initial_ctl = await _estimate_ctl_seed(all_items, session, user.id)
-    seed_date = (date.today() - timedelta(days=49)) if initial_ctl > 0 else None
-    metrics = compute_fitness_from_any(all_items, initial_ctl=initial_ctl, seed_date=seed_date)
+    # Consommée depuis la source (spec 002 FR-016, app/services/fitness.py) — recalcul
+    # local uniquement en repli si aucun wellness n'a encore été ingéré (nouvel athlète
+    # avant le premier import/poll)
+    current = await get_current_fitness(session, user.id)
+    if current is not None:
+        metrics = current.metrics
+        staleness_note = (
+            f"<i>(au {current.as_of.strftime('%d/%m')}, pas encore mis à jour aujourd'hui)</i>\n\n"
+            if current.is_stale else ""
+        )
+    else:
+        initial_ctl = await _estimate_ctl_seed(all_items, session, user.id)
+        seed_date = (date.today() - timedelta(days=49)) if initial_ctl > 0 else None
+        metrics = compute_fitness_from_any(all_items, initial_ctl=initial_ctl, seed_date=seed_date)
+        staleness_note = "<i>(estimation locale — en attente de la première synchronisation)</i>\n\n"
     label = tsb_label(metrics.tsb)
 
     # Tableau des 7 derniers items
@@ -84,6 +96,7 @@ async def cmd_forme(message: Message, session: AsyncSession, user: User):
 
     metrics_text = (
         f"📊 <b>Ta forme</b>\n\n"
+        f"{staleness_note}"
         f"CTL (fitness) : <b>{metrics.ctl:.0f}</b>\n"
         f"ATL (fatigue) : <b>{metrics.atl:.0f}</b>\n"
         f"TSB (forme)   : <b>{metrics.tsb:+.0f}</b>  {label}\n\n"
