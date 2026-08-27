@@ -12,7 +12,7 @@ from app.engine.schemas import (
 
 
 def make_profile(
-    goal_type="cyclosportive",
+    goal_type="event",
     target_weeks=12,
     hours=6,
     level="intermediate",
@@ -105,7 +105,7 @@ def test_peak_tss_greater_than_initial():
 
 def test_no_target_date_uses_12_weeks():
     profile = AthleteProfileSchema(
-        objective=ObjectiveProfile(type="sante", target_date=None),
+        objective=ObjectiveProfile(type="fitness", target_date=None),
         availability=AvailabilityProfile(hours_per_week=5, preferred_days=["monday", "wednesday", "friday"]),
         level="beginner",
         structured_plan_history=False,
