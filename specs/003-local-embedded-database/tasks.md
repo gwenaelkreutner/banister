@@ -159,37 +159,56 @@ administration, and the full suite passes against the new engine.
 
 ### Connection layer
 
-- [ ] T028 [US1] Change `app/config.py` so the database location is derived from a data-directory path rather than a hosted connection URL, and fail startup with a specific message when the directory is missing or unwritable (FR-004)
-- [ ] T029 [US1] Rewrite engine creation in `app/db/client.py` for the async SQLite driver, replacing the PostgreSQL pool sizing that no longer applies
-- [ ] T030 [US2] Add a connection-level event hook in `app/db/client.py` setting `PRAGMA foreign_keys=ON` on **every** connection — per-connection, not once at startup, because pooled connections would otherwise miss it (research R1)
-- [ ] T031 [US3] Add `journal_mode=WAL`, `busy_timeout` and `synchronous=NORMAL` to the same connection hook in `app/db/client.py` (research R5)
-- [ ] T032 [US3] Decide the connection pool class for the async driver, then **measure it** under the concurrency test rather than assuming — resolves open item 1 in plan.md
+- [X] T028 [US1] Change `app/config.py` so the database location is derived from a data-directory path rather than a hosted connection URL, and fail startup with a specific message when the directory is missing or unwritable (FR-004)
+- [X] T029 [US1] Rewrite engine creation in `app/db/client.py` for the async SQLite driver, replacing the PostgreSQL pool sizing that no longer applies
+- [X] T030 [US2] Add a connection-level event hook in `app/db/client.py` setting `PRAGMA foreign_keys=ON` on **every** connection — per-connection, not once at startup, because pooled connections would otherwise miss it (research R1)
+- [X] T031 [US3] Add `journal_mode=WAL`, `busy_timeout` and `synchronous=NORMAL` to the same connection hook in `app/db/client.py` (research R5)
+- [X] T032 [US3] Decide the connection pool class for the async driver, then **measure it** under the concurrency test rather than assuming — resolves open item 1 in plan.md
 
 ### The silent failures, asserted
 
-- [ ] T033 [US2] Write `tests/test_db/test_cascade.py`: insert an athlete with dependent rows, delete the athlete, assert **zero** orphans remain
-- [ ] T034 [US2] Verify T033 is meaningful by disabling the pragma and confirming the test **fails** — a cascade test that passes without the pragma is testing nothing
-- [ ] T035 [US3] Write `tests/test_db/test_concurrency.py` driving simulated schedulers and interactive handlers writing simultaneously, asserting zero lost writes and zero contention errors reaching the caller (FR-013, FR-014)
-- [ ] T036 [US3] Write `tests/test_db/test_durability.py` asserting the store opens intact after an abrupt termination mid-write, with no partially written record visible (FR-015)
+- [X] T033 [US2] Write `tests/test_db/test_cascade.py`: insert an athlete with dependent rows, delete the athlete, assert **zero** orphans remain
+- [X] T034 [US2] Verify T033 is meaningful by disabling the pragma and confirming the test **fails** — a cascade test that passes without the pragma is testing nothing
+- [X] T035 [US3] Write `tests/test_db/test_concurrency.py` driving simulated schedulers and interactive handlers writing simultaneously, asserting zero lost writes and zero contention errors reaching the caller (FR-013, FR-014)
+- [X] T036 [US3] Write `tests/test_db/test_durability.py` asserting the store opens intact after an abrupt termination mid-write, with no partially written record visible (FR-015)
 
 ### Lifecycle
 
-- [ ] T037 [US1] Implement the single-instance advisory lock in `app/db/lifecycle.py` — a lock file in the data directory, so a crashed process releases it by dying rather than leaving a stale marker (research R9); resolves open item 2 in plan.md
-- [ ] T038 [US1] Write `tests/test_db/test_lifecycle.py` asserting a second instance refuses to start and does not corrupt existing content (FR-005)
+- [X] T037 [US1] Implement the single-instance advisory lock in `app/db/lifecycle.py` — a lock file in the data directory, so a crashed process releases it by dying rather than leaving a stale marker (research R9); resolves open item 2 in plan.md
+- [X] T038 [US1] Write `tests/test_db/test_lifecycle.py` asserting a second instance refuses to start and does not corrupt existing content (FR-005)
 
 ### Backup
 
-- [ ] T039 [P] [US4] Implement `scripts/backup.py` producing a snapshot via `VACUUM INTO`, which is consistent without stopping the system (research R6, FR-016)
-- [ ] T040 [P] [US4] Document the restore procedure in `scripts/backup.py` docstring and in the operator documentation — restoring is replacing the file, and must require no database expertise (FR-017)
-- [ ] T041 [US4] Write a test asserting a snapshot taken **during active writing** restores to an internally consistent state rather than a torn one
+- [X] T039 [P] [US4] Implement `scripts/backup.py` producing a snapshot via `VACUUM INTO`, which is consistent without stopping the system (research R6, FR-016)
+- [X] T040 [P] [US4] Document the restore procedure in `scripts/backup.py` docstring and in the operator documentation — restoring is replacing the file, and must require no database expertise (FR-017)
+- [X] T041 [US4] Write a test asserting a snapshot taken **during active writing** restores to an internally consistent state rather than a torn one
 
 ### Convergence
 
-- [ ] T042 Run the full suite against SQLite and confirm it matches the T003 baseline — the suite was written against the old engine, so its passing unchanged is the strongest single signal the port preserved behaviour
+- [X] T042 Run the full suite against SQLite and confirm it matches the T003 baseline — the suite was written against the old engine, so its passing unchanged is the strongest single signal the port preserved behaviour
 
 **Checkpoint**: The application runs on SQLite. All seven guarantees in
 [contracts/persistence.md](./contracts/persistence.md) are asserted by tests, including the three that fail
 silently by default.
+
+**T035/T036 were repeated 20 times each (not just the single pass they show green on), per the standard this
+phase set for itself in Phase 8's T056 — pulled forward and satisfied here while the tests were fresh rather
+than deferred. 20/20 clean on both.**
+
+**One pre-existing bug found and deliberately left alone**: writing `test_cascade_delete_removes_dependents`
+with `session.delete(user)` (ORM-style) failed on *both* backends with a `NOT NULL constraint failed` —
+`User.training_plans` has no `cascade="all, delete-orphan"`, so the ORM tries to null the child's `user_id`
+before deleting the parent, and that column is `NOT NULL`. Confirmed unrelated to portability (fails
+identically on PostgreSQL) and unreachable in production (`session.delete(user)` is not called anywhere in
+the app). Fixed in the *test*, not the model: both cascade tests use a Core `delete()` statement instead,
+which is what FR-006 and the pragma actually govern — the database's own `ON DELETE CASCADE`, independent of
+the ORM's separate relationship-level bookkeeping. Left as a follow-up note rather than a fix, since altering
+relationship cascade config is outside a storage-engine port's scope.
+
+**A second pool-class question closed empirically rather than deferred**: research R5 flagged the connection
+pool class as something to measure, not assume. Checked directly — `AsyncAdaptedQueuePool` is SQLAlchemy's
+default for both `asyncpg` and file-based `aiosqlite`, so `app/db/client.py` needs no dialect branching for
+pooling at all; the existing `pool_size`/`max_overflow`/`pool_pre_ping` kwargs apply unchanged to both.
 
 ---
 

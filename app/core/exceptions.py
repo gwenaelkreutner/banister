@@ -36,3 +36,9 @@ class MigrationFailedError(BanisterError):
     """Raised at startup when applying a schema migration fails partway — spec 003
     FR-020. The database must be left in its previous working state; this exception
     signals that startup should not proceed as if migration succeeded."""
+
+
+class AnotherInstanceRunningError(BanisterError):
+    """Raised at startup when another instance already holds the data directory's
+    advisory lock — spec 003 FR-005. Refusing to start prevents two instances from both
+    running schedulers and duplicating athlete-visible side effects."""

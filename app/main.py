@@ -1,12 +1,11 @@
 import asyncio
 import logging
 import logging.config
-from datetime import datetime, timedelta, timezone
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta, timezone
 from html import escape
 from typing import Any
-from contextlib import asynccontextmanager
 
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
@@ -15,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.setup import create_bot, create_dispatcher
 from app.config import settings
 from app.db.client import get_session
-from app.db.lifecycle import run_migrations
+from app.db.lifecycle import acquire_instance_lock, ensure_data_dir, run_migrations
 
 logging.config.dictConfig({
     "version": 1,
@@ -50,9 +49,14 @@ dp = create_dispatcher()
 async def lifespan(app: FastAPI):
     polling_task = None
 
-    # Schema migration first, before anything else touches the database (spec 003
-    # FR-018): a scheduler or the bot itself hitting a stale schema would surface as an
-    # obscure query error rather than the clear startup failure this is meant to be.
+    # Storage lifecycle, in order (spec 003): the data directory must exist before the
+    # instance lock can be created inside it; the lock must be held before migrations run
+    # so two instances can't both migrate or both run schedulers against the same store;
+    # migrations must complete before anything else touches the schema (FR-018) — a
+    # scheduler or the bot itself hitting a stale schema would surface as an obscure query
+    # error rather than the clear startup failure this ordering is meant to produce.
+    ensure_data_dir()
+    instance_lock = acquire_instance_lock()
     await run_migrations()
 
     if settings.use_webhook:
@@ -93,6 +97,7 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
     await bot.session.close()
+    instance_lock.release()
     logger.info("Bot arrêté")
 
 app = FastAPI(title="Banister", lifespan=lifespan)
@@ -175,8 +180,8 @@ async def _run_strava_onboarding_import(telegram_id: int, user_id, access_token:
     """Importe l'historique Strava et stocke l'analyse dans onboarding_state."""
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    from app.db.client import AsyncSessionFactory
     from app.db import repositories as repo
+    from app.db.client import AsyncSessionFactory
     from app.strava.history import generate_strava_intro, import_history
 
     try:
@@ -258,9 +263,10 @@ async def strava_webhook_event(request: Request):
     """Réception des événements d'activité Strava."""
     try:
         event = await request.json()
-        from app.strava.webhook import handle_activity_event
         # Traitement asynchrone sans bloquer la réponse (Strava attend < 2s)
         import asyncio
+
+        from app.strava.webhook import handle_activity_event
         asyncio.create_task(handle_activity_event(event, bot))
     except Exception:
         logger.exception("Erreur traitement webhook Strava")
@@ -269,7 +275,7 @@ async def strava_webhook_event(request: Request):
 async def _weekly_recap_scheduler(bot):
     """Envoie le bilan hebdomadaire à tous les utilisateurs actifs chaque dimanche à 20h00 UTC."""
     while True:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         days_until_sunday = (6 - now.weekday()) % 7
         next_sunday = now.replace(hour=20, minute=0, second=0, microsecond=0) + timedelta(days=days_until_sunday)
         if next_sunday <= now:
@@ -370,10 +376,10 @@ async def _session_reminder_scheduler(bot):
 
 async def _run_session_reminders(bot):
     """Vérifie l'heure CET et envoie les rappels dus."""
-    from datetime import date, timedelta, timezone
+    from datetime import timedelta
 
-    from app.db.client import AsyncSessionFactory
     from app.db import repositories as repo
+    from app.db.client import AsyncSessionFactory
     from app.engine.schemas import TrainingPlanSchema
 
     CET = timezone(timedelta(hours=1))

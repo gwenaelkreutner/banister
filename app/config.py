@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,8 +16,19 @@ class Settings(BaseSettings):
     telegram_webhook_url: str = ""
     telegram_webhook_secret: str = "banister-secret"
 
-    # Database
-    database_url: str
+    # Database (spec 003) — everything the athlete owns lives under one directory that
+    # deleting removes entirely (spec 001 FR-004). `database_url`, when set, overrides the
+    # derived path — used by the test suite to run the same schema against PostgreSQL
+    # during the portability port (specs/003.../research.md), and kept as an escape hatch
+    # for advanced deployments. Production defaults to SQLite under data_dir.
+    data_dir: Path = Path("data")
+    database_url: str | None = None
+
+    @property
+    def resolved_database_url(self) -> str:
+        if self.database_url:
+            return self.database_url
+        return f"sqlite+aiosqlite:///{(self.data_dir / 'banister.db').as_posix()}"
 
     # LLM
     llm_provider: str = "anthropic"  # anthropic | openrouter

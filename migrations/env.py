@@ -20,25 +20,34 @@ from app.db.models import Base  # noqa: E402  (imports every model so metadata i
 config = context.config
 
 
-def _resolve_database_url() -> str:
-    """Read DATABASE_URL the same way the application's own env_file does, without
-    depending on app.config.Settings — that model requires unrelated fields (bot token,
-    etc.) that a migration run has no business needing. Both this function and the app
-    read the same variable, so there is still exactly one source of truth for the URL."""
-    if "DATABASE_URL" in os.environ:
-        return os.environ["DATABASE_URL"]
-
+def _read_env_value(key: str) -> str | None:
+    if key in os.environ:
+        return os.environ[key]
     env_file = REPO_ROOT / ".env"
     if env_file.is_file():
         for line in env_file.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if line.startswith("DATABASE_URL="):
+            if line.startswith(f"{key}="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
 
-    raise RuntimeError(
-        "DATABASE_URL is not set and no migrations/../.env defines it — migrations need "
-        "the same connection string the application uses."
-    )
+
+def _resolve_database_url() -> str:
+    """Read the database location the same way app.config.Settings derives it, without
+    depending on the full Settings model — that requires unrelated fields (bot token,
+    etc.) that a manual `alembic` invocation has no business needing. Mirrors
+    Settings.resolved_database_url: an explicit DATABASE_URL wins, otherwise the schema
+    lives in a SQLite file under DATA_DIR (default "data"), so this fallback path — used
+    only for a direct `alembic` CLI call, since app/db/lifecycle.py always sets the URL
+    explicitly — still agrees with the application on where the database is."""
+    override = _read_env_value("DATABASE_URL")
+    if override:
+        return override
+
+    data_dir = Path(_read_env_value("DATA_DIR") or "data")
+    if not data_dir.is_absolute():
+        data_dir = REPO_ROOT / data_dir
+    return f"sqlite+aiosqlite:///{(data_dir / 'banister.db').as_posix()}"
 
 
 # A caller driving Alembic programmatically (app/db/lifecycle.py, or a test) may already

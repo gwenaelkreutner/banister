@@ -1,5 +1,8 @@
-"""Startup schema lifecycle: automatic migration, guarded in both directions (spec 003).
+"""Startup lifecycle: data directory validation, automatic migration, single-instance
+guard (spec 003).
 
+FR-004: fail at startup with a specific message when the data directory is unusable.
+FR-005: refuse a second instance against the same store rather than corrupting it.
 FR-018: schema changes apply automatically, no manual step.
 FR-019: idempotent — starting against an already-current schema makes no changes.
 FR-020: a failed migration leaves the database in its previous working state.
@@ -14,13 +17,62 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from alembic.util.exc import CommandError
+from filelock import FileLock, Timeout
 
 from app.config import settings
-from app.core.exceptions import MigrationFailedError, SchemaTooNewError
+from app.core.exceptions import (
+    AnotherInstanceRunningError,
+    MigrationFailedError,
+    SchemaTooNewError,
+)
 
 logger = logging.getLogger(__name__)
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent.parent / "migrations"
+
+
+def acquire_instance_lock() -> FileLock:
+    """An advisory lock held for the lifetime of the process, not a database row: a
+    crashed instance releases it simply by dying (the OS reclaims the file descriptor),
+    where a row-based lock would leave a stale marker indistinguishable from a live
+    instance (spec 003 research R9). Refuses immediately (timeout=0) rather than
+    blocking — a second instance starting up should fail fast and visibly, not hang."""
+    lock_path = settings.data_dir / ".instance.lock"
+    lock = FileLock(str(lock_path), timeout=0)
+    try:
+        lock.acquire(timeout=0)
+    except Timeout as exc:
+        raise AnotherInstanceRunningError(
+            f"Another instance already holds the lock at '{lock_path}'. Only one "
+            f"instance may run against the data directory at '{settings.data_dir}' at "
+            f"a time — stop the other instance first."
+        ) from exc
+    return lock
+
+
+def ensure_data_dir() -> None:
+    """Create the data directory if missing, and confirm it is actually writable — spec
+    001 requires every self-hosted deployment to reach a working state this way, and spec
+    003 FR-004 requires the failure, if any, to name the directory and the problem rather
+    than surfacing as an opaque database error later."""
+    data_dir = settings.data_dir
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Cannot create the data directory at '{data_dir}': {exc}. Check that the "
+            f"parent directory exists and is writable by the process running this app."
+        ) from exc
+
+    probe = data_dir / ".write_test"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        raise RuntimeError(
+            f"The data directory at '{data_dir}' is not writable: {exc}. All athlete "
+            f"data lives there — fix its permissions before starting the app."
+        ) from exc
 
 
 def _alembic_config() -> Config:
@@ -28,7 +80,7 @@ def _alembic_config() -> Config:
     cfg.set_main_option("script_location", str(MIGRATIONS_DIR))
     # The application's settings are the single source of truth for the URL — matches
     # migrations/env.py's own resolution so both agree on what "the database" means.
-    cfg.set_main_option("sqlalchemy.url", settings.database_url)
+    cfg.set_main_option("sqlalchemy.url", settings.resolved_database_url)
     return cfg
 
 
@@ -61,8 +113,9 @@ def _upgrade_to_head_sync() -> None:
 
 
 async def run_migrations() -> None:
-    """Bring the schema up to date. Call once at startup, before anything else touches
-    the database."""
+    """Bring the schema up to date. Call after ensure_data_dir() and
+    acquire_instance_lock(), so the directory and the single-writer guarantee are both
+    already in place before anything touches the schema."""
     logger.info("Checking database schema...")
     await asyncio.to_thread(_upgrade_to_head_sync)
     logger.info("Database schema is up to date.")
