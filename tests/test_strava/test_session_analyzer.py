@@ -6,24 +6,10 @@ from app.strava.analyzer import SessionAnalyzer
 _PHYSIO = dict(hr_max=190, hr_rest=50, threshold_hr=170)
 
 
-def _hr_stream_raw(hr_bpm: float, duration_s: int, activity_id: str = "hr_test") -> RawActivity:
-    """RawActivity avec streams HR uniquement (pas de puissance)."""
-    t = list(range(duration_s + 1))
-    hr = [hr_bpm] * (duration_s + 1)
-    return RawActivity(
-        activity_id=activity_id,
-        sport_type="ride",
-        start_datetime="2026-01-01T08:00:00+00:00",
-        duration_s=duration_s,
-        moving_time_s=duration_s,
-        has_power=False,
-        has_heartrate=True,
-        has_gps=False,
-        streams=RawActivityStreams(time=t, heartrate=hr),
-    )
-
-
-def test_analyze_maps_raw_and_computes_tss():
+def test_analyze_no_longer_computes_tss_or_zones_locally():
+    """spec 002 FR-017: tss and time_in_zones_s are no longer derived here — that is
+    intervals.icu's job now (app/providers/intervals/mapper.py). This is the reduced
+    Strava path's behavior during the migration window, not a bug."""
     raw = RawActivity(
         activity_id="42",
         sport_type="ride",
@@ -50,9 +36,10 @@ def test_analyze_maps_raw_and_computes_tss():
     analyzed = SessionAnalyzer().analyze(raw, ftp=250, hr_max=190, hr_rest=50, threshold_hr=170)
 
     assert analyzed.session_id == "42"
-    assert analyzed.tss > 0
-    assert analyzed.intensity_factor is not None
-    assert analyzed.time_in_zones_s
+    assert analyzed.tss is None
+    assert analyzed.time_in_zones_s == {}
+    assert analyzed.dominant_zone is None
+    assert analyzed.cardiac_drift_index is None
 
 
 def test_analyze_without_streams_leaves_empty_zones():
@@ -73,7 +60,9 @@ def test_analyze_without_streams_leaves_empty_zones():
     assert analyzed.dominant_zone is None
 
 
-def test_analyze_computes_respect_zones_score_from_planned_zone():
+def test_respect_zones_score_is_none_without_zone_data():
+    """No local zone derivation anymore (T015) -> respect_zones_score must read as
+    'unknown', not as a real 0% compliance figure (FR-020: null is not zero)."""
     raw = RawActivity(
         activity_id="99",
         sport_type="ride",
@@ -91,8 +80,7 @@ def test_analyze_computes_respect_zones_score_from_planned_zone():
 
     analyzed = SessionAnalyzer().analyze(raw, ftp=200, planned_zone="Z2", planned_target_time_in_zone_s=120)
 
-    assert analyzed.respect_zones_score is not None
-    assert 0 <= analyzed.respect_zones_score <= 100
+    assert analyzed.respect_zones_score is None
 
 
 def test_analyze_uses_strava_normalized_power_when_available():
@@ -135,7 +123,10 @@ def test_analyze_without_weighted_power_and_streams_leaves_normalized_power_empt
 
 
 def test_variability_index_computed_from_np_and_avg_power():
-    """VI = NP / avg_power — calculé depuis weighted_avg_power Strava."""
+    """VI = NP / avg_power — calculé depuis weighted_avg_power Strava. This formula
+    itself is not what spec 002 removes (it stays, verified numerically identical to
+    intervals.icu's own icu_variability_index — research R9a); what's removed is the
+    stream-based local computation of NP that used to feed it."""
     raw = RawActivity(
         activity_id="vi_1",
         sport_type="ride",
@@ -194,118 +185,27 @@ def test_variability_index_none_when_no_normalized_power():
     assert analyzed.variability_index is None
 
 
-# ── Tests HRSS (intégration SessionAnalyzer) ──────────────────────────────
+def test_fatigue_anomaly_is_always_none():
+    """spec 002 FR-017/T018: calc_hrss (the only source of fatigue_anomaly here) is no
+    longer called from the live per-activity analysis path — HRSS routing, the sex
+    parameter and RPE-vs-cardiac mismatch detection via this path are retired along with
+    it. detect_fatigue_anomaly_scalar itself is untouched (app/engine/tss.py) and still
+    used directly by the RPE capture flow (app/bot/routers/session_log.py)."""
+    raw = RawActivity(
+        activity_id="hr_test",
+        sport_type="ride",
+        start_datetime="2026-01-01T08:00:00+00:00",
+        duration_s=3600,
+        moving_time_s=3600,
+        has_power=False,
+        has_heartrate=True,
+        has_gps=False,
+        streams=RawActivityStreams(
+            time=list(range(3601)),
+            heartrate=[170.0] * 3601,
+        ),
+    )
 
-import pytest  # noqa: E402 — import groupé en fin de section
+    analyzed = SessionAnalyzer().analyze(raw, user_rpe=10, **_PHYSIO)
 
-
-class TestHRSSIntegration:
-    """Vérifie que SessionAnalyzer route correctement vers HRSS quand disponible."""
-
-    def test_hrss_used_when_hr_streams_and_no_power(self):
-        """Streams HR + physio disponibles, pas de puissance → HRSS > 0."""
-        raw = _hr_stream_raw(hr_bpm=170, duration_s=3600)
-        analyzed = SessionAnalyzer().analyze(raw, **_PHYSIO)
-
-        assert analyzed.tss > 0
-        # 1h au LTHR → HRSS ≈ 100
-        assert analyzed.tss == pytest.approx(100.0, abs=1.0)
-
-    def test_power_tss_takes_priority_over_hrss(self):
-        """NP + FTP disponibles → TSS depuis la puissance, pas HRSS."""
-        raw = RawActivity(
-            activity_id="prio_pwr",
-            sport_type="ride",
-            start_datetime="2026-01-01T08:00:00+00:00",
-            duration_s=3600,
-            moving_time_s=3600,
-            avg_power=200,
-            weighted_avg_power=230,  # NP Strava
-            has_power=True,
-            has_heartrate=True,
-            has_gps=False,
-            streams=RawActivityStreams(
-                time=list(range(3601)),
-                heartrate=[170.0] * 3601,  # LTHR constant
-            ),
-        )
-        analyzed_power = SessionAnalyzer().analyze(raw, ftp=250, **_PHYSIO)
-        analyzed_hrss_only = SessionAnalyzer().analyze(
-            _hr_stream_raw(170, 3600, "hrss_ref"), **_PHYSIO
-        )
-
-        # TSS power (NP=230, FTP=250) ≈ 34.7, HRSS ≈ 100 — clairement différents
-        assert analyzed_power.tss != pytest.approx(analyzed_hrss_only.tss, abs=5.0)
-
-    def test_fallback_when_no_hr_streams(self):
-        """Pas de streams HR → fallback calc_tss (avg_hr scalaire)."""
-        raw = RawActivity(
-            activity_id="no_streams",
-            sport_type="ride",
-            start_datetime="2026-01-01T08:00:00+00:00",
-            duration_s=3600,
-            moving_time_s=3600,
-            avg_hr=160.0,
-            has_power=False,
-            has_heartrate=True,
-            has_gps=False,
-        )
-        analyzed = SessionAnalyzer().analyze(raw, **_PHYSIO)
-        assert analyzed.tss > 0
-
-    def test_fallback_when_physio_incomplete(self):
-        """HR streams présents mais hr_rest manquant → fallback sans HRSS."""
-        t = list(range(3601))
-        hr = [170.0] * 3601
-        raw = RawActivity(
-            activity_id="no_physio",
-            sport_type="ride",
-            start_datetime="2026-01-01T08:00:00+00:00",
-            duration_s=3600,
-            moving_time_s=3600,
-            avg_hr=170.0,
-            has_power=False,
-            has_heartrate=True,
-            has_gps=False,
-            streams=RawActivityStreams(time=t, heartrate=hr),
-        )
-        # hr_rest manquant → condition HRSS non satisfaite → fallback
-        analyzed = SessionAnalyzer().analyze(raw, hr_max=190, threshold_hr=170)
-        assert analyzed.tss > 0  # fallback fonctionne
-
-    def test_no_fatigue_anomaly_by_default(self):
-        """Sans user_rpe → fatigue_anomaly est None."""
-        raw = _hr_stream_raw(hr_bpm=140, duration_s=3600)
-        analyzed = SessionAnalyzer().analyze(raw, **_PHYSIO)
-        assert analyzed.fatigue_anomaly is None
-
-    def test_fatigue_anomaly_triggered_by_high_rpe(self):
-        """
-        Z2 cardiaque (140 bpm → RPE estimé ≈ 6.4) + RPE déclaré 10
-        → FatigueAnomaly sérialisée en dict dans analyzed.fatigue_anomaly.
-        """
-        raw = _hr_stream_raw(hr_bpm=140, duration_s=3600)
-        analyzed = SessionAnalyzer().analyze(raw, user_rpe=10, **_PHYSIO)
-
-        assert analyzed.fatigue_anomaly is not None
-        fa = analyzed.fatigue_anomaly
-        assert isinstance(fa, dict)
-        assert fa["rpe_declared"] == 10
-        assert fa["rpe_delta"] >= 3.0
-        assert 1.10 <= fa["rpe_factor"] <= 1.20
-        assert "message" in fa
-
-    def test_fatigue_anomaly_increases_hrss(self):
-        """HRSS avec anomalie RPE > HRSS sans RPE (multiplicateur appliqué)."""
-        r_no_rpe = SessionAnalyzer().analyze(_hr_stream_raw(140, 3600, "no_rpe"), **_PHYSIO)
-        r_rpe10 = SessionAnalyzer().analyze(
-            _hr_stream_raw(140, 3600, "rpe10"), user_rpe=10, **_PHYSIO
-        )
-        assert r_rpe10.tss > r_no_rpe.tss
-
-    def test_sex_param_passed_through(self):
-        """sex='F' produit un HRSS différent de sex='M' (k différents)."""
-        # À Z5 supra-LTHR, k_M > k_F → HRSS_M > HRSS_F
-        r_m = SessionAnalyzer().analyze(_hr_stream_raw(180, 3600, "sex_m"), sex="M", **_PHYSIO)
-        r_f = SessionAnalyzer().analyze(_hr_stream_raw(180, 3600, "sex_f"), sex="F", **_PHYSIO)
-        assert r_m.tss > r_f.tss
+    assert analyzed.fatigue_anomaly is None

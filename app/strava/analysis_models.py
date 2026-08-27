@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-SessionSource = Literal["strava", "manual", "other"]
+SessionSource = Literal["strava", "intervals_icu", "manual", "other"]
 SportType = Literal["ride", "run", "swim", "other"]
 SessionTypeReal = Literal[
     "long_ride",
@@ -89,7 +89,10 @@ class AnalyzedSession(BaseModel):
     time_in_zones_s: dict[str, int] = Field(default_factory=dict)
     dominant_zone: str | None = None
 
-    tss: float
+    # Nullable, not defaulted to 0.0: intervals.icu returns a permanently null training load
+    # for ~15% of real activities (no power, no heart rate to compute one from) — treating
+    # that as a rest day would be a silent, false estimate (FR-020, spec 002 research R9c).
+    tss: float | None = None
     intensity_factor: float | None = None
     variability_index: float | None = None  # NP / avg_power
 
