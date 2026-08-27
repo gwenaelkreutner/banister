@@ -280,7 +280,7 @@ is where it became knowable.
 
 ### R9e. Athlete profile confirms identity, with one inconsistency
 
-`GET /athlete/0` returns the bound athlete (id `i000000`, name, sex, timezone, email) — satisfying FR-002
+`GET /athlete/0` returns the bound athlete (id, name, sex, timezone, email) — satisfying FR-002
 without needing the athlete id configured at all.
 
 One oddity worth carrying forward: `icu_ftp` is **null on the athlete profile** but **290 on the activity**,
