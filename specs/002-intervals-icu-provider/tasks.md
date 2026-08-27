@@ -117,14 +117,14 @@ value is `None`.
 
 **Goal**: Wellness and sync state persist. US5 is genuinely independent of the notification path.
 
-- [ ] T024 [P] [US5] Create `app/db/models/wellness.py`: dated recovery signals, **every signal nullable** — a missing HRV stored as `0` would later read as a catastrophic drop once spec 006 evaluates thresholds (FR-024)
-- [ ] T025 [P] Create `app/db/models/sync_state.py`: reported markers keyed by the source's activity id, plus last-successful-refresh and history-import progress (FR-009, FR-021, FR-027)
-- [ ] T026 Generate the Alembic revision for both tables via `alembic revision --autogenerate` — never a hand-written migration (the mechanism spec 003 established exists for exactly this)
-- [ ] T027 [P] [US5] Implement `app/db/repositories/wellness_repo.py`
-- [ ] T028 [P] Implement `app/db/repositories/sync_state_repo.py`
-- [ ] T029 [US5] Implement wellness ingestion in the client path and store it — **capture only, no interpretation** (FR-025); readiness belongs to spec 006
-- [ ] T030 [US5] Write `tests/test_providers/test_wellness.py` asserting a missing reading is stored as unknown and stays distinguishable from zero
-- [ ] T031 Write a test asserting a reported marker survives a restart — the property FR-009 depends on and the one an in-memory implementation would silently fail
+- [X] T024 [P] [US5] Create `app/db/models/wellness.py`: dated recovery signals, **every signal nullable** — a missing HRV stored as `0` would later read as a catastrophic drop once spec 006 evaluates thresholds (FR-024)
+- [X] T025 [P] Create `app/db/models/sync_state.py`: reported markers keyed by the source's activity id (`ReportedActivity`), plus last-successful-refresh and history-import progress (`SyncState`) (FR-009, FR-021, FR-027). Two model classes in one file, matching plan.md's structure decision — related concerns, independent lifecycles (one row per activity ever reported vs. one row per athlete).
+- [X] T026 Generate the Alembic revision for both tables via `alembic revision --autogenerate` — never a hand-written migration (the mechanism spec 003 established exists for exactly this). Revision `0d2cb3557233` — verified upgrade/downgrade/re-upgrade against a scratch SQLite db before committing.
+- [X] T027 [P] [US5] Implement `app/db/repositories/wellness_repo.py`
+- [X] T028 [P] Implement `app/db/repositories/sync_state_repo.py`
+- [X] T029 [US5] Implement wellness ingestion in the client path and store it — **capture only, no interpretation** (FR-025); readiness belongs to spec 006. `app/providers/intervals/wellness.py::ingest_wellness()` — standalone (the poller that will call it on a schedule is Phase 5, not built yet).
+- [X] T030 [US5] Write `tests/test_providers/test_wellness.py` asserting a missing reading is stored as unknown and stays distinguishable from zero
+- [X] T031 Write a test asserting a reported marker survives a restart — the property FR-009 depends on and the one an in-memory implementation would silently fail. `tests/test_providers/test_sync_state_restart.py` — closes and disposes the engine entirely between write and read, same pattern as `tests/test_db/test_durability.py`.
 
 **Checkpoint**: wellness captured, sync state durable. US5 is complete and independently verifiable.
 
