@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.engine.schemas import Zone  # noqa: F401 — réexporté pour rétrocompat
+from app.engine.schemas import RepeatGroup, Step, Zone  # noqa: F401 — Zone réexporté pour rétrocompat
 
 # ── Constantes ─────────────────────────────────────────────────────────────
 
@@ -155,6 +155,32 @@ def estimate_session_tss(
     if coaching_mode == "power" and ftp is not None:
         return estimate_session_tss_power(zone_code, duration_minutes, ftp)
     return estimate_session_tss_hr(zone_code, duration_minutes)
+
+
+def estimate_structured_session_tss(
+    steps: list[Step | RepeatGroup],
+    coaching_mode: str,
+    ftp: int | None = None,
+) -> float:
+    """TSS for a structured session (spec 004 FR-006) — sums `estimate_session_tss()`
+    per step, with a RepeatGroup's steps counted `repeat` times.
+
+    Accepts `ftp` for signature symmetry with `estimate_session_tss()`, but it does not
+    change the result in power mode: NP is derived from `ftp × zone_if`, and the TSS
+    formula divides by `ftp` again, so `ftp` cancels out of `estimate_session_tss_power()`
+    algebraically — only the per-zone intensity factor determines the answer. `coaching_mode`
+    is what actually selects the formula (power's IF² curve vs HR's empirical TSS/hour table).
+    """
+    total = 0.0
+    for item in steps:
+        if isinstance(item, RepeatGroup):
+            for s in item.steps:
+                total += item.repeat * estimate_session_tss(
+                    s.zone_code, s.duration_minutes, coaching_mode, ftp
+                )
+        else:
+            total += estimate_session_tss(item.zone_code, item.duration_minutes, coaching_mode, ftp)
+    return round(total, 1)
 
 
 def weekly_tss_from_sessions(

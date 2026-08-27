@@ -51,8 +51,10 @@ uv run pytest tests/test_engine/test_structured_sessions.py -v
 
 The last assertion is the one worth writing carefully. It is easy to satisfy trivially by deriving the
 summary and then asserting the derivation against itself. **Assert against independently stated
-expectations** for at least a few known templates — e.g. threshold 3×12r4 must total
-`15 + 3×12 + 2×4 + 15 = 74` minutes — so the test can actually fail.
+expectations** for at least a few known templates — e.g. threshold 3×12r4 (one repeated unit of
+work+recovery, repeated 3 times — the recovery after the final repetition is included, unlike the old
+`sets*work + (sets-1)*rest` formula, which dropped it) must total `15 + 3×(12+4) + 15 = 78` minutes — so
+the test can actually fail.
 
 ## Scenario 2 — Nothing that reads sessions broke (US2, SC-003, SC-004)
 
