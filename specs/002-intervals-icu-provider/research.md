@@ -2,10 +2,10 @@
 
 **Feature**: 002-intervals-icu-provider | **Date**: 2026-08-27
 
-Findings below come from intervals.icu's own documentation and forum (the developer documents the API
-there rather than in a generated reference). **Nothing here was verified against a live account** — no API
-key is configured in this project yet. Items marked ⚠️ are the ones that must be confirmed with a real key
-before the code that depends on them is trusted; they are called out again as tasks rather than assumed.
+Findings below come from intervals.icu's own documentation and forum, **and — since R9 — from calls against
+the author's live account** (54 real activities, 8 wellness days, real streams). Sections R1–R8 were
+written before a key was available and preserved their unknowns honestly; **R9 supersedes several of them
+with measured fact.** Where the two disagree, R9 wins.
 
 ---
 
@@ -186,35 +186,150 @@ what makes the new path testable at all.
 
 ---
 
+---
+
+## R9. Verified against the live account — supersedes the guesses above
+
+The author supplied a key. Everything below is **measured**, not inferred: 54 activities (June–August
+2026), 8 wellness days, and the raw streams of one ride.
+
+### R9a. The activity payload carries 183 fields, not a handful
+
+The premise of R5 — "intervals.icu does not provide our quality metrics" — was **largely wrong**. The
+author's instinct to challenge it was correct. What the source actually provides:
+
+| Our computation | Their field | Verdict |
+|---|---|---|
+| `variability_index` | `icu_variability_index` | **Identical.** Verified arithmetically: NP 207 ÷ avg 103 = 2.0097, their value is 2.0097086 |
+| `time_in_zones_s` | `icu_zone_times` | **Theirs is richer** — `[{id:"Z1",secs:4791},…]` plus a sweet-spot bucket we do not compute |
+| `tss` | `icu_training_load` | Also split as `power_load` / `hr_load` with `hr_load_type: "HRSS"` |
+| `intensity_factor` | `icu_intensity` | Same value ×100 (71.379 = IF 0.714) |
+| `normalized_power` | `icu_weighted_avg_watts` | Directly provided |
+| `dominant_zone` | — | Trivially derived from `icu_zone_times` |
+| `cardiac_drift_index` | `decoupling` | Same concept, **materially different number** — see R9b |
+| `intervals_consistency_index` | `icu_intervals` (9 detected, full metrics each) | They detect the intervals; the consistency *score* is still ours, but built on their detection rather than our own |
+| `respect_zones_score` | — | **Genuinely ours** — requires our plan, which the source cannot know |
+| `session_type_real` | — | **Genuinely ours** — our own classification |
+
+**Also available and currently not used at all**: `trimp` (82.87), `polarization_index` (1.67, Seiler —
+spec 006 wants exactly this), `icu_efficiency_factor`, `icu_power_hr`, `icu_hrr` (heart-rate recovery with
+start/end bpm), `icu_pm_ftp` / `icu_rolling_ftp` (eFTP tracking), `strain_score`, `icu_warmup_time` /
+`icu_cooldown_time`, `compliance`.
+
+`hr_load_type: "HRSS"` deserves special note: the entire Banister-TRIMP HRSS implementation in
+`app/engine/tss.py` — the one documented at length in `CLAUDE.md` — computes a value the source already
+provides.
+
+### R9b. `decoupling` and our `cardiac_drift_index` disagree, and we cannot reproduce theirs
+
+Computed our formula against the real streams of activity `i180170537` (10,206 samples):
+
+```
+our formula          22.937 %
+intervals.icu         15.709 %
+```
+
+Attempts to reconcile, all failed:
+
+| Variant tried | Result |
+|---|---|
+| All samples (our current behaviour) | 22.937 |
+| Excluding zero-power samples (coasting) | −5.322 |
+| Excluding warm-up and cool-down | 36.522 |
+| Both combined | −5.782 |
+
+**Conclusion, and it is the useful one**: this metric is extremely sensitive to sample-selection choices,
+and reverse-engineering theirs is not worth the effort. Two different numbers under the same name is
+exactly the divergence spec 001's metric-authority rule exists to prevent. **Consume `decoupling`; delete
+ours.** FR-016 already requires this — the finding is that it applies more widely than R5 assumed.
+
+### R9c. Null training load is real, common, and permanent
+
+**8 of 54 activities (15%) have `icu_training_load: null`.** All eight have `has_heartrate: null` and
+`device_watts: null` — no sensors at all. Every one has a populated `analyzed` timestamp, and
+`analysis_issues` is null across all 54.
+
+So the convention is **not** "null while analysis is pending" but **"null because it cannot be computed"**
+— a permanent state for sensor-less activities, not a transient one to wait out.
+
+This settles the most consequential unknown, and settles it in favour of the requirement being *more*
+important than assumed: FR-020's "unknown must not become zero" would otherwise mis-record **15% of this
+athlete's real rides as rest days**, silently deflating chronic load.
+
+**Answering the author's question directly** — "how do we wait for analysis to finish?": we do not need to.
+There is no pending state to wait for. `analyzed` is always set; a null load means no data to compute
+from. The correct handling is to store null and carry on, not to poll again hoping it fills in.
+
+### R9d. Wellness is entirely empty — this blocks spec 006, not this feature
+
+The endpoint works and exposes `hrv`, `restingHR`, `sleepSecs`, `readiness`, `sleepScore`, `vo2max`,
+`steps`, and more. But for this athlete, across all 8 days sampled:
+
+```
+hrv          0/8 days populated
+restingHR    0/8
+sleepSecs    0/8
+readiness    0/8
+ctl / atl    8/8   (computed by intervals.icu itself)
+```
+
+Capturing wellness (FR-023) still works and should still be built — it stores what is there. But **spec
+006's readiness guardrails have no input today**. Those thresholds — HRV down 20%, resting HR up 5 bpm —
+cannot fire against empty columns. That is a finding for spec 006's viability, surfaced here because this
+is where it became knowable.
+
+### R9e. Athlete profile confirms identity, with one inconsistency
+
+`GET /athlete/0` returns the bound athlete (id `i000000`, name, sex, timezone, email) — satisfying FR-002
+without needing the athlete id configured at all.
+
+One oddity worth carrying forward: `icu_ftp` is **null on the athlete profile** but **290 on the activity**,
+which also carries `icu_pm_ftp: 225` and `icu_rolling_ftp: 280`. Three different FTP figures. Which one
+the plan generator should use is a real decision, not an obvious one.
+
+### R9f. Endpoints and formats, confirmed working
+
+```
+GET /api/v1/athlete/{id}/activities?oldest=YYYY-MM-DD&newest=YYYY-MM-DD   → 200, JSON (no .csv needed)
+GET /api/v1/athlete/{id}/wellness?oldest=…&newest=…                        → 200, JSON
+GET /api/v1/athlete/0                                                      → 200, resolves to key's athlete
+GET /api/v1/activity/{id}?intervals=true                                   → 200, includes icu_intervals
+GET /api/v1/activity/{id}/streams?types=watts,heartrate                    → 200, full series
+```
+
+Still unverified: the shape of a rate-limited response (FR-013). Requires deliberately exceeding the
+quota, which is not worth doing against a live account.
+
+---
+
 ## Resolved unknowns
 
 | Unknown | Resolution |
 |---|---|
-| Authentication scheme | Basic auth, `API_KEY` as username (R1) |
-| Endpoint paths and date filtering | Three endpoints, `oldest`/`newest` (R2) |
-| Load / fitness field names | `icu_training_load`, `icu_ctl`, `icu_atl`, `icu_intensity`, `icu_ftp` (R3) |
-| Wellness field names | `hrv`, `restingHR`, `sleepSecs` (R3) |
-| New-activity detection strategy | Date-window poll plus locally recorded reported ids (R4) |
+| Authentication scheme | Basic auth, `API_KEY` as username (R1, confirmed R9f) |
+| Endpoint paths, date filtering, JSON format | Confirmed working against the live account (R9f) |
+| Load / fitness / wellness field names | Confirmed, plus ~170 more fields than expected (R9a) |
+| **Null vs. pending training load** | **Null = uncomputable, permanent, 15% of real activities (R9c)** |
+| Are streams exposed? | Yes (R9f) |
+| Are zone times exposed? | Yes, richer than ours (R9a) |
 | Quota headroom at a 5-minute interval | ~6% of the daily allowance (R4) |
-| Fate of the existing pipeline layers | Fetch replaced, analysis reduced, matching untouched (R6) |
 
-## Unresolved — require a live API key ⚠️
+## Still unresolved
 
-These are **not** resolved and must not be treated as if they were. Each becomes a verification task before
-the code depending on it is written:
+1. **Rate-limit response shape** (FR-013) — would require deliberately exhausting the quota.
+2. **Which FTP the plan generator should use** — the profile says null, the activity says 290,
+   `icu_pm_ftp` says 225, `icu_rolling_ftp` says 280 (R9e).
+3. **What to do about the empty wellness data** — a spec 006 problem, but it needs an answer before
+   spec 006 is worth building (R9d).
 
-1. **Is `icu_training_load` null or absent when analysis is incomplete?** FR-020's correctness depends on
-   it, and getting it wrong corrupts chronic load silently.
-2. **Does the activities endpoint return JSON without a `.csv` suffix, and is an unbounded query allowed?**
-3. **Are per-activity streams exposed, and at what path?** Determines whether the two stream-derived
-   quality metrics in R5 survive.
-4. **Are zone times exposed directly?** Determines whether `time_in_zones_s` is consumed or computed.
-5. **What exactly does a rate-limit response look like?** FR-013 requires retrying without exhausting the
-   quota; that needs the actual response shape, not an assumption.
+## Answered: the open question R5 raised
 
-## Open question for the author
+R5 asked whether the six quality metrics should be retained. **Verification changed the answer.** Only two
+are genuinely ours (`respect_zones_score`, `session_type_real`), one is ours but should be rebuilt on the
+source's interval detection (`intervals_consistency_index`), and **three should be deleted and consumed
+instead** (`variability_index`, `cardiac_drift_index`, `dominant_zone` — along with `time_in_zones_s`,
+which was never in question but is also provided).
 
-R5 is a genuine gap in the specification, not merely an implementation detail: six values are in neither
-the "consume" list nor the "retain" list. The recommendation is to retain them, which implies an extra
-streams fetch per activity. **This should be confirmed before implementation**, and FR-018 amended to say
-so explicitly.
+This is a larger deletion than the spec anticipated, and it strengthens rather than weakens FR-017. It also
+extends to `app/engine/tss.py`'s HRSS/TRIMP implementation, which computes `hr_load` and `trimp` — both
+provided.

@@ -155,19 +155,56 @@ path if E turned out harder than expected.
 | Threshold change retroactively alters stored history | Per-activity values written once at ingestion, never recomputed on read | FR-022 |
 | Removing manual entry also removes RPE capture | They share an implementation; the split is an explicit task, not a side effect | FR-031 |
 
-## Open Questions — must be answered before implementation
+## Open Questions
 
-1. **The six quality metrics** (`respect_zones_score`, `cardiac_drift_index`,
-   `intervals_consistency_index`, `session_type_real`, `variability_index`, `dominant_zone`) are in
-   neither FR-015's "consume" list nor FR-018's "retain" list. Research R5 recommends retaining all six —
-   they are not load calculations, the source does not provide them, and the post-ride narrative depends
-   on them throughout. Retaining the two stream-derived ones costs an extra API call per activity.
-   **This needs the author's confirmation, and FR-018 amended to say so.**
+**Questions 1 and 2 below were answered by verifying against the author's live account** — see
+[research.md](./research.md) R9. Their original framing is kept because the *answers* changed the shape of
+this feature, and a reader deserves to see why.
 
-2. **Five API behaviours remain unverified** because no key is configured (research R3, R5). The most
-   consequential is the null-versus-zero convention for an incomplete load. These become verification
-   tasks at the start of Phase A, not assumptions carried into Phase B.
+### ✅ Answered — and the answer was larger than the question
 
-3. **What happens to the existing `activities` table** — populated by the Strava historical import. Spec
-   003 deliberately deferred touching it. It is re-fetchable from the new source, so it can be truncated
-   and repopulated, but that is a decision, not an obvious default.
+**The quality metrics.** R5 assumed intervals.icu did not provide them and recommended retaining all six.
+Measurement showed otherwise: the payload carries 183 fields, and most of what `SessionAnalyzer` computes
+already exists there. The revised split:
+
+| Fate | Values |
+|---|---|
+| **Delete, consume theirs** | `variability_index` (verified numerically identical), `cardiac_drift_index` (→ `decoupling`), `dominant_zone`, `time_in_zones_s` (→ `icu_zone_times`, richer than ours) |
+| **Keep — the source cannot know our plan** | `respect_zones_score`, `session_type_real` |
+| **Keep, but rebuild on their interval detection** | `intervals_consistency_index` — they detect the intervals (`icu_intervals`, 9 with full metrics); the consistency score stays ours |
+
+This **extends FR-017 well beyond what the spec anticipated**, and in the same direction: `app/engine/tss.py`'s
+Banister-TRIMP HRSS implementation computes `hr_load` and `trimp`, both of which the source provides
+directly. That removes more local computation than planned, not less.
+
+**Consequence for Phase B**: no extra streams fetch is needed for the metrics after all — `decoupling`
+comes on the activity payload. Streams are still available if `intervals_consistency_index` needs them.
+
+### ✅ Answered — "how do we wait for the analysis to finish?"
+
+We do not. There is no pending state. `analyzed` is always populated; `analysis_issues` is null across all
+54 activities. A null `icu_training_load` means **the source cannot compute one** — no heart rate, no power
+— and that is permanent, not transient.
+
+It affects **8 of 54 real activities (15%)**. Storing those as `0.0` would record 15% of the athlete's
+rides as rest days. FR-020 is therefore not a defensive nicety; it is load-bearing.
+
+### ⚠️ Still open
+
+1. **Which FTP the plan generator should use.** The athlete profile reports `icu_ftp: null`, while the
+   activity carries `icu_ftp: 290`, `icu_pm_ftp: 225`, and `icu_rolling_ftp: 280`. Four answers, one
+   question. Affects plan generation, not ingestion, so it does not block Phase A or B.
+
+2. **The rate-limit response shape** (FR-013). Verifying it means deliberately exhausting the quota against
+   a live account, which is not worth doing. Handle defensively and confirm from the response when it first
+   occurs naturally.
+
+3. **The existing `activities` table**, populated by the Strava historical import. Re-fetchable from the
+   new source, so it can be truncated and repopulated — but that is a decision. Note that
+   `compute_fitness_from_any()` duck-types across `SessionLog` and `Activity`; whatever is decided must not
+   break that, or must remove the need for it.
+
+4. **Wellness is empty.** Every one of `hrv`, `restingHR`, `sleepSecs`, `readiness` is unpopulated across
+   all sampled days. Capture (FR-023) should still be built — it stores what exists. But **spec 006's
+   readiness guardrails have no input**, and that is worth knowing before spec 006 is planned rather than
+   during it.
