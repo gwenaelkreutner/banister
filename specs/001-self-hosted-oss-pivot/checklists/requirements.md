@@ -67,6 +67,31 @@
    the athlete accepts a bounded delay in exchange. The specific delay is deliberately left to the provider
    spec as a product decision rather than guessed here.
 
+**Iteration 3 — inventory pass against the existing implementation:**
+
+7. *Systemic omission: the spec never stated what the product does* — an inventory of the current
+   implementation found that the draft described a product that deploys, synchronizes, notifies and
+   protects data, but never required it to generate a plan, display a plan, report fitness, recap a week,
+   remind the athlete, or hold a conversation. Plan generation appeared only incidentally, as an example of
+   retained local computation. As written, a migration could have satisfied every requirement while
+   shipping a product that does nothing. Added FR-P01 through FR-P11 (capability preservation) and SC-009.
+
+8. *Removal boundary made explicit* — inspection showed that manual session entry and post-activity
+   perceived-exertion capture share one implementation. Removing "manual logging" wholesale would have
+   destroyed the perceived-exertion step that User Story 3 depends on. Added FR-P09 and FR-R01/FR-R02 to
+   separate a deliberate removal from its collateral.
+
+9. *Inbound push reinstated as optional* — the author asked whether push notification from the training
+   data source was still possible. It is: that source publishes activity, calendar and settings webhooks.
+   Verification also found conditions that disqualify push as a default (application registration rather
+   than a personal key; documented non-delivery for activities arriving via Strava; a consolidation delay).
+   Added FR-N02a mandating a push-free default and FR-N02b permitting push as opt-in, with the trade-off
+   recorded in Assumptions and the detail delegated to the provider spec.
+
+10. *Baseline tie-break rule added* — because FR-P01..P11 describe behaviour that already exists, an
+    assumption was added stating that any disagreement between this spec and the running implementation is
+    a defect in the spec, to be raised rather than resolved silently in either direction.
+
 **Deferred by design** — the following are stated as requirements here and specified in detail elsewhere:
 FR-019 through FR-023 (guardrails), and the implementation of FR-003, FR-007, and FR-009.
 

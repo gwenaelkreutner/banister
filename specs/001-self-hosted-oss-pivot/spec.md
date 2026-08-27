@@ -221,12 +221,50 @@ passing local test run and a green automated check on a pull request.
 - **FR-012**: When source data cannot be refreshed, the system MUST report the age of the data it is using
   and MUST NOT substitute an estimate presented as current.
 
+#### Capability preservation
+
+The pivot is a migration of an already working product, not a rebuild. These requirements exist so that no
+capability the athlete relies on today disappears silently because no requirement named it.
+
+- **FR-P01**: The system MUST continue to generate a structured, periodized training plan for the athlete.
+- **FR-P02**: The athlete MUST be able to view their plan, both the current week and any other week of it.
+- **FR-P03**: The athlete MUST be able to see their current fitness, fatigue, and form on demand.
+- **FR-P04**: The system MUST continue to produce a weekly review of adherence and training load, both on
+  demand and delivered automatically on a recurring schedule.
+- **FR-P05**: The system MUST continue to send the athlete a reminder of the day's planned session at a time
+  the athlete controls, and MUST stay silent on rest days.
+- **FR-P06**: The athlete MUST be able to converse freely with the coach and have that conversation informed
+  by their plan, recent training, and current metrics.
+- **FR-P07**: When conversation leads the coach to propose a change to the plan, the athlete MUST be able to
+  accept or reject that change explicitly, and nothing MUST change without acceptance.
+- **FR-P08**: On first connecting a training data source, the system MUST import sufficient activity history
+  to establish meaningful chronic training load, rather than starting the athlete from zero.
+- **FR-P09**: The system MUST retain the ability to record the athlete's perceived exertion for a completed
+  activity, and MUST incorporate it into feedback. Removing manual session entry MUST NOT remove perceived
+  exertion capture, which serves the post-activity loop rather than manual logging.
+- **FR-P10**: The system MUST preserve its offline plan-quality evaluation capability, so that changes to
+  plan generation remain measurable.
+- **FR-P11**: The coach's voice MUST remain configurable rather than hardcoded, so that a deployer can adapt
+  tone and language without modifying application logic.
+
+#### Deliberate removals
+
+- **FR-R01**: Manual entry of completed sessions MUST be removed. All completed training arrives through the
+  training data source. This is a deliberate scope reduction, not an omission.
+- **FR-R02**: Any capability whose only purpose was to support manual entry MUST be removed with it, while
+  capabilities that merely share an implementation with it MUST be preserved per FR-P09.
+
 #### Proactive notification
 
 - **FR-N01**: The system MUST detect newly completed activities appearing in the athlete's training log
   without the athlete taking any action.
 - **FR-N02**: The system MUST notify the athlete of a newly detected activity without being prompted, within
   a documented maximum delay, and that delay MUST be stated in operator-facing documentation.
+- **FR-N02a**: Detection MUST work in a default deployment that exposes no inbound endpoint, so that no
+  deployer is required to obtain a domain or certificate in order to receive notifications.
+- **FR-N02b**: The system MAY additionally support inbound push from the training data source as an opt-in
+  capability for deployers who already operate a public endpoint, provided the default path of FR-N02a
+  remains fully functional and push remains strictly optional.
 - **FR-N03**: The system MUST notify the athlete exactly once per activity, and MUST NOT re-notify for an
   activity already reported, including across restarts.
 - **FR-N04**: The notification MUST state how the activity related to the training plan, distinguishing a
@@ -315,9 +353,11 @@ passing local test run and a green automated check on a pull request.
   duplicates and no omissions, verified across at least twenty activities including restarts of the system.
 - **SC-008**: The athlete is notified of a completed activity within the documented maximum delay of it
   appearing in their training log, measured across a representative sample of activities.
-- **SC-009**: A contributor with no prior exposure obtains a passing local test run by following the
+- **SC-009**: Every capability enumerated in FR-P01 through FR-P11 is demonstrably available after the
+  migration, verified by exercising each one against a real deployment.
+- **SC-010**: A contributor with no prior exposure obtains a passing local test run by following the
   contributor documentation alone.
-- **SC-010**: Messages from non-owner accounts produce no response of any kind, verified by attempting
+- **SC-011**: Messages from non-owner accounts produce no response of any kind, verified by attempting
   contact from an unauthorized account.
 
 ## Assumptions
@@ -340,6 +380,14 @@ passing local test run and a green automated check on a pull request.
   decision to be fixed in the provider spec; published rate limits permit a frequent refresh comfortably.
 - The athlete's activities reach the training log through their own device synchronization, which may
   itself add delay outside this system's control and outside its notification guarantee.
+- Inbound push from the training data source is understood to carry conditions that make it unsuitable as
+  the default path: it requires registering an application with that source rather than using a personal
+  key, it is documented as not firing for activities that arrive via Strava, and it is itself delayed to
+  consolidate events. These conditions are why FR-N02a mandates a push-free default and FR-N02b makes push
+  an opt-in addition. Their precise handling belongs to the provider spec.
+- The existing product's behaviour is the baseline for FR-P01 through FR-P11. Where this spec and the
+  current implementation disagree, the disagreement is a defect in this spec and should be raised rather
+  than silently resolved in either direction.
 - The operator pays their model provider directly; the project neither resells nor brokers model access.
 - The athlete's own device-to-intervals.icu synchronization is outside this system's responsibility.
 - Existing deployments are the author's own. No migration path for third-party existing installations is
