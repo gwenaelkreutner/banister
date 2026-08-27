@@ -218,13 +218,36 @@ pooling at all; the existing `pool_size`/`max_overflow`/`pool_pre_ping` kwargs a
 
 **Independent Test**: Carry a copy across and confirm the coach's answers match what it said before.
 
-- [ ] T043 [US6] Implement `scripts/carry_over.py` transferring only locally originated data — plans, profile, adherence history, conversation history — with a `--dry-run` mode reporting what would move (FR-023)
-- [ ] T044 [US6] Make the script leave the source untouched and be safely retryable after a failure or interruption (FR-025)
-- [ ] T045 [US6] Explicitly skip activity history, which is re-fetched from the training data source because that source is authoritative for it (FR-024)
-- [ ] T046 [US6] Explicitly skip storage belonging to the removed provider integration where it is already obsolete (FR-026)
+- [X] T043 [US6] Implement `scripts/carry_over.py` transferring only locally originated data — plans, profile, adherence history, conversation history — with a `--dry-run` mode reporting what would move (FR-023)
+- [X] T044 [US6] Make the script leave the source untouched and be safely retryable after a failure or interruption (FR-025)
+- [X] T045 [US6] Explicitly skip activity history, which is re-fetched from the training data source because that source is authoritative for it (FR-024)
+- [X] T046 [US6] Explicitly skip storage belonging to the removed provider integration where it is already obsolete (FR-026)
 - [ ] T047 [US6] Run the carry-over against a **copy** of the real database and verify behaviourally: ask the coach about current plan, past training and adherence history before and after, and compare the answers — matching row counts prove much less than matching answers (SC-007)
 
 **Checkpoint**: Real data is on the new engine and the coach behaves identically.
+
+**T047 deliberately left unchecked — the real production database is unreachable from this environment**
+(`.env`'s Supabase URL fails with `ENOTFOUND` from here; the network path to it isn't available in this
+sandbox). What T043–T046 required has been verified as thoroughly as possible without it:
+
+- The mechanism was run end to end against the local `banister` Postgres container, seeded with synthetic
+  data across all seven carried tables (`users`, `athlete_profiles`, `training_plans`, `session_logs`,
+  `chat_messages`, `weekly_adherence`, `oauth_connections`) plus `activities`, structurally identical to
+  production. Every value round-tripped correctly; `activities` was correctly skipped; the source was
+  confirmed unmodified after each run.
+- **A real bug was caught this way**: the first `--dry-run` implementation still called
+  `Base.metadata.create_all` on the destination before checking the dry-run flag, leaving an empty schema
+  file behind — directly contradicting its own "nothing written" message. Schema creation was moved to
+  after the dry-run check.
+- Retryability (FR-025) was verified genuinely, not assumed: running the script twice against the same
+  populated destination produced zero duplicates, and `INSERT ... ON CONFLICT DO NOTHING`'s reported
+  `rowcount` was confirmed accurate on both the first run (matches rows carried) and the second (exactly 0).
+- What remains unverified is specifically the SC-007 behavioural check this task asks for — comparing the
+  coach's actual answers about the *author's own* real plan, training history and adherence record before
+  and after a real carry-over. That requires either network access to the production database from wherever
+  this runs, or the author running `scripts/carry_over.py` themselves against a copy of their own data and
+  confirming the coach's answers match. The script is ready for that; the one-way, irreplaceable-data step
+  itself has not been exercised against real data by this session.
 
 ---
 
