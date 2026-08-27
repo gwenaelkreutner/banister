@@ -14,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.setup import create_bot, create_dispatcher
 from app.config import settings
 from app.db.client import get_session
-from app.db.lifecycle import acquire_instance_lock, ensure_data_dir, run_migrations
+from app.db.lifecycle import (
+    acquire_instance_lock,
+    ensure_data_dir,
+    run_migrations,
+    verify_intervals_credential,
+)
 
 logging.config.dictConfig({
     "version": 1,
@@ -58,6 +63,11 @@ async def lifespan(app: FastAPI):
     ensure_data_dir()
     instance_lock = acquire_instance_lock()
     await run_migrations()
+
+    # spec 002 FR-002/FR-003: verify the training data source credential before anything
+    # else runs. A bad key must surface as a clear startup failure here, not as a
+    # mysterious empty result the first time the poller tries to use it.
+    await verify_intervals_credential()
 
     if settings.use_webhook:
         webhook_url = f"{settings.telegram_webhook_url}"

@@ -1,5 +1,5 @@
 """Startup lifecycle: data directory validation, automatic migration, single-instance
-guard (spec 003).
+guard (spec 003), training data source credential verification (spec 002).
 
 FR-004: fail at startup with a specific message when the data directory is unusable.
 FR-005: refuse a second instance against the same store rather than corrupting it.
@@ -7,6 +7,9 @@ FR-018: schema changes apply automatically, no manual step.
 FR-019: idempotent — starting against an already-current schema makes no changes.
 FR-020: a failed migration leaves the database in its previous working state.
 FR-021: refuse to start against a schema stamped with a revision this code doesn't know.
+
+spec 002 FR-002/FR-003: verify the intervals.icu credential at startup and identify the
+bound athlete; refuse to start when it is absent, malformed, or rejected.
 """
 from __future__ import annotations
 
@@ -24,6 +27,11 @@ from app.core.exceptions import (
     AnotherInstanceRunningError,
     MigrationFailedError,
     SchemaTooNewError,
+)
+from app.providers.intervals.client import IntervalsClient
+from app.providers.intervals.errors import (
+    CredentialRejectedError,
+    IntervalsError,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,3 +125,38 @@ async def run_migrations() -> None:
     logger.info("Checking database schema...")
     await asyncio.to_thread(_upgrade_to_head_sync)
     logger.info("Database schema is up to date.")
+
+
+async def verify_intervals_credential() -> str:
+    """Verify the intervals.icu API key at startup and identify the bound athlete
+    (spec 002 FR-002). Returns the athlete id.
+
+    Raises RuntimeError naming the setting and how to fix it (FR-003) rather than
+    letting the raw client exception propagate — a 401 from a third-party API is not a
+    message an operator should have to decode.
+    """
+    if not settings.intervals_api_key.get_secret_value():
+        raise RuntimeError(
+            "INTERVALS_API_KEY is not set. Get a personal API key from "
+            "intervals.icu -> Settings -> Developer Settings, and set it in .env."
+        )
+
+    client = IntervalsClient(
+        settings.intervals_api_key.get_secret_value(), athlete_id=settings.intervals_athlete_id
+    )
+    try:
+        athlete = await client.get_athlete()
+    except CredentialRejectedError as exc:
+        raise RuntimeError(
+            "INTERVALS_API_KEY was rejected by intervals.icu. Check that the key is "
+            "correct and has not been revoked, in Settings -> Developer Settings."
+        ) from exc
+    except IntervalsError as exc:
+        raise RuntimeError(
+            f"Could not reach intervals.icu to verify the credential: {exc}. Check "
+            f"network connectivity and try again."
+        ) from exc
+
+    athlete_id = athlete.get("id", "")
+    logger.info("intervals.icu credential verified — bound to athlete %s", athlete_id)
+    return athlete_id

@@ -68,13 +68,13 @@ FR-020's test meaningful — research R9c found 8 of 54 real activities in that 
 **Independent Test**: Start with a valid key and see the bound athlete named; start with a bad key and see
 startup refuse.
 
-- [ ] T004 [US1] Implement `app/providers/intervals/errors.py`: distinct exception types for credential-rejected, rate-limited, and transient failure — the contract requires callers to tell these apart (FR-005, FR-013), and collapsing them into one type makes both unimplementable above the boundary
-- [ ] T005 [US1] Implement `app/providers/intervals/client.py` with basic auth (`API_KEY` as username), covering: athlete profile, activities by date window, wellness by date window, one activity in full, and activity streams
-- [ ] T006 [US1] Make `intervals_api_key` required in `app/config.py`, and treat `intervals_athlete_id` as optional — `0` resolves to the key's own athlete (research R9e), so requiring it would be friction with no benefit
-- [ ] T007 [US1] Verify the credential at startup in `app/db/lifecycle.py` or a sibling: identify the bound athlete, refuse to start with a message naming the setting and where to get a valid key (FR-002, FR-003)
-- [ ] T008 [US1] Store the key encrypted at rest, refusing to persist it rather than writing it unencrypted when secure storage is unavailable (FR-004) — mirrors the posture spec 001 established
-- [ ] T009 [US1] Write `tests/test_providers/test_client.py` against the T002 fixtures: each error type is raised for its condition; the athlete endpoint identifies correctly
-- [ ] T010 [US1] Verify against the **live** account that startup succeeds with the real key and refuses with a corrupted one
+- [X] T004 [US1] Implement `app/providers/intervals/errors.py`: distinct exception types for credential-rejected, rate-limited, and transient failure — the contract requires callers to tell these apart (FR-005, FR-013), and collapsing them into one type makes both unimplementable above the boundary
+- [X] T005 [US1] Implement `app/providers/intervals/client.py` with basic auth (`API_KEY` as username), covering: athlete profile, activities by date window, wellness by date window, one activity in full, and activity streams
+- [X] T006 [US1] Make `intervals_api_key` required in `app/config.py`, and treat `intervals_athlete_id` as optional — `0` resolves to the key's own athlete (research R9e), so requiring it would be friction with no benefit
+- [X] T007 [US1] Verify the credential at startup in `app/db/lifecycle.py` or a sibling: identify the bound athlete, refuse to start with a message naming the setting and where to get a valid key (FR-002, FR-003)
+- [X] T008 [US1] Store the key encrypted at rest, refusing to persist it rather than writing it unencrypted when secure storage is unavailable (FR-004) — mirrors the posture spec 001 established. Resolution: the app never persists this credential itself (it only reads what the operator wrote to `.env`, same as every other secret in this project), so FR-004's "refuse to persist unencrypted" has no write path to govern; keyring/Fernet-style storage would also never work in the primary docker-compose deployment target (no OS keychain in a container). Implemented the part of FR-004 that does apply: `intervals_api_key` is `pydantic.SecretStr`, so the raw value can't leak via `repr(settings)`, tracebacks, or an incidental debug log. See the comment on the field in `app/config.py`.
+- [X] T009 [US1] Write `tests/test_providers/test_client.py` against the T002 fixtures: each error type is raised for its condition; the athlete endpoint identifies correctly
+- [X] T010 [US1] Verify against the **live** account that startup succeeds with the real key and refuses with a corrupted one
 
 **Checkpoint**: the app connects and identifies the athlete. Strava is untouched and still working.
 
