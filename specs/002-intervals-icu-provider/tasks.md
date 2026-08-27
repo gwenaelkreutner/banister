@@ -224,12 +224,21 @@ for the configured model, silently falling back to canned text in `/forme` and `
 
 ## Phase 8: Polish & validation
 
-- [ ] T067 Run every scenario in [quickstart.md](./quickstart.md), starting with Scenario 0
-- [ ] T068 Run the contract check: `git diff --stat <base>..HEAD -- app/engine/ app/llm/` shows import-path updates only, no logic changes — anything more means the provider leaked past its boundary
-- [ ] T069 Confirm no new lint violations beyond the T001 baseline
-- [ ] T070 [P] Update `CLAUDE.md`: the Strava pipeline section, the stack line, the TSS/HRSS rules that no longer apply, and the environment variables — per the refactor banner's instruction to update *during* each migration
-- [ ] T071 [P] Update `README.md`: intervals.icu setup replaces Strava's, and the "Strava is optional" framing is now false — the source is mandatory
-- [ ] T072 Record the answer to plan.md open question 1 (which FTP the plan generator should use) once observed in practice: the profile reports null, the activity 290, `icu_pm_ftp` 225, `icu_rolling_ftp` 280
+- [X] T067 Run every scenario in [quickstart.md](./quickstart.md), starting with Scenario 0 — results:
+  - Scenario 0 (settle unknowns): done during Phase 2/3, real payloads captured, findings written into plan.md's Open Questions (the six-quality-metrics finding, the null-vs-absent finding)
+  - Scenario 1 (connect by pasting a key): done for real this session — real onboarding against the real account, no browser/OAuth involved
+  - Scenario 2 (mapper preserves meaning): re-run explicitly this session, `uv run pytest tests/test_providers/test_mapper.py -v` — 31/31 passed, including the null-vs-zero assertions per field
+  - Scenario 3 (a ride becomes a coaching moment): done for real this session — full staged exchange confirmed against real Telegram, RPE keyboard confirmed working on a matched activity
+  - **Scenario 4 (the numbers match) — FAILS.** Not fixed in this phase, reported rather than hidden: `/forme` and `/recap` show `compute_fitness_from_any()`'s locally-recomputed CTL/ATL/TSB, never `icu_ctl`/`icu_atl` from the source. This is the exact divergence FR-016 forbids. Known since Phase 3/6 (documented in the mapper's own docstring and in CLAUDE.md's ATL/CTL/TSB section as "écart connu"), raised again live by the user this session, still not switched over — the fix is switching what `/forme` and `/recap` read, not a mapper change, and is being left as a deliberate, explicitly-tracked follow-up rather than rushed into this phase
+  - Scenario 5 (a new athlete does not start from zero): `uv run pytest tests/test_providers/test_history.py -v` — 7/7 passed, including `test_rerunning_before_marking_complete_does_not_duplicate` (the interruption-resumability property)
+  - Scenario 6 (wellness captured, silent about it): `uv run pytest tests/test_providers/test_wellness.py -v` — 3/3 passed, including the null-vs-zero assertion for missing readings
+  - Scenario 7 (old paths gone): `grep -rn "strava\|Strava" app/` returns nothing (re-verified after Phase 7, not just at T062 time)
+  - Scenario 8 (the boundary held): see T068
+- [X] T068 Run the contract check: `git diff --stat 33591b1..HEAD -- app/engine/ app/llm/` — 8 files, 18 insertions/25 deletions, all comment/docstring wording ("Strava" → "source"/"importé") plus one real deletion (dead `tss_from_rpe()`, planned by T056) and one import-path fix (`app.strava.matching` → `app.providers.analysis.matching`, planned by T057). No engine or LLM *logic* changed — the provider boundary held
+- [X] T069 Confirm no new lint violations beyond the T001 baseline — baseline (quickstart.md, pre-spec-002) was 269; current tree is 223. Fewer, not more; the reduction comes from deleted dead code, not a cleanup pass
+- [X] T070 [P] Update `CLAUDE.md`: architecture tree, "Pipeline Strava" → "Pipeline intervals.icu", matching section, DB tables (`oauth_connections` removed), env vars, navigation table — done, and the CTL/ATL/TSB gap (Scenario 4's failure) is flagged explicitly in its own section rather than glossed over
+- [X] T071 [P] Update `README.md`: intervals.icu setup replaces the Strava OAuth walkthrough, "Strava is optional" removed (the source is now mandatory), stack table, bot commands table (`/strava` removed), project structure tree
+- [X] T072 Record the answer to plan.md open question 1 (which FTP the plan generator should use) — checked against the actual code (`app/engine/plan_builder.py`, `app/bot/routers/setup.py`): the plan generator never reads any intervals.icu FTP field, only the athlete-declared value from `/setup`, so the four-way ambiguity doesn't arise as the code stands. Recorded a recommendation (`icu_pm_ftp` over `icu_ftp`/`icu_rolling_ftp`) in plan.md for if/when intervals.icu FTP auto-fill is built later — out of this spec's scope
 
 ---
 

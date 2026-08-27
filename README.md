@@ -9,7 +9,7 @@ Self-hosted AI training coach in Telegram. Generates personalized training plans
 ## What it does
 
 - Generates a structured training plan (Base / Build / Peak / Taper) calibrated to your available hours, FTP or heart rate, and target event
-- Automatically logs activities from Strava via webhook — computes TSS, zones, quality metrics
+- Automatically detects new activities from intervals.icu — training load, zones, and quality metrics are consumed from the source, never recomputed
 - Tracks your fitness curve (ATL/CTL/TSB) after every session
 - Sends morning reminders with the day's session
 - Weekly adherence recap with KPI score
@@ -28,7 +28,7 @@ Self-hosted AI training coach in Telegram. Generates personalized training plans
 | Database | SQLite (local file, no separate service) |
 | ORM | SQLAlchemy async + aiosqlite |
 | LLM | Anthropic Claude / OpenRouter |
-| Sport integration | Strava API v3 |
+| Sport integration | intervals.icu (personal API key, periodic polling) |
 | Runtime | Python 3.13 + uv |
 
 ---
@@ -41,8 +41,8 @@ Self-hosted AI training coach in Telegram. Generates personalized training plans
 - A Telegram bot token — create one with [@BotFather](https://t.me/BotFather)
 - Your Telegram user ID — get it with [@userinfobot](https://t.me/userinfobot)
 - An Anthropic or OpenRouter API key
-
-Strava is optional. The bot works without it — you log sessions manually.
+- An [intervals.icu](https://intervals.icu) account and API key — Settings → Developer Settings → API Key.
+  intervals.icu is the only supported activity source; there is no manual logging fallback.
 
 ### 1. Clone
 
@@ -63,6 +63,7 @@ Edit `.env` with your values. Minimum required:
 TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_OWNER_ID=your_telegram_user_id
 ANTHROPIC_API_KEY=sk-ant-...
+INTERVALS_API_KEY=your_intervals_api_key
 ```
 
 No database configuration needed — data lives in a local SQLite file, created automatically.
@@ -82,36 +83,29 @@ Open Telegram, find your bot, and run `/setup`. Answer 7 questions — your plan
 
 ---
 
-## Strava integration (optional)
+## intervals.icu integration
 
-### Setup
+No OAuth, no callback URL, no app registration — just a personal API key.
 
-1. Create a Strava app at [strava.com/settings/api](https://www.strava.com/settings/api)
-2. Set the **Authorization Callback Domain** to your public domain
-3. Add to `.env`:
+1. Go to intervals.icu → Settings → Developer Settings → API Key
+2. Add it to `.env`:
 
 ```env
-STRAVA_CLIENT_ID=your_client_id
-STRAVA_CLIENT_SECRET=your_client_secret
-STRAVA_REDIRECT_URI=https://your.domain.com/auth/strava/callback
-STRAVA_STATE_SECRET=a_random_32_char_secret
-STRAVA_WEBHOOK_VERIFY_TOKEN=another_random_secret
+INTERVALS_API_KEY=your_intervals_api_key
+# INTERVALS_ATHLETE_ID=0                 # optional — "0" resolves to the key's own athlete
+INTERVALS_POLL_INTERVAL_MINUTES=5        # optional — how often new activities are checked for
 ```
 
-4. In production, expose port 8000 via a reverse proxy (see `nginx/`) and set:
+The key's validity is checked at startup; an invalid or revoked key makes the app refuse to start rather
+than run in a half-working state.
+
+New activities are detected by periodic polling, not a webhook — there is no inbound endpoint to expose
+and no reverse proxy or tunnel needed for this integration. In production, only the Telegram webhook needs
+a public URL:
 
 ```env
 ENVIRONMENT=production
 TELEGRAM_WEBHOOK_URL=https://your.domain.com/webhook/telegram
-```
-
-### Local development with Strava
-
-Use [ngrok](https://ngrok.com) to expose your local port:
-
-```bash
-ngrok http 8000
-# Set the ngrok URL as STRAVA_REDIRECT_URI in .env and in your Strava app settings
 ```
 
 ---
@@ -125,7 +119,6 @@ ngrok http 8000
 | `/week N` | View week N of your plan |
 | `/forme` | Current fitness metrics (ATL / CTL / TSB) |
 | `/recap` | Weekly adherence recap and KPI score |
-| `/strava` | Connect or disconnect Strava |
 | `/reminders` | Manage morning session reminders |
 | `/cancel` | Cancel current action |
 | `/help` | Command list |
@@ -136,7 +129,7 @@ ngrok http 8000
 
 ```
 app/
-├── main.py              # FastAPI entry point + Strava OAuth callback
+├── main.py              # FastAPI entry point + Telegram webhook
 ├── config.py            # Settings (pydantic-settings, loaded from .env)
 ├── bot/
 │   ├── routers/
@@ -144,8 +137,7 @@ app/
 │   │   ├── plan.py      # /plan, /week N
 │   │   ├── forme.py     # /forme — ATL/CTL/TSB display
 │   │   ├── recap.py     # /recap — weekly adherence
-│   │   ├── strava.py    # Strava connect/disconnect
-│   │   ├── session_log.py  # Manual session logging + RPE
+│   │   ├── session_log.py  # Perceived-exertion (RPE) capture after a detected activity
 │   │   ├── reminders.py # Reminder settings
 │   │   ├── chat.py      # Free-form coaching chat (catch-all)
 │   │   └── common.py    # /start, /help, /cancel
@@ -153,7 +145,7 @@ app/
 │   │   ├── db_session.py   # Injects AsyncSession into every handler
 │   │   └── single_user.py  # Owner guard + user injection (no upsert)
 │   ├── keyboards/       # Inline keyboard builders
-│   ├── states.py        # FSM states: SetupStates, PlanStates, SessionLogStates
+│   ├── states.py        # FSM states: SetupStates, PlanStates
 │   └── setup.py         # Dispatcher + middleware + router registration
 ├── db/
 │   ├── client.py        # AsyncEngine (local SQLite)
@@ -162,8 +154,6 @@ app/
 ├── engine/              # Deterministic engine — zero LLM
 │   ├── plan_builder.py  # Main plan generator
 │   ├── periodization.py # Phase sequencing (Base/Build/Peak/Taper)
-│   ├── zones.py         # Power and HR zone computation
-│   ├── tss.py           # TSS / HRSS calculation
 │   ├── atl_ctl.py       # ATL/CTL/TSB (Banister impulse-response model)
 │   ├── adherence_kpi.py # Session KPI scoring (0–2.0 pts)
 │   └── schemas.py       # Pydantic: AthleteProfileSchema, TrainingPlanSchema
@@ -173,12 +163,12 @@ app/
 │   ├── activity_analysis.py  # Post-session narrative
 │   ├── narrator.py      # Plan narration
 │   └── prompts.py       # System prompts
-└── strava/
-    ├── oauth.py         # OAuth flow + HMAC state signing
-    ├── webhook.py       # Activity event handler (TSS, zones, KPI, notification)
-    ├── analyzer.py      # RawActivity → AnalyzedSession
-    ├── matching.py      # Activity ↔ planned session semantic scoring
-    └── history.py       # Historical activity import
+├── services/
+│   ├── weekly_recap.py       # /recap orchestration
+│   └── activity_feedback.py  # Post-activity context assembly, no bot dependency
+└── providers/
+    ├── intervals/       # intervals.icu client, mapper, poller, notifier, wellness
+    └── analysis/        # Activity ↔ plan matching, highlight/personal-record selection
 migrations/
 ├── env.py               # Alembic environment
 └── versions/            # Schema revisions — applied automatically at startup

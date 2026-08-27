@@ -189,11 +189,20 @@ We do not. There is no pending state. `analyzed` is always populated; `analysis_
 It affects **8 of 54 real activities (15%)**. Storing those as `0.0` would record 15% of the athlete's
 rides as rest days. FR-020 is therefore not a defensive nicety; it is load-bearing.
 
-### ⚠️ Still open
+### ✅ Answered (T072) — moot for this spec's actual scope
 
-1. **Which FTP the plan generator should use.** The athlete profile reports `icu_ftp: null`, while the
-   activity carries `icu_ftp: 290`, `icu_pm_ftp: 225`, and `icu_rolling_ftp: 280`. Four answers, one
-   question. Affects plan generation, not ingestion, so it does not block Phase A or B.
+1. **Which FTP the plan generator should use.** Checked in practice against the surviving code
+   (`app/engine/plan_builder.py`, `app/bot/routers/setup.py`): the plan generator never reads any
+   intervals.icu FTP field at all. FTP is exclusively `profile.equipment.ftp`, entered by the athlete
+   during `/setup` (`ftp_source: "declared" | "estimated"`) — this spec never wired intervals.icu's FTP
+   into plan generation, so the four-answers-one-question ambiguity (`icu_ftp` vs `icu_pm_ftp` vs
+   `icu_rolling_ftp` vs the athlete-declared value) doesn't arise in the code as it stands today.
+
+   **If auto-filling FTP from intervals.icu is built later** (out of this spec's scope), recommend
+   `icu_pm_ftp` over `icu_ftp`: the live account showed `icu_ftp: null` on the athlete profile while
+   `icu_pm_ftp` was populated, and a power-meter-derived estimate is less likely to silently reflect a
+   stale manual entry than `icu_ftp`. `icu_rolling_ftp` recency-weights toward the last few weeks, which
+   is closer to CTL's role than FTP's — worth avoiding for that reason alone.
 
 2. **The rate-limit response shape** (FR-013). Verifying it means deliberately exhausting the quota against
    a live account, which is not worth doing. Handle defensively and confirm from the response when it first
