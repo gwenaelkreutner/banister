@@ -10,8 +10,8 @@ logs:
 	docker compose logs -f app
 
 backup:
-	docker exec banister_db pg_dump -U banister banister > backup_$(shell date +%Y%m%d_%H%M%S).sql
-	@echo "Backup saved."
+	docker exec banister_app python scripts/backup.py --out /app/data/backup_$(shell date +%Y%m%d_%H%M%S).db
+	@echo "Backup saved inside the banister_data volume (data/backup_*.db)."
 
 reset-db:
 	docker compose down -v

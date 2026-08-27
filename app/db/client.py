@@ -7,9 +7,8 @@ from app.config import settings
 
 engine = create_async_engine(
     settings.resolved_database_url,
-    # AsyncAdaptedQueuePool is SQLAlchemy's default for both asyncpg and file-based
-    # aiosqlite (verified empirically — spec 003 T029/T032), so these kwargs need no
-    # per-dialect branching: the same pool class backs both backends.
+    # AsyncAdaptedQueuePool is SQLAlchemy's default for file-based aiosqlite (verified
+    # empirically — spec 003 T029/T032), so these pool kwargs apply directly.
     pool_size=3,
     max_overflow=5,
     pool_pre_ping=True,

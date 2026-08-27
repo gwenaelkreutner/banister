@@ -19,10 +19,10 @@ async def bulk_insert(session: AsyncSession, user_id, rows: list[dict]) -> int:
         return 0
 
     # Bind the real UUID object, not its string form: the generic Uuid(as_uuid=True) type
-    # (spec 003) expects a uuid.UUID to bind on SQLite, where asyncpg's leniency toward text
-    # representations previously masked this. Found by test_upsert.py failing on SQLite
-    # while passing on PostgreSQL — the exact class of dialect-specific tolerance the
-    # portability work exists to surface.
+    # (spec 003) expects a uuid.UUID to bind, where the previous PostgreSQL driver's
+    # leniency toward text representations had masked this. Found by test_upsert.py
+    # failing on SQLite while passing on PostgreSQL, during the port — the exact class of
+    # dialect-specific tolerance the portability work existed to surface.
     enriched = [{**r, "user_id": user_id} for r in rows]
 
     stmt = dialect_insert(session)(Activity).values(enriched)

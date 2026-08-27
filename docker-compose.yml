@@ -1,34 +1,14 @@
 services:
-  db:
-    image: postgres:16-alpine
-    container_name: banister_db
-    restart: always
-    environment:
-      POSTGRES_DB: banister
-      POSTGRES_USER: banister
-      POSTGRES_PASSWORD: password
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "127.0.0.1:5432:5432"   # GUI access from host (localhost only)
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U banister"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   app:
     build: .
     container_name: banister_app
     restart: always
-    depends_on:
-      db:
-        condition: service_healthy
     env_file:
       - .env
+    volumes:
+      - banister_data:/app/data
     ports:
       - "127.0.0.1:8000:8000"
 
 volumes:
-  pgdata:
+  banister_data:

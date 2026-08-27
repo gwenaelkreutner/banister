@@ -98,9 +98,7 @@ def _upgrade_to_head_sync() -> None:
             # Verified empirically (spec 003 T026): this is the exact message Alembic
             # raises when the database's stamped revision isn't among the revisions this
             # codebase's migrations/versions/ knows about — i.e. the schema is newer than
-            # this running version understands. PostgreSQL and SQLite both wrap the
-            # migration itself in a transaction ("Will assume transactional DDL"), so a
-            # failure here has not partially applied anything.
+            # this running version understands.
             raise SchemaTooNewError(
                 "The database schema is stamped with a revision this version of the "
                 "application does not recognize. Refusing to start rather than writing "

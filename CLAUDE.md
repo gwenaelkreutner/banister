@@ -12,18 +12,19 @@ Architecture en un seul process : aiogram v3 (bot) + FastAPI (webhooks/OAuth) + 
 Ce document décrit **l'état actuel du code**, pas la cible. Une refonte vers un produit self-hosted open
 source est spécifiée dans `specs/001` à `007`, et gouvernée par `.specify/memory/constitution.md`.
 
-Ce qui va changer, et qui rendra des sections entières de ce fichier obsolètes :
+**✅ Fait** : spec 003 (SQLite local remplace Supabase) — voir sections DB ci-dessous, à jour.
+
+Ce qui reste à faire, et qui rendra d'autres sections de ce fichier obsolètes :
 
 | Décision | Effet sur ce document |
 |---|---|
 | intervals.icu **remplace** Strava (source unique et obligatoire) | toute la section Pipeline Strava |
-| SQLite local remplace Supabase | Tables + migrations + `client.py` |
 | Le log manuel de séance **disparaît** | `/log`, `SessionLogStates`, `tss_from_rpe()` |
 | TSS/zones consommés depuis la source, plus recalculés | `tss.py`, `zones.py` supprimés |
 | `SessionSpec` gagne des étapes structurées | Schémas Pydantic + génération de plan |
 
 **Ordre de construction** (les numéros de spec sont des identifiants, pas une séquence) :
-`003` base locale → `002` intervals.icu → `004` séances structurées → `005` push calendrier →
+~~`003` base locale~~ (fait) → `002` intervals.icu → `004` séances structurées → `005` push calendrier →
 `006` guardrails → `007` premier lancement.
 
 Mettre ce fichier à jour **au fil de** chaque migration, pas après coup.
@@ -54,7 +55,8 @@ ngrok http 8000
 - **Runtime** : Python 3.13
 - **Bot** : aiogram v3 (async FSM, MemoryStorage)
 - **API** : FastAPI — sert webhooks Telegram + OAuth/webhook Strava
-- **DB** : Supabase (PostgreSQL) via SQLAlchemy asyncpg — SSL obligatoire (`?ssl=require`)
+- **DB** : SQLite local (fichier unique sous `DATA_DIR`, `data/` par défaut) via SQLAlchemy + `aiosqlite`.
+  Aucun service séparé à administrer — le fichier est créé et migré automatiquement au démarrage.
 - **LLM** : OpenRouter (provider actuel) ou Anthropic — abstraction multi-provider dans `app/llm/providers/`
   - Modèle test : `arcee-ai/trinity-large-preview:free`
   - Configurable via `LLM_MODEL` / `CHAT_MODEL` dans `.env`
@@ -184,21 +186,28 @@ Si `session_type_real == "unknown"` (Tier 1) → type score neutre à 12 pts, pa
 2. `candidate is None, all_slots_taken=True` → 🔄 "Sortie bonus enregistrée"
 3. `candidate found, score < 50` → détail du score avec raisons
 
-## Tables Supabase
+## Tables SQLite
 
 | Table | Description |
 |-------|-------------|
 | `users` | Compte Telegram, flags onboarding, préférences rappels (`reminders_enabled`, `reminder_hour`, `reminder_minute`, `reminder_last_sent_at`) |
-| `athlete_profiles` | `profile` JSONB → `AthleteProfileSchema` |
-| `training_plans` | `plan_technical` JSONB → `TrainingPlanSchema`, `start_date`, `is_active` |
+| `athlete_profiles` | `profile` JSON → `AthleteProfileSchema` |
+| `training_plans` | `plan_technical` JSON → `TrainingPlanSchema`, `start_date`, `is_active` |
 | `oauth_connections` | Tokens Strava (access/refresh, expires_at, provider_user_id) |
 | `session_logs` | `plan_id` NOT NULL, `tss_actual`, `rpe_emoji`, `logged_date` ; métriques qualité (`cardiac_drift_index`, `intervals_consistency_index`, `respect_zones_score`, `session_type_real`, `variability_index`, `intensity_factor`, `dominant_zone`) ; contexte Strava (`elevation_gain_m`, `average_temp_c`, `athlete_count`) |
 | `chat_messages` | Historique LLM (role, content, intent, tool_used) |
 | `activities` | Import historique Strava (`tss`, `tss_method`, `device_watts`) |
 | `weekly_adherence` | Taux d'adhérence hebdomadaire — upsert à chaque `/recap` ; clé `(user_id, week_start_date)` ; colonnes : `sessions_done`, `sessions_planned`, `compliance_pct`, `tss_7d`, `week_number`, `plan_id` |
 
-Migrations : un seul fichier `migrations/init.sql` (schéma complet), joué automatiquement par Docker au
-premier démarrage. Les anciennes migrations numérotées `001`→`013` ont été fondues dedans.
+Migrations : Alembic (`migrations/versions/`), appliquées automatiquement au démarrage
+(`app/db/lifecycle.py::run_migrations()`) — jamais à la main. `init.sql` a été supprimé (spec 003 T050) ;
+la baseline Alembic (`ecd6f700779f`) le remplace intégralement. Nouveau champ DB → `alembic revision
+--autogenerate`, jamais un fichier SQL écrit à la main.
+
+⚠️ Connu et accepté : une migration Alembic qui échoue en cours de route sur SQLite **ne s'annule pas**
+automatiquement (contrairement à PostgreSQL) — SQLite ne supporte pas les DDL transactionnelles de la même
+façon. En mono-utilisateur avec `scripts/backup.py` disponible, ce risque est accepté tel quel plutôt que
+compensé par un mécanisme de sauvegarde automatique avant chaque migration.
 
 ## Schémas Pydantic clés
 
@@ -219,7 +228,7 @@ TrainingPlanSchema.model_validate(plan.plan_technical)  # pas l'ORM directement
 
 ## Règles importantes
 
-### SQLAlchemy JSONB
+### SQLAlchemy JSON
 Mutations non auto-détectées → obligatoire :
 ```python
 plan.plan_technical = new_data
@@ -353,7 +362,8 @@ Relancer `/setup` régénère le plan intégralement.
 ## Variables d'environnement
 
 ```
-DATABASE_URL=postgresql+asyncpg://postgres:<pwd>@<host>/postgres?ssl=require
+DATA_DIR=data                            # optionnel — chemin du dossier de données (SQLite)
+DATABASE_URL=                            # optionnel — override, sinon SQLite dérivé de DATA_DIR
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_WEBHOOK_URL=https://<domaine>/webhook/telegram   # prod uniquement
 STRAVA_CLIENT_ID=...
@@ -397,5 +407,5 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier fenêtre de matching / candidats | `app/strava/matching.py` — `find_plan_candidate()` |
 | Modifier vue plan+réalisé pour le LLM (system prompt) | `app/llm/tools.py` — `build_activity_session_pairs()` + `_format_week_pairs()` |
 | Ajouter outil LLM | `app/llm/tools.py` (définition JSON Schema) + `_execute_tool()` dans `app/llm/chat.py` |
-| Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `migrations/00N_...sql` |
+| Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `alembic revision --autogenerate` |
 | Architecture complète | `docs/ARCHITECTURE.md` |

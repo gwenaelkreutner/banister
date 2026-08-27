@@ -102,8 +102,10 @@ migrations/
 ├── init.sql                     # REMOVED at cutover, replaced by:
 └── versions/                    # NEW: Alembic revisions, baseline == current schema
 scripts/
-├── carry_over.py                # NEW: one-time PostgreSQL → SQLite for local-origin data
 └── backup.py                    # NEW: VACUUM INTO snapshot + documented restore
+                                  # (no carry-over script: the author starts this
+                                  # deployment fresh rather than migrating hosted data —
+                                  # decided during Phase 6, see spec.md Assumptions)
 tests/
 └── test_db/                     # NEW: the three silent-failure modes, plus lifecycle
 docker-compose.yml               # CHANGED: postgres service removed; volume becomes data dir
@@ -125,7 +127,7 @@ existing suite validates them against a known-good baseline before the engine ev
 | **B** | Dialect-neutral upsert in 3 repositories | PostgreSQL | Existing tests; upsert behaviour test |
 | **C** | Adopt Alembic; baseline revision equals current schema | PostgreSQL | Fresh database from migrations matches `init.sql` output |
 | **D** | Engine, pragmas, pooling, instance lock, version guard | SQLite | New `tests/test_db/`; full suite on SQLite |
-| **E** | Carry-over script for local-origin data | Both | Round-trip on a copy; coach answers match pre-move |
+| **E** | ~~Carry-over script~~ — dropped; deployment starts fresh instead | — | — |
 | **F** | Cutover: remove `asyncpg`, `init.sql`, postgres service | SQLite | Full suite; fresh-deployment quickstart |
 
 The ordering exists because a failure in phase A on PostgreSQL is a type bug, whereas the same failure
@@ -141,7 +143,6 @@ them keeps every failure attributable.
 | "Database is locked" surfaces to the athlete | WAL plus busy timeout; concurrency test drives schedulers and handlers together | FR-013, FR-014 |
 | A metric that was unknown becomes zero | Round-trip test asserting `None`, `0`, `False` and `{}` stay distinct | FR-011 |
 | Pool class wrong for the async driver | Chosen then measured under concurrent load, not assumed | FR-013 |
-| Carry-over loses irreplaceable data | Runs against a copy; source left intact and retryable; activities re-fetched rather than moved | FR-025 |
 
 ## Open items for `/speckit-tasks`
 

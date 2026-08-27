@@ -25,8 +25,8 @@ Self-hosted AI training coach in Telegram. Generates personalized training plans
 |---|---|
 | Bot | aiogram v3 (async FSM) |
 | API | FastAPI (webhooks + OAuth) |
-| Database | PostgreSQL 16 (local Docker) |
-| ORM | SQLAlchemy async + asyncpg |
+| Database | SQLite (local file, no separate service) |
+| ORM | SQLAlchemy async + aiosqlite |
 | LLM | Anthropic Claude / OpenRouter |
 | Sport integration | Strava API v3 |
 | Runtime | Python 3.13 + uv |
@@ -62,9 +62,10 @@ Edit `.env` with your values. Minimum required:
 ```env
 TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_OWNER_ID=your_telegram_user_id
-DATABASE_URL=postgresql+asyncpg://banister:password@db:5432/banister
 ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+No database configuration needed — data lives in a local SQLite file, created automatically.
 
 ### 3. Start
 
@@ -72,7 +73,8 @@ ANTHROPIC_API_KEY=sk-ant-...
 make up
 ```
 
-This builds the Docker image, starts PostgreSQL, runs `migrations/init.sql` automatically, and starts the bot in polling mode.
+This builds the Docker image and starts the bot in polling mode. The database schema is created and
+migrated automatically on first start — no separate database service, no manual step.
 
 ### 4. Configure your profile
 
@@ -154,7 +156,7 @@ app/
 │   ├── states.py        # FSM states: SetupStates, PlanStates, SessionLogStates
 │   └── setup.py         # Dispatcher + middleware + router registration
 ├── db/
-│   ├── client.py        # AsyncEngine (local PostgreSQL)
+│   ├── client.py        # AsyncEngine (local SQLite)
 │   ├── models/          # SQLAlchemy ORM models
 │   └── repositories/    # Data access layer — no SQL in handlers
 ├── engine/              # Deterministic engine — zero LLM
@@ -178,7 +180,8 @@ app/
     ├── matching.py      # Activity ↔ planned session semantic scoring
     └── history.py       # Historical activity import
 migrations/
-└── init.sql             # Full schema — auto-run by Docker on first start
+├── env.py               # Alembic environment
+└── versions/            # Schema revisions — applied automatically at startup
 tests/                   # Engine unit tests (zones, TSS, periodization, plan, matching)
 eval/                    # Offline plan quality evaluation framework
 ```
@@ -191,8 +194,8 @@ eval/                    # Offline plan quality evaluation framework
 make up          # Build and start (Docker)
 make down        # Stop containers
 make logs        # Follow app logs
-make backup      # Dump database to backup_YYYYMMDD_HHMMSS.sql
-make reset-db    # Wipe and reinitialize the database
+make backup      # Snapshot the SQLite database into data/backup_YYYYMMDD_HHMMSS.db
+make reset-db    # Wipe and reinitialize the database (deletes the data volume)
 make shell       # Open a shell in the app container
 ```
 
@@ -204,13 +207,8 @@ make shell       # Open a shell in the app container
 # Install dependencies
 uv sync
 
-# Start a local PostgreSQL and create the database
-psql -U postgres -c "CREATE USER banister WITH PASSWORD 'password';"
-psql -U postgres -c "CREATE DATABASE banister OWNER banister;"
-psql -U banister -d banister -f migrations/init.sql
-
-# Update .env
-DATABASE_URL=postgresql+asyncpg://banister:password@localhost:5432/banister
+# No database setup needed — a SQLite file is created and migrated automatically on first
+# start, under ./data by default. Set DATA_DIR in .env to use a different location.
 
 # Run
 python -m uvicorn app.main:app --port 8000 --reload

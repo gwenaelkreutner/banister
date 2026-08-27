@@ -167,16 +167,21 @@ it from a live one).
 
 ---
 
-## R10. Data carry-over scope is smaller than it appears
+## R10. Data carry-over scope is smaller than it appears — superseded
 
-**Decision**: Carry across only locally originated data — plans, profile, adherence history, conversation
-history. Re-fetch activity history from the training data source instead of transferring it. Drop storage
-belonging to the removed provider integration.
+**Superseded during Phase 6 implementation**: the author decided to start the SQLite deployment with a
+fresh account rather than migrate hosted data at all. `scripts/carry_over.py` was built and verified
+against a structurally identical copy, then removed once that decision was made; spec.md's FR-023 through
+FR-026 and the corresponding user story were removed with it. This section is kept as a record of the
+reasoning that applied while carry-over was still in scope, not as current guidance.
 
-**Rationale**: FR-023, FR-024 and FR-026. The training data source is authoritative for activities, so
-transferring them would be duplicating work that a re-fetch does more reliably. What remains is small,
-which keeps the one-time carry-over simple and reviewable. Only the author has real data, so this is a
-one-time operation rather than a supported capability.
+**Original decision**: Carry across only locally originated data — plans, profile, adherence history,
+conversation history. Re-fetch activity history from the training data source instead of transferring it.
+
+**Original rationale**: The training data source is authoritative for activities, so transferring them
+would be duplicating work that a re-fetch does more reliably. What remains is small, which keeps the
+one-time carry-over simple and reviewable. Only the author has real data, so this is a one-time operation
+rather than a supported capability.
 
 ---
 

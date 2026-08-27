@@ -59,7 +59,6 @@ Generated plans. `plan_technical` is validated as `TrainingPlanSchema`; `plan_na
 narration.
 
 - **Delta**: UUID; two JSON documents
-- **Carry-over**: locally originated and irreplaceable (FR-023)
 - **Note for later**: spec 004 adds structured steps inside `plan_technical`. Because it is a document
   column, that is not a schema change here — which is precisely why this port must not disturb document
   fidelity.
@@ -88,14 +87,12 @@ Imported activity history, with the load value and the method used to derive it.
 - `tss`, `tss_method`, `ftp_used`, `device_watts`, plus measured values
 - **Delta**: UUID ×2; boolean `device_watts` nullable — the three-state distinction between "measured with
   a power meter", "not measured with one", and "unknown" must survive
-- **Carry-over**: source-derived, therefore re-fetchable rather than transferred (FR-024)
 
 ### `chat_messages`
 
 Conversation history: role, content, intent, tool used.
 
 - **Delta**: UUID ×2
-- **Carry-over**: locally originated and irreplaceable (FR-023)
 
 ### `weekly_adherence`
 
@@ -104,7 +101,6 @@ One row per athlete per week, upserted on each weekly review.
 - Key: `(user_id, week_start_date)`
 - Values: sessions done, sessions planned, compliance percentage, 7-day load, week number, plan id
 - **Delta**: UUID; **upsert construct** — one of the three repositories affected by R4
-- **Carry-over**: locally originated and irreplaceable (FR-023)
 
 ### `oauth_connections`
 

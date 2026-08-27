@@ -212,54 +212,42 @@ pooling at all; the existing `pool_size`/`max_overflow`/`pool_pre_ping` kwargs a
 
 ---
 
-## Phase 6: Data carry-over (Plan Phase E) — US6
+## Phase 6: Data carry-over — REMOVED
 
-**Goal**: The author's real history comes across. One-way door: anything not carried is lost.
+**Originally**: implement `scripts/carry_over.py` (T043–T046), then run it against a copy of the real
+production database and verify behaviourally that the coach's answers match before and after (T047).
 
-**Independent Test**: Carry a copy across and confirm the coach's answers match what it said before.
+**T043–T046 were implemented and verified** against a local PostgreSQL container seeded with synthetic
+data across all seven carried tables plus `activities` (correctly skipped). Values round-tripped
+correctly, the source was confirmed unmodified after every run, and re-running against a populated
+destination produced zero duplicates with an accurate `rowcount` on both passes. One real bug was caught
+this way: the first `--dry-run` implementation still created the destination schema before checking the
+flag, contradicting its own "nothing written" message — fixed before this note was written.
 
-- [X] T043 [US6] Implement `scripts/carry_over.py` transferring only locally originated data — plans, profile, adherence history, conversation history — with a `--dry-run` mode reporting what would move (FR-023)
-- [X] T044 [US6] Make the script leave the source untouched and be safely retryable after a failure or interruption (FR-025)
-- [X] T045 [US6] Explicitly skip activity history, which is re-fetched from the training data source because that source is authoritative for it (FR-024)
-- [X] T046 [US6] Explicitly skip storage belonging to the removed provider integration where it is already obsolete (FR-026)
-- [ ] T047 [US6] Run the carry-over against a **copy** of the real database and verify behaviourally: ask the coach about current plan, past training and adherence history before and after, and compare the answers — matching row counts prove much less than matching answers (SC-007)
+**T047 was never attempted** — the real production database is unreachable from this environment
+(`.env`'s Supabase URL fails with `ENOTFOUND` here) — and the question was moot before it could be
+answered: the author decided to start the SQLite deployment with a fresh account rather than migrate real
+data at all. `scripts/carry_over.py` was removed, and spec.md's former User Story 6, FR-023 through
+FR-026, and SC-007 were removed with it — see `research.md` R10 for the reasoning that applied while
+carry-over was still in scope, and `checklists/requirements.md` for the full account of the change.
 
-**Checkpoint**: Real data is on the new engine and the coach behaves identically.
-
-**T047 deliberately left unchecked — the real production database is unreachable from this environment**
-(`.env`'s Supabase URL fails with `ENOTFOUND` from here; the network path to it isn't available in this
-sandbox). What T043–T046 required has been verified as thoroughly as possible without it:
-
-- The mechanism was run end to end against the local `banister` Postgres container, seeded with synthetic
-  data across all seven carried tables (`users`, `athlete_profiles`, `training_plans`, `session_logs`,
-  `chat_messages`, `weekly_adherence`, `oauth_connections`) plus `activities`, structurally identical to
-  production. Every value round-tripped correctly; `activities` was correctly skipped; the source was
-  confirmed unmodified after each run.
-- **A real bug was caught this way**: the first `--dry-run` implementation still called
-  `Base.metadata.create_all` on the destination before checking the dry-run flag, leaving an empty schema
-  file behind — directly contradicting its own "nothing written" message. Schema creation was moved to
-  after the dry-run check.
-- Retryability (FR-025) was verified genuinely, not assumed: running the script twice against the same
-  populated destination produced zero duplicates, and `INSERT ... ON CONFLICT DO NOTHING`'s reported
-  `rowcount` was confirmed accurate on both the first run (matches rows carried) and the second (exactly 0).
-- What remains unverified is specifically the SC-007 behavioural check this task asks for — comparing the
-  coach's actual answers about the *author's own* real plan, training history and adherence record before
-  and after a real carry-over. That requires either network access to the production database from wherever
-  this runs, or the author running `scripts/carry_over.py` themselves against a copy of their own data and
-  confirming the coach's answers match. The script is ready for that; the one-way, irreplaceable-data step
-  itself has not been exercised against real data by this session.
+A related decision surfaced at the same time: authorization tokens for the previous sport-data provider
+are not carried into the fresh deployment either. This does not change *when* the table backing those
+tokens is dropped from the schema — that remains spec 002's responsibility, since the provider is still
+in active use until spec 002 replaces it (see T014).
 
 ---
 
 ## Phase 7: Cutover (Plan Phase F)
 
-**Purpose**: Remove what the migration replaced. Only after Phase 6 has been verified.
+**Purpose**: Remove what the migration replaced. No longer gated on Phase 6, which was removed rather than
+completed.
 
-- [ ] T048 Remove the PostgreSQL service and its volume from `docker-compose.yml`, and mount the data directory instead
-- [ ] T049 [P] Remove `asyncpg` from `pyproject.toml` and regenerate `uv.lock`
-- [ ] T050 [P] Delete `migrations/init.sql`, now superseded by the Alembic baseline
-- [ ] T051 Remove the hosted-database connection settings from `app/config.py` and from `.env.example`
-- [ ] T052 Verify no PostgreSQL-specific import remains: `grep -rn "dialects.postgresql\|asyncpg" app/` must return nothing
+- [X] T048 Remove the PostgreSQL service and its volume from `docker-compose.yml`, and mount the data directory instead
+- [X] T049 [P] Remove `asyncpg` from `pyproject.toml` and regenerate `uv.lock`
+- [X] T050 [P] Delete `migrations/init.sql`, now superseded by the Alembic baseline
+- [X] T051 Remove the hosted-database connection settings from `app/config.py` and from `.env.example`
+- [X] T052 Verify no PostgreSQL-specific import remains: `grep -rn "dialects.postgresql\|asyncpg" app/` must return nothing
 
 **Checkpoint**: PostgreSQL is gone from the project.
 
@@ -267,13 +255,13 @@ sandbox). What T043–T046 required has been verified as thoroughly as possible 
 
 ## Phase 8: Polish & validation
 
-- [ ] T053 Run every scenario in [quickstart.md](./quickstart.md) end to end on a clean machine
-- [ ] T054 Run the contract check from quickstart scenario 9: `git diff --stat` must show no router, service, engine or LLM module — anything else means the change escaped its scope
-- [ ] T055 Run `uv run ruff check app/ tests/` and confirm no violations beyond the T003 baseline of 291
-- [ ] T056 [P] Repeat the concurrency and durability tests (T035, T036) at least twenty times — both are timing-dependent, and a single pass proves considerably less than twenty
-- [ ] T057 [P] Update `CLAUDE.md`: the storage section, the `migrations/` description, and the environment variables, per the refactor banner's instruction to update it *during* each migration rather than after
-- [ ] T058 [P] Update `README.md` install instructions, removing database provisioning steps that no longer exist
-- [ ] T059 Verify SC-008: routine operations stay responsive against a store holding several years of history
+- [X] T053 Run every scenario in [quickstart.md](./quickstart.md) end to end on a clean machine
+- [X] T054 Run the contract check from quickstart scenario 8: `git diff --stat` must show no router, service, engine or LLM module — anything else means the change escaped its scope
+- [X] T055 Run `uv run ruff check app/ tests/` and confirm no violations beyond the current baseline (269 as of the Phase 5/6 checkpoint — see baseline.md's note that 291 was the number when the plan was written, already superseded once)
+- [X] T056 [P] Repeat the concurrency and durability tests (T035, T036) at least twenty times — both are timing-dependent, and a single pass proves considerably less than twenty
+- [X] T057 [P] Update `CLAUDE.md`: the storage section, the `migrations/` description, and the environment variables, per the refactor banner's instruction to update it *during* each migration rather than after
+- [X] T058 [P] Update `README.md` install instructions, removing database provisioning steps that no longer exist
+- [X] T059 Verify SC-008: routine operations stay responsive against a store holding several years of history
 
 ---
 
@@ -287,9 +275,8 @@ Phase 1 (Setup)
           └─> Phase 3 (Portable upsert, on PostgreSQL)
                  └─> Phase 4 (Alembic)
                         └─> Phase 5 (Engine change → SQLite)
-                               └─> Phase 6 (Carry-over)
-                                      └─> Phase 7 (Cutover)
-                                             └─> Phase 8 (Validation)
+                               └─> Phase 7 (Cutover)            [Phase 6 removed]
+                                      └─> Phase 8 (Validation)
 ```
 
 Strictly sequential by phase. That is not conservatism — it is what keeps every failure attributable to
@@ -320,7 +307,6 @@ the exact silent failure the test exists to catch.
 | US3 — Concurrent work does not collide | P1 | Phase 5 | T035, T036, T056; quickstart 4–5 |
 | US4 — Backup is copying one file | P2 | Phase 5 | T039–T041; quickstart 6 |
 | US5 — Schema evolves without a client | P2 | Phase 4 | T027; quickstart 7 |
-| US6 — The author's history comes across | P3 | Phase 6 | T047; quickstart 8 |
 
 ---
 
@@ -343,13 +329,12 @@ where the risk reduction lives.
 2. **Phase 4** — Alembic. Also low-risk, still on PostgreSQL, and it delivers US5 on its own.
 3. **Phase 5** — the actual migration. Everything genuinely risky is concentrated here, which is the point
    of the ordering.
-4. **Phase 6** — carry-over, against a copy first, always.
-5. **Phases 7–8** — remove and verify.
+4. **Phases 7–8** — remove and verify.
 
-### Before starting Phase 6
-
-Take a full backup of the real database and confirm the restore works. Phase 6 is the only one-way door in
-this feature.
+Phase 6 (data carry-over) was removed rather than completed: the author starts this deployment with a
+fresh account instead of migrating hosted data. See the Phase 6 section above for what was built and
+verified before that decision, and `specs/003-local-embedded-database/research.md` R10 for the superseded
+reasoning.
 
 ---
 

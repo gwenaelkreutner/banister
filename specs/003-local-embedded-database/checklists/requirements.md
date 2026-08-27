@@ -62,10 +62,17 @@ opportunities were noticed during inspection and excluded. Combining a storage-e
 remodelling makes any resulting data loss impossible to attribute, and both changes are individually
 reversible only while they remain separate.
 
-**Insight that shrank the risk**: activity history is re-fetchable from the training data source, which is
-authoritative for it. The irreplaceable data is therefore only what this system produced itself — plans,
-profile, adherence history, conversation history. FR-024 makes that explicit so the carry-over is not
-over-engineered.
+**Iteration during implementation — data carry-over removed entirely**: the original draft required
+carrying locally originated data (plans, profile, adherence history, conversation history) across from the
+hosted database, on the reasoning that activity history is re-fetchable from the training data source and
+so the irreplaceable surface was small. That reasoning held, but the author decided during Phase 6's
+implementation to start the SQLite deployment with a fresh account instead of migrating real data at all —
+superseding the premise, not just the execution. The former User Story 6, FR-023 through FR-026, SC-007,
+and the "Locally originated data" / "Source-derived data" key entities were removed rather than left
+satisfied-but-unused. A related decision surfaced at the same time: authorization tokens for the previous
+sport-data provider are not carried either, since the athlete reconnects fresh — independent of, and not
+changing, when the table backing those tokens is dropped from the schema, which remains spec 002's
+responsibility because that provider is still the one in active use until spec 002 replaces it.
 
 **Status**: All checklist items pass. Ready for `/speckit-plan`.
 

@@ -139,28 +139,7 @@ not a half-changed one.
 
 ---
 
-## Scenario 8 — The author's history comes across (SC-007, FR-023/025)
-
-Run against a **copy**, never the live source.
-
-```bash
-uv run python scripts/carry_over.py --from "$POSTGRES_URL" --to ./data/banister.db --dry-run
-uv run python scripts/carry_over.py --from "$POSTGRES_URL" --to ./data/banister.db
-```
-
-**Expect**: plans, profile, adherence history and conversation history present and unchanged in meaning.
-Activity history is **not** transferred — it is re-fetched from the training data source, which is
-authoritative for it (FR-024).
-
-**The real acceptance test is behavioural, not structural**: ask the coach the same questions before and
-after — current plan, past training, adherence history — and compare the answers. Matching row counts prove
-much less than matching answers.
-
-Confirm also that the source database is untouched and the operation is retryable (FR-025).
-
----
-
-## Scenario 9 — The contract held (contracts/persistence.md)
+## Scenario 8 — The contract held (contracts/persistence.md)
 
 ```bash
 git diff --stat main...HEAD -- app/ | grep -v "^ app/db/"
@@ -179,4 +158,4 @@ port is not the isolated change it claims to be.
 - [ ] No new lint violations beyond the 291 pre-existing
 - [ ] Scenario 2 fails when the pragma is disabled (proving the test is real)
 - [ ] Scenarios 4 and 5 pass on repeated runs, not a single lucky one
-- [ ] Scenario 9 shows no diff outside the persistence boundary
+- [ ] Scenario 8 shows no diff outside the persistence boundary
