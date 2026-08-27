@@ -12,20 +12,19 @@ Architecture en un seul process : aiogram v3 (bot) + FastAPI (webhooks/OAuth) + 
 Ce document décrit **l'état actuel du code**, pas la cible. Une refonte vers un produit self-hosted open
 source est spécifiée dans `specs/001` à `007`, et gouvernée par `.specify/memory/constitution.md`.
 
-**✅ Fait** : spec 003 (SQLite local remplace Supabase) — voir sections DB ci-dessous, à jour.
+**✅ Fait** : spec 003 (SQLite local remplace Supabase), spec 002 (intervals.icu remplace Strava, log manuel
+supprimé) — voir sections ci-dessous, à jour.
 
 Ce qui reste à faire, et qui rendra d'autres sections de ce fichier obsolètes :
 
 | Décision | Effet sur ce document |
 |---|---|
-| intervals.icu **remplace** Strava (source unique et obligatoire) | toute la section Pipeline Strava |
-| Le log manuel de séance **disparaît** | `/log`, `SessionLogStates`, `tss_from_rpe()` |
-| TSS/zones consommés depuis la source, plus recalculés | `tss.py`, `zones.py` supprimés |
 | `SessionSpec` gagne des étapes structurées | Schémas Pydantic + génération de plan |
+| Push des séances vers le calendrier intervals.icu | Nouvelle section à créer |
 
 **Ordre de construction** (les numéros de spec sont des identifiants, pas une séquence) :
-~~`003` base locale~~ (fait) → `002` intervals.icu → `004` séances structurées → `005` push calendrier →
-`006` guardrails → `007` premier lancement.
+~~`003` base locale~~ (fait) → ~~`002` intervals.icu~~ (fait) → `004` séances structurées → `005` push
+calendrier → `006` guardrails → `007` premier lancement.
 
 Mettre ce fichier à jour **au fil de** chaque migration, pas après coup.
 
@@ -37,30 +36,30 @@ python -m uvicorn app.main:app --port 8000 --reload
 
 # Tests
 pytest tests/
-pytest tests/test_strava/          # tests pipeline Strava
+pytest tests/test_providers/       # tests intervals.icu (client, mapper, poller, notifier)
+pytest tests/test_analysis/        # tests matching activité ↔ plan
 pytest tests/test_engine/          # tests moteur
 
 # Lint
 ruff check app/ tests/
-
-# Tunnel pour OAuth Strava en local
-ngrok http 8000
-
-# Simuler une activité Strava (PowerShell)
-./simulate_ride.ps1
 ```
 
 ## Stack
 
 - **Runtime** : Python 3.13
 - **Bot** : aiogram v3 (async FSM, MemoryStorage)
-- **API** : FastAPI — sert webhooks Telegram + OAuth/webhook Strava
+- **API** : FastAPI — sert le webhook Telegram uniquement (plus d'endpoint entrant côté source de données ;
+  voir Pipeline intervals.icu ci-dessous)
 - **DB** : SQLite local (fichier unique sous `DATA_DIR`, `data/` par défaut) via SQLAlchemy + `aiosqlite`.
   Aucun service séparé à administrer — le fichier est créé et migré automatiquement au démarrage.
 - **LLM** : OpenRouter (provider actuel) ou Anthropic — abstraction multi-provider dans `app/llm/providers/`
-  - Modèle test : `arcee-ai/trinity-large-preview:free`
   - Configurable via `LLM_MODEL` / `CHAT_MODEL` dans `.env`
-- **Strava** : OAuth2 + webhooks + import historique
+  - ⚠️ Certains modèles OpenRouter consomment beaucoup de tokens de "raisonnement" cachés avant d'émettre
+    du contenu visible — un `max_tokens` trop bas se traduit par `finish_reason=length` et un contenu
+    `null`, silencieusement absorbé par le fallback déterministe. Vu en conditions réelles avec
+    `stepfun/step-3.5-flash` : 300–2048 insuffisant, 4000 suffisant.
+- **intervals.icu** : source unique et obligatoire des activités — clé API personnelle (basic auth),
+  interrogation périodique (pas de webhook entrant, décision verrouillée en spec 001/002)
 
 ## Architecture
 
@@ -71,16 +70,15 @@ app/
 ├── core/
 │   ├── persona.py           # load_persona() → Persona depuis personas/*.yaml
 │   │                        # ⚠️ construit mais JAMAIS appelé — prompts.py a encore ses prompts en dur
-│   ├── exceptions.py        # BanisterError + PersonaNotFoundError
-│   └── types.py
+│   └── exceptions.py        # BanisterError + PersonaNotFoundError
 ├── bot/
 │   ├── setup.py             # Dispatcher + middlewares + routers (ordre critique)
-│   ├── states.py            # FSM : SetupStates, PlanStates, SessionLogStates
+│   ├── states.py            # FSM : SetupStates, PlanStates (SessionLogStates supprimé — spec 002)
 │   ├── middlewares/
 │   │   ├── db_session.py    # Ouvre AsyncSession (doit précéder single_user)
 │   │   └── single_user.py   # Garde TELEGRAM_OWNER_ID + injection User (pas d'upsert)
-│   ├── keyboards/           # Prefixes callbacks : setup: / plan: / log: / strava: / chat: / rem:
-│   ├── routers/             # Ordre réel dans setup.py : common → setup → plan → strava
+│   ├── keyboards/           # Prefixes callbacks : setup: / plan: / log: / chat: / rem:
+│   ├── routers/             # Ordre réel dans setup.py : common → setup → plan
 │   │                        # → session_log → forme → recap → reminders → chat (DERNIER)
 │   └── (chat doit rester en dernier — catch-all)
 ├── db/
@@ -89,15 +87,14 @@ app/
 │   └── repositories/        # Accès DB — jamais de SQL dans les handlers
 │       └── weekly_adherence_repo.py  # upsert + get_recent — persistance taux d'adhérence /recap
 ├── services/                # Orchestration : repos + LLM, sans dépendance aiogram
-│   └── weekly_recap.py      # compute_weekly_recap() → WeeklyRecapResult
+│   ├── weekly_recap.py      # compute_weekly_recap() → WeeklyRecapResult
+│   └── activity_feedback.py # assemble_activity_feedback() — contexte post-séance, sans dépendance bot
 ├── engine/                  # Moteur déterministe — zéro LLM ici
 │   ├── schemas.py           # Pydantic : AthleteProfileSchema, TrainingPlanSchema, SessionSpec
-│   ├── zones.py             # Zones puissance/FC depuis FTP/hr_max
-│   ├── tss.py               # Calcul TSS (power/hr/rpe)
 │   ├── periodization.py     # Blocs Base/Build/Peak/Taper
 │   ├── plan_builder.py      # Génération plan complet
 │   ├── plan_modifier.py     # Modification plan (outil LLM)
-│   ├── atl_ctl.py           # ATL/CTL/TSB (EMA τ=7j/42j) + tss_from_rpe()
+│   ├── atl_ctl.py           # ATL/CTL/TSB (EMA τ=7j/42j) — calculé localement, la source ne le fournit pas
 │   ├── adherence_kpi.py     # Score KPI par séance (0–2.0 pts) + bloc KPI hebdo
 │   └── weekly_snapshot.py   # WeeklySnapshot : tendance charge, monotonie Foster
 ├── llm/
@@ -109,49 +106,49 @@ app/
 │   ├── prompts.py           # Contexte système (profil, plan, métriques)
 │   ├── activity_analysis.py # Feedback post-séance enrichi (5 blocs, tone TSB)
 │   └── narrator.py          # Résumé narratif semaine (texte pur)
-└── strava/
-    ├── oauth.py             # build_auth_url() + HMAC state
-    ├── client.py            # get_athlete(), get_athlete_stats(), get_activities()
-    ├── history.py           # import_history() : 3 appels API + TSS + _analyze()
-    ├── analysis_models.py   # DTOs : RawActivity, RawActivityStreams, AnalyzedSession
-    ├── fetcher.py           # StravaActivityFetcher — ingestion sans logique métier
-    ├── analyzer.py          # SessionAnalyzer — RawActivity → AnalyzedSession
-    ├── matching.py          # Matching activité ↔ séance planifiée (score 0-100)
-    └── webhook.py           # Réception événements activité Strava
+└── providers/
+    ├── intervals/           # Source de données unique — intervals.icu
+    │   ├── client.py        # Auth basic (clé API), quotas, get_activity/list_activities/get_wellness
+    │   ├── errors.py        # Erreurs typées (clé invalide, indisponibilité, quota)
+    │   ├── mapper.py        # Payload intervals.icu (183 champs) → AnalyzedSession
+    │   ├── history.py       # Import historique à la première connexion (idempotent)
+    │   ├── poller.py        # Interrogation périodique — détecte les nouvelles activités
+    │   ├── notifier.py      # Notification étagée post-sortie + clavier RPE
+    │   └── wellness.py      # HRV / FC repos / sommeil (spec 006 guardrails consomme, pas encore branché)
+    └── analysis/            # Logique métier que la source ne fournit pas
+        ├── analysis_models.py  # AnalyzedSession (DTO commun, provider-agnostic)
+        ├── matching.py          # Matching activité ↔ séance planifiée (score 0-100)
+        └── highlight.py         # Variable Reward — sélection fait marquant + record personnel
 ```
 
-## Pipeline Strava
+## Pipeline intervals.icu
 
-Trois couches séparées pour décorréler l'API Strava des calculs métier :
+Interrogation périodique uniquement — aucun endpoint entrant exposé (décision verrouillée en spec 001 :
+les webhooks intervals.icu exigent d'enregistrer une application et ajoutent leur propre délai de
+consolidation).
 
 ```
-StravaActivityFetcher.fetch_raw_activity()
-    → Tier 1 : pas de streams (activité manuelle ou < 20min)
-    → Tier 2 : streams légers [time, watts, heartrate] (ride/run > 20min avec HR ou power)
-    → Tier 3 : streams complets [+velocity, grade, moving, altitude] (séance planifiée ou course/test)
-    → RawActivity
+poller.py (tick périodique, cf. INTERVALS_POLL_INTERVAL_MINUTES, défaut 5 min)
+    → client.list_activities() : liste des activités récentes
+    → détecte les nouvelles (sync_state), une notification par activité, jamais de doublon ni d'oubli
+    → mapper.map_activity(payload) → AnalyzedSession
 
-SessionAnalyzer.analyze(raw_activity, ftp=..., hr_max=..., ...)
-    → Calcule NP (strava weighted_avg > NP calculé streams)
-    → Calcule time_in_zones_s (power si FTP dispo, sinon HR)
-    → Calcule TSS, IF, session_type_real, variability_index (NP/avg_power)
-    → Métriques qualité : respect_zones_score, cardiac_drift_index, intervals_consistency_index
-    → Déduit environment ("indoor" si VirtualRide, sinon "outdoor")
+mapper.map_activity()
+    → CTL/ATL/TSB, TSS, zones, FTP/LTHR : consommés tels quels depuis la source, jamais recalculés
+    → decoupling (intervals.icu, en %) → cardiac_drift_index (fraction signée, ÷100 — unités différentes,
+      bug réel trouvé en conditions réelles : notification affichant "+1571%" avant la conversion)
+    → respect_zones_score, session_type_real, intervals_consistency_index : la source ne connaît pas le
+      plan, donc conservés en calcul local (voir app/providers/analysis/)
     → AnalyzedSession
 
-# Si séance alignée avec le plan → upgrade Tier 3 + ré-analyse
-fetcher.ensure_tier3_streams() → analyzer.analyze() (2e passe, planned_zone injecté)
+# Si la source est injoignable : l'ancienneté des données est annoncée, jamais substituée par une
+# estimation présentée comme actuelle (FR-020 / Constitution Principe IV)
 ```
 
-**Priorité NP** : `weighted_average_watts` Strava > calculé depuis streams > `None` (jamais estimé).
-
-**Détection `session_type_real`** (dans `SessionAnalyzer._detect_session_type`) :
-- `"intervals"` : z4+ ≥ 10% + variabilité watts élevée (P95/P05 ratio > 0.6)
-- `"tempo"` : z3+z4 ≥ 60% (sorties > 3h) ou ≥ 40% (< 3h)
-- `"long_ride"` : z1+z2 ≥ 60% + durée ≥ 2h30, ou durée ≥ 2h30 sans zone dominante
-- `"endurance"` : z1+z2 ≥ 60% + 1h–2h30
-- `"recovery"` : z1+z2 ≥ 60% + < 1h
-- `"unknown"` : Tier 1 (pas de streams) ou activité manuelle
+**Import d'historique** (`history.py`) : à la première connexion, un seul appel `list_activities()`
+ramène tout l'historique disponible (jusqu'à ~120 jours en un seul call, pas de pagination observée) —
+`activity_repo.bulk_insert()` avec `on_conflict_do_nothing` le rend idempotent, donc réentrant sans
+risque après une interruption.
 
 ## Matching activité ↔ plan
 
@@ -171,9 +168,10 @@ fetcher.ensure_tier3_streams() → analyzer.analyze() (2e passe, planned_zone in
 | Zone dominante | 5 | bonus si `dominant_zone == zone_code` |
 | Indoor/outdoor | 10 | cohérence environnement + type séance |
 
-Si `session_type_real == "unknown"` (Tier 1) → type score neutre à 12 pts, pas de pénalité.
+Si `session_type_real == "unknown"` → type score neutre à 12 pts, pas de pénalité.
 
-**`all_slots_taken`** : `True` si des candidats existent dans la fenêtre mais tous déjà pris → webhook affiche message "Sortie bonus" au lieu de "hors plan".
+**`all_slots_taken`** : `True` si des candidats existent dans la fenêtre mais tous déjà pris → le poller
+affiche message "Sortie bonus" au lieu de "hors plan" (`app/providers/intervals/notifier.py`).
 
 **`build_activity_session_pairs(plan_schema, plan_start_date, session_logs, week_number)`** :
 - Construit les paires `SessionPair(planned_date, day_of_week, session_spec, session_log)` pour une semaine
@@ -181,7 +179,7 @@ Si `session_type_real == "unknown"` (Tier 1) → type score neutre à 12 pts, pa
 - Les bonus dont la `logged_date` correspond à la date réelle d'une séance matchée sont supprimés (évite les doublons le même jour réel)
 - Utilisé par `build_system_prompt()` pour construire le contexte LLM semaine en cours
 
-**Webhook — 3 cas de message hors-plan** :
+**Notification — 3 cas de message hors-plan** (`app/providers/intervals/notifier.py`) :
 1. `candidate is None, all_slots_taken=False` → "Aucune séance planifiée à ±2 jours"
 2. `candidate is None, all_slots_taken=True` → 🔄 "Sortie bonus enregistrée"
 3. `candidate found, score < 50` → détail du score avec raisons
@@ -190,14 +188,16 @@ Si `session_type_real == "unknown"` (Tier 1) → type score neutre à 12 pts, pa
 
 | Table | Description |
 |-------|-------------|
-| `users` | Compte Telegram, flags onboarding, préférences rappels (`reminders_enabled`, `reminder_hour`, `reminder_minute`, `reminder_last_sent_at`) |
+| `users` | Compte Telegram, flags onboarding (`onboarding_completed_at`), préférences rappels (`reminders_enabled`, `reminder_hour`, `reminder_minute`, `reminder_last_sent_at`) |
 | `athlete_profiles` | `profile` JSON → `AthleteProfileSchema` |
 | `training_plans` | `plan_technical` JSON → `TrainingPlanSchema`, `start_date`, `is_active` |
-| `oauth_connections` | Tokens Strava (access/refresh, expires_at, provider_user_id) |
-| `session_logs` | `plan_id` NOT NULL, `tss_actual`, `rpe_emoji`, `logged_date` ; métriques qualité (`cardiac_drift_index`, `intervals_consistency_index`, `respect_zones_score`, `session_type_real`, `variability_index`, `intensity_factor`, `dominant_zone`) ; contexte Strava (`elevation_gain_m`, `average_temp_c`, `athlete_count`) |
+| `session_logs` | `plan_id` NOT NULL, `tss_actual`, `rpe_emoji`, `logged_date`, `source_activity_id` (id intervals.icu) ; métriques qualité (`cardiac_drift_index`, `intervals_consistency_index`, `respect_zones_score`, `session_type_real`, `variability_index`, `intensity_factor`, `dominant_zone`) ; contexte (`elevation_gain_m`, `average_temp_c`, `athlete_count`) |
 | `chat_messages` | Historique LLM (role, content, intent, tool_used) |
-| `activities` | Import historique Strava (`tss`, `tss_method`, `device_watts`) |
+| `activities` | Import historique (`source="intervals_icu"`, `source_activity_id`, `tss`, `tss_method`, `device_watts`) |
 | `weekly_adherence` | Taux d'adhérence hebdomadaire — upsert à chaque `/recap` ; clé `(user_id, week_start_date)` ; colonnes : `sessions_done`, `sessions_planned`, `compliance_pct`, `tss_7d`, `week_number`, `plan_id` |
+
+`oauth_connections` a été supprimée (spec 002 T059) — l'authentification intervals.icu est une clé API
+personnelle, pas un flux OAuth, donc aucune table de tokens n'est nécessaire.
 
 Migrations : Alembic (`migrations/versions/`), appliquées automatiquement au démarrage
 (`app/db/lifecycle.py::run_migrations()`) — jamais à la main. `init.sql` a été supprimé (spec 003 T050) ;
@@ -237,7 +237,7 @@ await session.flush()
 ```
 
 ### Telegram / parse_mode
-- `parse_mode="HTML"` partout où les messages contiennent `/connect_strava` ou underscores
+- `parse_mode="HTML"` partout où les messages contiennent des underscores (identifiants, chemins)
 - `parse_mode="Markdown"` uniquement si le texte est garanti sans underscore hors italique
 
 ### FSM aiogram
@@ -245,40 +245,20 @@ await session.flush()
 - `FSMContext` inaccessible dans les middlewares (injecté après par aiogram)
 - `chat_router` doit être enregistré en DERNIER dans `setup.py` (catch-all)
 
-### Strava OAuth
-- State format : `{telegram_id}:{context}.{hmac_hex}` — `context` = `"main"` | `"onboarding"`
-- `verify_state()` → `tuple[int, str]` ou `None`
-
-### Calcul TSS / HRSS
-
-**Priorité dans `SessionAnalyzer.analyze()`** : power (NP/FTP) > **HRSS streams** > fallback scalaire
-
-**HRSS — TRIMP de Banister** (`calc_hrss()` dans `app/engine/tss.py`) :
-```
-HRR_i  = (HR_i − HR_rest) / (HR_max − HR_rest)   # réserve cardiaque, [0, 1]
-stress_i = dt_i × HRR_i × 0.64 × exp(k × HRR_i)  # k=1.92 H / k=1.67 F
-TRIMP    = Σ stress_i
-HRSS     = TRIMP / TRIMP_1h_LTHR × 100            # 100 = 1h exactement au seuil
-```
-- Calcul continu sur la série temporelle secondaire (streams Strava, 1 pt/s)
-- NumPy vectorisé — performant même sur sorties 6h+ (≥ 21 600 pts)
-- `calc_hrss()` renvoie `HRSSResult(hrss, trimp, tss_method="hrss", rpe_factor, fatigue_anomaly)`
-
-**Pondération RPE** (paramètre optionnel `user_rpe` 1-10) :
-- HRR moyen pondéré par le temps → RPE cardiaque estimé = `hrr_moy × 10`
-- Si `rpe_déclaré − rpe_cardiaque ≥ 3` : multiplicateur 1.10–1.20 + `FatigueAnomaly`
-- `FatigueAnomaly` sérialisée en `dict` dans `AnalyzedSession.fatigue_anomaly`
-
-**`calc_tss()` — fallback scalaire** (inchangé) :
-- Utilisé par `history.py` (import historique, pas de streams) et si pas de streams HR
-- Retourne `(tss, méthode)` — méthode ∈ `{"power", "hr", "estimation"}`
-
-**Paramètres `analyze()`** :
-- `sex: str | None` — `"M"` | `"F"` (défaut `"M"` si absent)
-- `user_rpe: int | None` — smiley converti en entier 1-10
-- `ftp_source` / `hr_max_source` : `"declared"` | `"estimated"` (jamais `"strava"`)
+### Autorité de la source (spec 002, Constitution Principe IV)
+- **Consommés tels quels, jamais recalculés** : charge d'entraînement de l'activité, CTL/ATL/TSB, zones
+  puissance/FC, seuils FTP/LTHR — tout vient d'intervals.icu via `app/providers/intervals/mapper.py`
+- **Calculés localement** car la source ne les fournit pas : périodisation, génération/modification de
+  plan, matching activité↔séance, KPI d'adhérence, projection de forme théorique
+- `app/engine/tss.py` et le calcul local de zones ont été **supprimés** (spec 002 T017-T019) — le log
+  manuel disparu, plus aucun appelant ne dépendait d'un calcul local de TSS/HRSS
+- Le LLM ne calcule jamais aucune charge — voir principe fondateur en tête de ce document
 
 ### ATL/CTL/TSB
+⚠️ **Écart connu avec spec 002** : la règle ci-dessus dit CTL/ATL/TSB consommés depuis la source, mais
+`/forme` et `/recap` affichent encore le CTL/ATL/TSB **recalculé localement** par
+`compute_fitness_from_any()` — jamais basculé vers `icu_ctl`/`icu_atl` du payload intervals.icu. Signalé
+en conditions réelles, non résolu : basculer cette lecture est un changement séparé, pas encore fait.
 - `compute_fitness_from_any()` accepte liste mixte `SessionLog` + `Activity` (duck-typing)
 - Si historique < 84j → amorcer CTL avec `estimate_initial_ctl(weekly_tss)` + `seed_date`
 - Le déclin final jusqu'à `date.today()` est appliqué automatiquement
@@ -300,7 +280,7 @@ HRSS     = TRIMP / TRIMP_1h_LTHR × 100            # 100 = 1h exactement au seui
 - 3 paramètres optionnels Variable Reward : `highlight_category`, `personal_record`, `storytelling_mode`
 - `storytelling_mode` ∈ `"journalist"` | `"analyst"` | `"coach"` → sélectionne un arc narratif en 3 phrases exactes via `build_narrative_system_prompt()` (dans `prompts.py`)
 - Si `storytelling_mode=None` → comportement classique 4-5 phrases + `build_ux_system_prompt()`
-- `intensity_factor` stocké en DB au moment du webhook (FTP de l'époque, immuable)
+- `intensity_factor` stocké en DB au moment de la notification poller (FTP de l'époque, immuable)
 - `variability_index` non transmis au LLM si `duration_minutes < 30` (non représentatif sur courtes sorties)
 - TSB-driven tone : `tsb < -30` → protecteur | `tsb >= +5` → motivant | sinon → équilibré (seuils alignés sur `tsb_label()`)
 
@@ -341,9 +321,9 @@ reminder_last_sent_at DATE    NULL
 
 **Défaut** : activé à 7h30 CET dès la fin de l'onboarding (colonnes initialisées avec `server_default`).
 
-### Variable Reward — notification post-ride (`app/strava/highlight.py`)
+### Variable Reward — notification post-ride (`app/providers/analysis/highlight.py`)
 - `select_highlight(analyzed, fitness, weekly_snap)` → `HighlightResult` — tirage pondéré parmi 6 catégories
-- `detect_personal_records(all_logs, analyzed, current_log_id)` → `PersonalRecord | None` — in-memory, pas de requête DB
+- `detect_personal_records(all_logs, *, session_type_real, tss, intensity_factor, intervals_consistency_index, respect_zones_score, current_log_id)` → `PersonalRecord | None` — in-memory, pas de requête DB ; prend des primitives, pas un objet `AnalyzedSession` fabriqué (spec 002 T064)
 - Notification en 3 messages : A (teaser, silencieux) → B (métrique héros, silencieux) → C (verdict + clavier RPE, seule vibration)
 - Post-RPE : `edit_text` sur Message C → "Ton coach analyse..." → edit → récit LLM 3 phrases (aucune notification supplémentaire)
 
@@ -356,8 +336,8 @@ reminder_last_sent_at DATE    NULL
 6 étapes, `SetupStates` dans `app/bot/states.py`, tout dans `app/bot/routers/setup.py` (~456 lignes).
 Relancer `/setup` régénère le plan intégralement.
 
-`_build_profile()` assemble l'`AthleteProfileSchema` ; si Strava est connecté, la forme actuelle
-(`current_ctl` / `current_atl` / `current_tsb`) est injectée depuis l'historique importé.
+`_build_profile()` assemble l'`AthleteProfileSchema` ; si l'historique intervals.icu a été importé, la
+forme actuelle (`current_ctl` / `current_atl` / `current_tsb`) est injectée depuis cet historique.
 
 ## Variables d'environnement
 
@@ -366,14 +346,12 @@ DATA_DIR=data                            # optionnel — chemin du dossier de do
 DATABASE_URL=                            # optionnel — override, sinon SQLite dérivé de DATA_DIR
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_WEBHOOK_URL=https://<domaine>/webhook/telegram   # prod uniquement
-STRAVA_CLIENT_ID=...
-STRAVA_CLIENT_SECRET=...
-STRAVA_REDIRECT_URI=https://<domaine>/auth/strava/callback
-STRAVA_STATE_SECRET=<secret>
-STRAVA_WEBHOOK_VERIFY_TOKEN=<secret>
+INTERVALS_API_KEY=...                    # clé API personnelle intervals.icu (basic auth)
+# INTERVALS_ATHLETE_ID=0                 # optionnel
+INTERVALS_POLL_INTERVAL_MINUTES=5        # optionnel — défaut 5
 LLM_PROVIDER=openrouter          # ou "anthropic"
-LLM_MODEL=arcee-ai/trinity-large-preview:free
-CHAT_MODEL=arcee-ai/trinity-large-preview:free
+LLM_MODEL=...
+CHAT_MODEL=...
 OPENROUTER_API_KEY=...
 ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 ```
@@ -383,10 +361,9 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Tâche | Fichier |
 |-------|---------|
 | Ajouter commande bot | `app/bot/routers/` + enregistrer dans `setup.py` avant `chat_router` |
-| Modifier calcul TSS | `app/engine/tss.py` |
 | Modifier génération plan | `app/engine/plan_builder.py` |
 | Modifier périodisation | `app/engine/periodization.py` |
-| Modifier ATL/CTL/TSB | `app/engine/atl_ctl.py` |
+| Modifier ATL/CTL/TSB (calcul local — écart connu, voir section dédiée) | `app/engine/atl_ctl.py` |
 | Projection CTL théorique (suivi plan) | `app/engine/atl_ctl.py` — `project_fitness_from_plan()` |
 | Modifier snapshot hebdo (monotonie, tendance) | `app/engine/weekly_snapshot.py` |
 | Modifier récap hebdo (logique + LLM) | `app/services/weekly_recap.py` |
@@ -396,15 +373,15 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier les rappels de séance (menu /reminders) | `app/bot/routers/reminders.py` |
 | Ajouter un créneau horaire aux rappels | `app/bot/routers/reminders.py` — `_TIME_SLOTS` |
 | Modifier feedback LLM post-séance | `app/llm/activity_analysis.py` |
-| Modifier la notification post-ride (3 messages stagés) | `app/strava/webhook.py` — `_notify_staged_rpe_request()` |
-| Modifier notification "sortie bonus" (slot déjà pris) | `app/strava/webhook.py` — `_notify_bonus_activity()` |
-| Modifier notification "activité hors plan" | `app/strava/webhook.py` — `_notify_unplanned()` |
-| Modifier le Variable Reward (catégories highlight) | `app/strava/highlight.py` — `select_highlight()` |
+| Modifier l'intervalle/logique du poller | `app/providers/intervals/poller.py` |
+| Modifier le mapping payload intervals.icu → AnalyzedSession | `app/providers/intervals/mapper.py` |
+| Modifier la notification post-ride (messages stagés, RPE) | `app/providers/intervals/notifier.py` — `send_staged_notification()` |
+| Modifier le Variable Reward (catégories highlight, record perso) | `app/providers/analysis/highlight.py` — `select_highlight()`, `detect_personal_records()` |
+| Modifier l'assemblage du contexte post-séance (sans dépendance bot) | `app/services/activity_feedback.py` — `assemble_activity_feedback()` |
 | Modifier les modes narratifs LLM (journalist/analyst/coach) | `app/llm/prompts.py` — `build_narrative_system_prompt()` |
 | Modifier le reveal post-RPE (edit-then-reveal) | `app/bot/routers/session_log.py` — `_reveal_activity_analysis()` |
-| Modifier analyse activité (zones, NP, IF, session_type_real) | `app/strava/analyzer.py` — `SessionAnalyzer` |
-| Modifier scoring matching activité ↔ plan | `app/strava/matching.py` — `score_activity_vs_session()` |
-| Modifier fenêtre de matching / candidats | `app/strava/matching.py` — `find_plan_candidate()` |
+| Modifier scoring matching activité ↔ plan | `app/providers/analysis/matching.py` — `score_activity_vs_session()` |
+| Modifier fenêtre de matching / candidats | `app/providers/analysis/matching.py` — `find_plan_candidate()` |
 | Modifier vue plan+réalisé pour le LLM (system prompt) | `app/llm/tools.py` — `build_activity_session_pairs()` + `_format_week_pairs()` |
 | Ajouter outil LLM | `app/llm/tools.py` (définition JSON Schema) + `_execute_tool()` dans `app/llm/chat.py` |
 | Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `alembic revision --autogenerate` |

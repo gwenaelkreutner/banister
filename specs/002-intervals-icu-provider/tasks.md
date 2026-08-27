@@ -196,24 +196,29 @@ already open.
 
 ### Removals
 
-- [ ] T054 [US6] Remove manual session entry from `app/bot/routers/session_log.py`: the command, the duration prompt, and `SessionLogStates` (FR-035)
-- [ ] T055 [US6] **Preserve perceived-exertion capture** while doing so — they share an implementation today, and only one is meant to go (FR-031, FR-037). This is the single easiest thing to break in this phase
-- [ ] T056 [US6] Remove `tss_from_rpe()` from `app/engine/atl_ctl.py` — no caller remains once manual entry is gone
-- [ ] T057 [US6] Delete `app/strava/` in full, and `app/bot/routers/strava.py` (FR-036)
-- [ ] T058 [US6] Remove the inbound Strava webhook route and the OAuth callback from `app/main.py`
-- [ ] T059 [US6] Drop `oauth_connections` via an Alembic revision — spec 003 deliberately deferred this to here, since the provider it authorized was still in use then
-- [ ] T060 [US6] Remove `oauth_repo` and the Strava settings from `app/config.py` and `.env.example`
-- [ ] T061 [US6] Decide and act on the `activities` table (plan.md open question 3) — re-fetchable from the source, so truncate-and-repopulate is viable, but `compute_fitness_from_any()` duck-types across `SessionLog` and `Activity` and must not break
-- [ ] T062 [US6] Verify no Strava reference remains: `grep -rn "strava\|Strava" app/` returns nothing
+- [X] T054 [US6] Remove manual session entry from `app/bot/routers/session_log.py`: the command, the duration prompt, and `SessionLogStates` (FR-035) — `cmd_log`, `cb_session_done`, `cb_session_skipped`, `cb_duration`, `msg_duration_custom`, `cb_rpe_manual`, `_send_activity_analysis`, `_get_today_session` all removed; `SessionLogStates` deleted from `app/bot/states.py`
+- [X] T055 [US6] **Preserve perceived-exertion capture** while doing so (FR-031, FR-037) — `cb_rpe_strava` kept, renamed `cb_rpe`, now listens on `log:rpe:*` (was `log:strava_rpe:*`); `rpe_emoji_keyboard` in `app/bot/keyboards/session_log.py` kept unchanged, `rpe_emoji_keyboard_manual`/`session_action_keyboard`/`duration_keyboard` removed
+- [X] T056 [US6] Remove `tss_from_rpe()` from `app/engine/atl_ctl.py` — confirmed no callers remained once manual entry was gone
+- [X] T057 [US6] Delete `app/strava/` in full, and `app/bot/routers/strava.py` (FR-036) — `analysis_models.py`, `matching.py`, `highlight.py` moved to `app/providers/analysis/` first (still needed); `analyzer.py` deleted rather than moved, since its only caller was `webhook.py` (also deleted) — a deviation from plan.md's structure diagram, made because grep showed zero real callers once webhook.py was gone
+- [X] T058 [US6] Remove the inbound Strava webhook route and the OAuth callback from `app/main.py` — also removed `DevStravaSimulatePayload`, `_run_strava_onboarding_import`, `dev_strava_simulate_activity`; kept `/health`, `/webhook/telegram`, and the poller/recap/reminder schedulers
+- [X] T059 [US6] Drop `oauth_connections` via an Alembic revision — `migrations/versions/36146a67fa90_drop_oauth_connections.py`, applied to the real DB after a backup via `scripts/backup.py`
+- [X] T060 [US6] Remove `oauth_repo` and the Strava settings from `app/config.py` and `.env.example` — `strava_client_id`/`strava_client_secret`/`strava_redirect_uri`/`strava_state_secret`/`strava_webhook_verify_token`/`sport_provider` removed from `Settings`; removed the `STRAVA_*` block from the real `.env` too (with explicit user consent), since pydantic-settings' `extra_forbidden` broke startup otherwise
+- [X] T061 [US6] Decide and act on the `activities` table (plan.md open question 3) — **no action needed**: the real table was empty at Phase 7 time, and the intervals.icu history importer (Phase 5) already writes through the same `activity_repo.bulk_insert()` against the same `(user_id, source, source_activity_id)` unique index the Strava import used, so the table was already provider-agnostic. `compute_fitness_from_any()`'s duck-typing across `SessionLog`/`Activity` is unaffected. Only the ORM-side default changed (`Activity.source` default `"strava"` → `"intervals_icu"`, ` app/db/models/activity.py`), a no-migration Python-side change
+- [X] T062 [US6] Verify no Strava reference remains: `grep -rn "strava\|Strava" app/` returns nothing — required an extensive multi-pass cleanup across ~20 files (comments and docstrings included, not just functional code, per the task's literal wording)
 
 ### Structural debt (FR-038..041)
 
-- [ ] T063 Replace direct data access in the surviving handler with a repository call (FR-039)
-- [ ] T064 Make personal-best detection accept the data it needs directly, removing the fabricated `_FakeAnalyzed` stand-in (FR-040)
-- [ ] T065 Remove the value whose availability depends on a guard condition duplicated in two places — a latent `NameError` if either is ever edited alone (FR-041)
-- [ ] T066 Remove dead imports on the surviving path
+- [X] T063 Replace direct data access in the surviving handler with a repository call (FR-039) — see T044 (Phase 6): `app/services/activity_feedback.py`'s `assemble_activity_feedback()` already routes through repositories, not raw DB access, and the surviving RPE handler in `session_log.py` continues to use it
+- [X] T064 Make personal-best detection accept the data it needs directly, removing the fabricated `_FakeAnalyzed` stand-in (FR-040) — `detect_personal_records()` in `app/providers/analysis/highlight.py` now takes primitives (`session_type_real`, `tss`, `intensity_factor`, `intervals_consistency_index`, `respect_zones_score`, `current_log_id`) instead of an `AnalyzedSession`-shaped object; the four `_check_pr_*` helpers updated to match, dead `n` param removed
+- [X] T065 Remove the value whose availability depends on a guard condition duplicated in two places — a latent `NameError` if either is ever edited alone (FR-041) — fixed two instances: the originally-named one (`rpe_effective`, computed once in `cb_rpe`) and a second found by applying the same principle generally (`kpi_block`/`pts_weekly_s`, now computed together under one `if log.kpi_contribution is not None and plan:` guard)
+- [X] T066 Remove dead imports on the surviving path — `AnalyzedSession as _AS`, `DAY_NAMES_FR`, `WORKOUT_FR` and others removed from `session_log.py`; `Depends`, `HTMLResponse`, `BaseModel`, `Field`, `AsyncSession`, `get_session`, `Any` removed from `app/main.py`'s top-level imports
 
-**Checkpoint**: one ingestion path, no dead alternatives, audit defects cleared.
+**Checkpoint**: one ingestion path, no dead alternatives, audit defects cleared. Verified: full test suite
+(255 passed, 13 skipped, 0 failed), real Telegram bot end-to-end (onboarding, /plan, /forme, /recap, the
+poller-driven RPE notification loop), and two live bugs found and fixed along the way (missing
+`onboarding_completed_at` column/migration; `decoupling`→`cardiac_drift_index` unit mismatch showing
+"+1571%" drift in a real notification) plus a third unrelated to Phase 7 itself (LLM `max_tokens` too low
+for the configured model, silently falling back to canned text in `/forme` and `/recap`).
 
 ---
 
