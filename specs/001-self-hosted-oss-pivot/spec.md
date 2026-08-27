@@ -260,11 +260,9 @@ capability the athlete relies on today disappears silently because no requiremen
   without the athlete taking any action.
 - **FR-N02**: The system MUST notify the athlete of a newly detected activity without being prompted, within
   a documented maximum delay, and that delay MUST be stated in operator-facing documentation.
-- **FR-N02a**: Detection MUST work in a default deployment that exposes no inbound endpoint, so that no
-  deployer is required to obtain a domain or certificate in order to receive notifications.
-- **FR-N02b**: The system MAY additionally support inbound push from the training data source as an opt-in
-  capability for deployers who already operate a public endpoint, provided the default path of FR-N02a
-  remains fully functional and push remains strictly optional.
+- **FR-N02a**: Detection MUST be performed by periodically querying the training data source. The system
+  MUST NOT expose any inbound endpoint for this purpose, and MUST NOT require the deployer to register an
+  application with, or obtain elevated authorization from, the training data source.
 - **FR-N03**: The system MUST notify the athlete exactly once per activity, and MUST NOT re-notify for an
   activity already reported, including across restarts.
 - **FR-N04**: The notification MUST state how the activity related to the training plan, distinguishing a
@@ -380,11 +378,12 @@ capability the athlete relies on today disappears silently because no requiremen
   decision to be fixed in the provider spec; published rate limits permit a frequent refresh comfortably.
 - The athlete's activities reach the training log through their own device synchronization, which may
   itself add delay outside this system's control and outside its notification guarantee.
-- Inbound push from the training data source is understood to carry conditions that make it unsuitable as
-  the default path: it requires registering an application with that source rather than using a personal
-  key, it is documented as not firing for activities that arrive via Strava, and it is itself delayed to
-  consolidate events. These conditions are why FR-N02a mandates a push-free default and FR-N02b makes push
-  an opt-in addition. Their precise handling belongs to the provider spec.
+- Inbound push from the training data source was evaluated and deliberately rejected, even though that
+  source does publish activity webhooks. It requires registering an application rather than using a
+  personal key, it is documented as not firing for activities that arrive via Strava, and it is itself
+  delayed to consolidate events — so it trades a real configuration burden for a marginal latency gain.
+  Periodic querying is therefore the only detection mechanism, not merely the default one. Should this be
+  revisited later, it is an additive change and does not invalidate anything specified here.
 - The existing product's behaviour is the baseline for FR-P01 through FR-P11. Where this spec and the
   current implementation disagree, the disagreement is a defect in this spec and should be raised rather
   than silently resolved in either direction.

@@ -81,12 +81,14 @@
    destroyed the perceived-exertion step that User Story 3 depends on. Added FR-P09 and FR-R01/FR-R02 to
    separate a deliberate removal from its collateral.
 
-9. *Inbound push reinstated as optional* — the author asked whether push notification from the training
-   data source was still possible. It is: that source publishes activity, calendar and settings webhooks.
-   Verification also found conditions that disqualify push as a default (application registration rather
-   than a personal key; documented non-delivery for activities arriving via Strava; a consolidation delay).
-   Added FR-N02a mandating a push-free default and FR-N02b permitting push as opt-in, with the trade-off
-   recorded in Assumptions and the detail delegated to the provider spec.
+9. *Inbound push evaluated, then rejected outright* — the author asked whether push notification from the
+   training data source was still possible. It is: that source publishes activity, calendar and settings
+   webhooks. Verification also found three conditions that undermine it (application registration rather
+   than a personal key; documented non-delivery for activities arriving via Strava; a consolidation delay
+   that costs most of the latency advantage). Presented with that, the author chose to drop push entirely
+   rather than carry it as an optional second path. FR-N02a now mandates periodic querying as the sole
+   mechanism and forbids exposing an inbound endpoint for it; the rejected alternative and its reasoning
+   are recorded in Assumptions so the decision is not silently re-litigated later.
 
 10. *Baseline tie-break rule added* — because FR-P01..P11 describe behaviour that already exists, an
     assumption was added stating that any disagreement between this spec and the running implementation is
