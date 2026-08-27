@@ -1,0 +1,241 @@
+{
+  "weeks": [
+    {
+      "week_number": 1,
+      "phase": "build",
+      "is_recovery_week": false,
+      "total_tss_target": 459.6,
+      "sessions": [
+        {
+          "day_of_week": 5,
+          "workout_type": "endurance",
+          "zone_code": "Z3",
+          "duration_minutes": 270,
+          "target_time_in_zone_minutes": 0,
+          "tss_target": 295.2,
+          "description_fr": "Endurance Z3 (Tempo)"
+        },
+        {
+          "day_of_week": 6,
+          "workout_type": "long_ride",
+          "zone_code": "Z2",
+          "duration_minutes": 216,
+          "target_time_in_zone_minutes": 0,
+          "tss_target": 152.1,
+          "description_fr": "Sortie longue Z2 (Endurance) — avec 2-3 blocs au seuil Z4 (10-15min) simulant une montée de col"
+        }
+      ],
+      "start_date": "2026-08-24"
+    },
+    {
+      "week_number": 2,
+      "phase": "build",
+      "is_recovery_week": false,
+      "total_tss_target": 528.1,
+      "sessions": [
+        {
+          "day_of_week": 1,
+          "workout_type": "endurance",
+          "zone_code": "Z3",
+          "duration_minutes": 132,
+          "target_time_in_zone_minutes": 0,
+          "tss_target": 144.3,
+          "description_fr": "Endurance Z3 (Tempo)"
+        },
+        {
+          "day_of_week": 3,
+          "workout_type": "intervals",
+          "zone_code": "Z4",
+          "duration_minutes": 75,
+          "target_time_in_zone_minutes": 40,
+          "tss_target": 68.7,
+          "description_fr": "Intervalles Z4 (Seuil lactique) — 2×20min"
+        },
+        {
+          "day_of_week": 5,
+          "workout_type": "endurance",
+          "zone_code": "Z2",
+          "duration_minutes": 206,
+          "target_time_in_zone_minutes": 0,
+          "tss_target": 145.1,
+          "description_fr": "Endurance Z2 (Endurance) — cadence haute (95-100 rpm)"
+        },
+        {
+          "day_of_week": 6,
+          "workout_type": "long_ride",
+          "zone_code": "Z2",
+          "duration_minutes": 240,
+          "target_time_in_zone_minutes": 0,
+          "tss_target": 169.0,
+          "description_fr": "Sortie longue Z2 (Endurance) — avec 2-3 blocs au seuil Z4 (10-15min) simulant une montée de col"
+        }
+      ],
+      "start_date": "2026-08-31"
+    },
+    {
+      "week_number": 3,
+      "phase": "peak",
+      "is_recovery_week": false,
+      "total_tss_target": 606.8,
+      "sessions": [
+        {
+          "day_of_week": 1,
+          "workout_type": "endurance",
+          "zone_code": "Z3",
+          "duration_minutes": 128,
+          "target_time_in_zone_minutes": 0,
+          "tss_target": 140.0,
+          "description_fr": "Endurance Z3 (Tempo)"
+        },
+        {
+          "day_of_week": 3,
+          "workout_type": "intervals",
+          "zone_code": "Z5",
+          "duration_minutes": 68,
+          "target_time_in_zone_minutes": 24,
+          "tss_target": 57.0,
+          "description_fr": "Intervalles Z5 (VO2 Max) — 4×6min VO2"
+        },
+        {
+          "day_of_week": 5,
+          "workout_type": "endurance",
+          "zone_code": "Z2",
+          "duration_minutes": 199,
+          "target_time_in_zone_minutes": 0,
+          "tss_target": 140.1,
+          "description_fr": "Endurance Z2 (Endurance) — force-vélo (70-75 rpm)"
+        },
+        {
+          "day_of_week": 6,
+          "workout_type": "long_ride",
+          "zone_code": "Z2",
+          "duration_minutes": 264,
+          "target_time_in_zone_minutes": 0,
+          "tss_target": 185.9,
+          "description_fr": "Sortie longue Z2 (Endurance) — avec blocs specifiques au seuil Z4 (simuler les cols de la course)"
+        }
+      ],
+      "start_date": "2026-09-07"
+    },
+    {
+      "week_number": 4,
+      "phase": "taper",
+      "is_recovery_week": false,
+      "total_tss_target": 352.0,
+      "sessions": [
+        {
+          "day_of_week": 1,
+          "workout_type": "endurance",
+          "zone_code": "Z2",
+          "duration_minutes": 193,
+          "target_time_in_zone_minutes": 0,
+          "tss_target": 135.9,
+          "description_fr": "Endurance Z2 (Endurance) — endurance régulière"
+        },
+        {
+          "day_of_week": 3,
+          "workout_type": "intervals",
+          "zone_code": "Z4",
+          "duration_minutes": 40,
+          "target_time_in_zone_minutes": 24,
+          "tss_target": 55.2,
+          "description_fr": "Intervalles Z4 (Seuil lactique) — 3×8min activation"
+        },
+        {
+          "day_of_week": 5,
+          "workout_type": "recovery",
+          "zone_code": "Z1",
+          "duration_minutes": 60,
+          "target_time_in_zone_minutes": 0,
+          "tss_target": 23.0,
+          "description_fr": "Récupération active Z1 (Récupération active)"
+        },
+        {
+          "day_of_week": 6,
+          "workout_type": "long_ride",
+          "zone_code": "Z2",
+          "duration_minutes": 150,
+          "target_time_in_zone_minutes": 0,
+          "tss_target": 105.6,
+          "description_fr": "Sortie longue Z2 (Endurance)"
+        }
+      ],
+      "start_date": "2026-09-14"
+    }
+  ],
+  "zones": {
+    "Z1": {
+      "name": "Récupération active",
+      "code": "Z1",
+      "lower_pct": 0.0,
+      "upper_pct": 0.55,
+      "lower_watts": 0,
+      "upper_watts": 154,
+      "lower_bpm": null,
+      "upper_bpm": null,
+      "description_fr": "Récupération — effort très léger, conversation facile"
+    },
+    "Z2": {
+      "name": "Endurance",
+      "code": "Z2",
+      "lower_pct": 0.55,
+      "upper_pct": 0.75,
+      "lower_watts": 154,
+      "upper_watts": 210,
+      "lower_bpm": null,
+      "upper_bpm": null,
+      "description_fr": "Endurance fondamentale — effort confortable, base aérobie"
+    },
+    "Z3": {
+      "name": "Tempo",
+      "code": "Z3",
+      "lower_pct": 0.75,
+      "upper_pct": 0.87,
+      "lower_watts": 210,
+      "upper_watts": 243,
+      "lower_bpm": null,
+      "upper_bpm": null,
+      "description_fr": "Tempo — effort soutenu, respiration accélérée"
+    },
+    "Z4": {
+      "name": "Seuil lactique",
+      "code": "Z4",
+      "lower_pct": 0.87,
+      "upper_pct": 0.95,
+      "lower_watts": 243,
+      "upper_watts": 266,
+      "lower_bpm": null,
+      "upper_bpm": null,
+      "description_fr": "Seuil — effort intense, difficile à maintenir > 1h"
+    },
+    "Z5": {
+      "name": "VO2 Max",
+      "code": "Z5",
+      "lower_pct": 0.95,
+      "upper_pct": 1.06,
+      "lower_watts": 266,
+      "upper_watts": 296,
+      "lower_bpm": null,
+      "upper_bpm": null,
+      "description_fr": "VO2 Max — effort très intense, intervalles courts"
+    },
+    "Z6": {
+      "name": "Anaérobie",
+      "code": "Z6",
+      "lower_pct": 1.06,
+      "upper_pct": 1.5,
+      "lower_watts": 296,
+      "upper_watts": 420,
+      "lower_bpm": null,
+      "upper_bpm": null,
+      "description_fr": "Anaérobie — effort maximal, sprints et accélérations"
+    }
+  },
+  "initial_weekly_tss": 400.0,
+  "peak_weekly_tss": 640.0,
+  "weeks_count": 4,
+  "coaching_mode": "power",
+  "start_date": "2026-08-24",
+  "end_date": "2026-09-20",
+  "generated_at": "2026-08-27T19:07:30.287569"
+}

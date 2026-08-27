@@ -36,10 +36,10 @@ library content in a new top-level `sessions/` directory (mirroring the existing
 adherence results. That is unverifiable unless the baseline is recorded **before** `SessionSpec` is
 touched. These tasks are ordered first for that reason, not as ceremony.
 
-- [ ] T001 Create `scripts/snapshot_session_behaviour.py` — loads the athlete's real plan and activity corpus from `data/banister.db`, runs activity↔session matching and adherence scoring over every activity, and writes a deterministically ordered JSON document of the results
-- [ ] T002 Capture the pre-change baseline to `specs/004-structured-workouts/baseline/behaviour.json` by running `scripts/snapshot_session_behaviour.py`, and record the current `pytest` (238 passed, 13 skipped) and `ruff` (226 violations) counts in that directory's `README.md`
-- [ ] T003 [P] Extract a real pre-change plan document from `training_plans.plan_technical` into `tests/fixtures/plans/legacy_plan.json` — taken from the database, never hand-written, so the fixture cannot encode the same assumptions the new code makes (quickstart Scenario 5)
-- [ ] T004 [P] Add `sessions/README.md` documenting the library file format for contributors, derived from [contracts/session-library.md](./contracts/session-library.md)
+- [X] T001 Create `scripts/snapshot_session_behaviour.py` — loads the athlete's real plan and activity corpus from `data/banister.db`, runs activity↔session matching and adherence scoring over every activity, and writes a deterministically ordered JSON document of the results. Exercises `evaluate_activity_plan_match` (mirroring the real ingestion-time `used_slots` computation in `activity_feedback.py`) for every real log regardless of status, plus `compute_session_kpi` for any log that is `"done"` and matched
+- [X] T002 Captured the pre-change baseline to `specs/004-structured-workouts/baseline/behaviour.json` (5 entries — the real corpus's 5 logs, all `"unplanned"`, none matched) and recorded counts in `baseline/README.md`: **237 passed, 1 failed, 13 skipped**; ruff 226 violations. The 1 failure (`test_sessions_on_available_days_only`) is a pre-existing, date-triggered flake unrelated to this feature — documented in `baseline/README.md` rather than fixed here or silently excluded, so the T054 gate is evaluated against the real baseline
+- [X] T003 [P] Extracted a real pre-change plan document from `training_plans.plan_technical` into `tests/fixtures/plans/legacy_plan.json` (4 weeks, confirmed no session carries `steps`) — taken from the database, never hand-written
+- [X] T004 [P] Added `sessions/README.md` documenting the library file format for contributors, derived from [contracts/session-library.md](./contracts/session-library.md)
 
 **Checkpoint**: The "before" is on disk. Nothing in `app/` has changed yet.
 
