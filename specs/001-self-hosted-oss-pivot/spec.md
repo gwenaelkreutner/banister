@@ -16,6 +16,18 @@ intervals.icu provider, workout push, onboarding rework, guardrail implementatio
 **In scope**: deployment target, data ownership and privacy posture, the metric-authority principle,
 guardrail requirements, and open source release requirements.
 
+**Depends on**: nothing. This is the framing specification the others inherit from.
+
+**Implementation order of the specifications this one frames** — spec numbers are identifiers, not a
+sequence:
+
+1. Local embedded database — a schema standing still is the easiest thing to port
+2. Training data source migration — uses the schema-evolution mechanism the first step establishes
+3. Structured workouts and session library
+4. Publishing sessions to the calendar — needs structured sessions to exist
+5. Training guardrails — needs the wellness data the second step captures
+6. First run, goals, and coach voice — touches the same generation path as the third step
+
 **Out of scope** (each gets a dedicated spec): the implementation detail of the local database migration,
 the intervals.icu provider implementation, pushing planned workouts to the athlete's calendar, the
 onboarding rework, and the implementation of the guardrails required here.
@@ -291,8 +303,12 @@ capability the athlete relies on today disappears silently because no requiremen
 
 #### Guardrails (requirements here; implementation specified separately)
 
-- **FR-019**: The system MUST NOT write to the athlete's training calendar without explicit prior approval
-  from the athlete for the specific content being written.
+- **FR-019**: The system MUST NOT write anything into the athlete's account at the training data source —
+  their calendar, their profile, their settings, or anything else — without explicit prior approval from
+  the athlete for the specific content being written. This covers every outbound mutation, not only
+  calendar entries.
+- **FR-019a**: Every outbound mutation MUST record the approval that authorized it, so that "was this
+  written with consent?" is answerable after the fact.
 - **FR-020**: The system MUST evaluate acute-to-chronic workload ratio and surface it when recommending
   changes in training load.
 - **FR-021**: The system MUST evaluate athlete readiness from the wellness signals available from the
@@ -345,8 +361,9 @@ capability the athlete relies on today disappears silently because no requiremen
   verified by inspection of the host.
 - **SC-005**: No athlete data reaches any destination not named in the operator documentation, verified by
   observing outbound traffic during a representative session.
-- **SC-006**: Zero calendar writes occur without a recorded explicit approval, verified across all paths
-  that can produce a write.
+- **SC-006**: Zero writes into the athlete's account at the training data source occur without a recorded
+  explicit approval, verified across every path that can produce one — calendar entries and profile or
+  settings changes alike.
 - **SC-007**: 100% of newly completed activities produce exactly one unsolicited notification, with no
   duplicates and no omissions, verified across at least twenty activities including restarts of the system.
 - **SC-008**: The athlete is notified of a completed activity within the documented maximum delay of it

@@ -63,6 +63,19 @@ guidance describes a twelve-step onboarding with a provider-choice branch. The r
 The code is treated as authoritative and the stale documentation is noted in Assumptions; correcting it is
 outside this feature.
 
+**Iteration 2 — cross-specification analysis:**
+
+*The write-back resolution created an ungoverned outbound mutation.* Resolving the correction conflict by
+writing values back to the source was right, but it introduced a third class of write — to the athlete's
+profile — alongside local writes and calendar writes. Spec 001's consent rule covered only the calendar,
+and the consent machinery in the publishing specification is calendar-specific, so nothing governed it.
+
+Spec 001's FR-019 has been generalized to cover every outbound mutation, and FR-006a through FR-006c here
+state the consequence: the athlete must see what will change at the source and approve it before it is
+written, the approval is recorded, and a refused or failed write-back falls through to being told to change
+it at the source rather than the coach quietly holding a divergent value. Notably, an athlete stating a
+correct value is not by itself approval to modify their account.
+
 **Status**: All checklist items pass. Ready for `/speckit-plan`.
 
 Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.

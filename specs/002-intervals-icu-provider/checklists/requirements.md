@@ -62,6 +62,21 @@ remain about capability rather than about one vendor's interface.
 **Deferred by design** — stated here, specified elsewhere: acting on wellness data (guardrails spec),
 the local datastore migration, calendar writes, and the onboarding rework.
 
+**Iteration 2 — cross-specification analysis:**
+
+5. *Two preserved capabilities were orphaned* — spec 001 requires the weekly review and the daily reminder
+   to survive the migration, but no specification claimed them. The weekly review is not unaffected: it
+   consumes load values that now come from the source rather than from local computation. FR-034a and
+   FR-034b make the obligation explicit rather than leaving it to be discovered after a regression.
+
+6. *Test coverage stated* — the project constitution requires engine changes to ship with tests, and no
+   specification said so. FR-034c adds it, including the less obvious half: removing superseded local
+   calculations must remove the tests that covered only them without weakening coverage of what remains.
+
+7. *Build order corrected* — this specification now declares a dependency on the database migration. It
+   both adds storage and removes storage, so building it before the port would mean porting a schema that
+   is changing underneath the port.
+
 **Status**: All checklist items pass. Ready for `/speckit-plan`.
 
 Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.

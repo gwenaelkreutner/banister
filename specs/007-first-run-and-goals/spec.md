@@ -71,15 +71,17 @@ the correction.
 
 1. **Given** a value that was read rather than supplied, **When** it is shown, **Then** the athlete is told
    where it came from and, where known, how old it is.
-2. **Given** a value the athlete says is wrong, **When** they correct it, **Then** the correction reaches
-   the training data source rather than being held only locally.
-3. **Given** a correction cannot be written to the source, **When** the athlete corrects it, **Then** they
+2. **Given** a value the athlete says is wrong, **When** they correct it, **Then** they are shown what will
+   change at the source and from what to what, and the write happens only after they approve it.
+3. **Given** an approved correction, **When** it is written, **Then** it reaches the training data source
+   rather than being held only locally, and the approval is recorded with it.
+4. **Given** a correction cannot be written to the source, **When** the athlete corrects it, **Then** they
    are told to change it at the source and why, rather than the coach quietly keeping a different value.
-4. **Given** a value is missing at the source, **When** setup runs, **Then** the athlete is asked for it
+5. **Given** a value is missing at the source, **When** setup runs, **Then** the athlete is asked for it
    rather than having a default substituted silently.
-5. **Given** the athlete has no measured threshold, **When** setup runs, **Then** the coach proceeds using
+6. **Given** the athlete has no measured threshold, **When** setup runs, **Then** the coach proceeds using
    what the athlete does have, and says which basis it is using.
-6. **Given** the athlete has little or no training history, **When** setup runs, **Then** documented
+7. **Given** the athlete has little or no training history, **When** setup runs, **Then** documented
    conservative assumptions are used and the athlete is told they were.
 
 ---
@@ -209,6 +211,13 @@ P3 in build order only.
 
 - **FR-005**: A value that was read MUST be shown with its origin and, where known, its age.
 - **FR-006**: A correction to a value owned by the training data source MUST be written back to that source.
+- **FR-006a**: Writing a correction back to the source is an outbound mutation of the athlete's account and
+  MUST therefore be subject to the same consent rule as any other: the athlete MUST be shown what will be
+  changed at the source, from what to what, and MUST approve it before it is written. The athlete stating
+  a correct value is not by itself approval to modify their account.
+- **FR-006b**: A write-back MUST record the approval that authorized it.
+- **FR-006c**: A refused or failed write-back MUST leave the source unchanged and MUST fall through to
+  FR-007 rather than the coach retaining a divergent local value.
 - **FR-007**: When a correction cannot be written to the source, the athlete MUST be directed to change it
   there, and the coach MUST NOT retain a value that disagrees with the source.
 - **FR-008**: A value missing at the source MUST be requested rather than defaulted silently.

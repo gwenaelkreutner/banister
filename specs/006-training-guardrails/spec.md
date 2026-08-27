@@ -259,6 +259,9 @@ health-suggestive situations produce a referral rather than advice.
 - **FR-021**: Check failures MUST be recorded so their frequency is measurable.
 - **FR-022**: All guardrail evaluation MUST be performed deterministically, never by the language model,
   which may only narrate results it was given.
+- **FR-022a**: Guardrail evaluation MUST ship with tests covering each threshold, including the cases where
+  a threshold must NOT fire — insufficient history, a single anomalous reading, and normal values — per the
+  project's constitutional requirement that engine changes be test-covered.
 
 #### Authority and restraint
 

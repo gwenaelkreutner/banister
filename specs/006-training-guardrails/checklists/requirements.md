@@ -73,6 +73,14 @@ because the right handling is a design decision, not a stated outcome.
 FR-030 are requirements rather than documentation notes because the boundary matters legally as well as
 ethically.
 
+**Iteration 2 — cross-specification analysis:**
+
+*Test coverage made explicit* — the constitution requires engine changes to ship with tests. FR-022a adds
+it, and specifies the half that is easy to omit: the tests must cover the cases where a threshold must
+**not** fire — insufficient history, a single anomalous reading, normal values. Those are the requirements
+that keep the feature from crying wolf, and they are precisely the ones a test suite written around
+positive cases would leave unverified.
+
 **Status**: All checklist items pass. Ready for `/speckit-plan`.
 
 Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.

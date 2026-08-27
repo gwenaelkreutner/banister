@@ -22,6 +22,11 @@ post-activity loop and plan matching, and removing the two superseded paths.
 workouts to the athlete's calendar, the onboarding rework, and the implementation of readiness and
 workload guardrails. This spec captures wellness data; it does not act on it.
 
+**Depends on**: the local embedded database migration, which is built first. That migration establishes the
+automatic schema-evolution mechanism this specification's new storage — wellness records, notification
+markers, sync state — relies on, and it removes the previous provider's authorization records as part of
+its own carry-over. Building this first would mean porting a schema that is changing underneath the port.
+
 **Inherited and not re-argued here**: spec 001 established that the training data source is mandatory,
 that manual session entry is removed, that detection is by periodic querying with no inbound endpoint,
 and that source-computed metrics are consumed rather than recomputed.
@@ -294,6 +299,13 @@ athlete-visible value.
   two days bounded by the training week, a hundred-point score, prevention of two activities claiming the
   same planned session, and presentation as bonus training when every candidate is already claimed.
 - **FR-034**: Training completed outside the plan MUST never be presented as an error or a failure.
+- **FR-034a**: The weekly review of adherence and training load MUST continue to produce correct results
+  once load values come from the source rather than from local computation. Because it consumes those
+  values and the stored adherence record, it cannot be assumed unaffected and MUST be verified explicitly.
+- **FR-034b**: The daily session reminder MUST continue to function unchanged.
+- **FR-034c**: Changes to load and metric handling MUST ship with tests, per the project's constitutional
+  requirement that engine changes be test-covered. Removing superseded local calculations MUST also remove
+  the tests that covered only them, without weakening coverage of what remains.
 
 #### Removals
 

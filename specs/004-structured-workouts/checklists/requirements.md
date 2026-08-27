@@ -70,6 +70,20 @@ that must execute it. The dependency is stated in Scope so the two are not attem
 credited, with its licence preserved. Its structure is adopted; its training content is to be reviewed
 rather than copied unexamined.
 
+**Iteration 2 — cross-specification analysis:**
+
+*A requirement in spec 001 was actively endangered by this specification, and nothing here said so.* Spec
+001 requires the offline plan-quality evaluation capability to be preserved. This specification replaces
+how sessions are produced — the exact thing that capability evaluates. As written, every one of its
+requirements could have been satisfied while leaving that capability broken, because none of them mentioned
+it. This is the same failure mode found earlier in spec 001 itself, where a rewritten component had no
+requirement naming what depended on it.
+
+FR-014a through FR-014c and SC-005a/SC-005b close it: evaluation must still run, must be able to compare
+plans generated before and after so quality can be shown not to have regressed, and the change must ship
+with tests per the constitution. SC-005b additionally requires the reminder and weekly review to be
+verified against sessions carrying steps rather than assumed unaffected.
+
 **Status**: All checklist items pass. Ready for `/speckit-plan`.
 
 Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.

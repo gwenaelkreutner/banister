@@ -21,6 +21,15 @@ renaming columns, or rethinking how activities and session logs relate are delib
 changing the storage engine and the schema shape in one step is how data gets lost. The only structural
 changes permitted are the removal of storage made obsolete by spec 002.
 
+**Depends on**: nothing. This is the first migration to perform.
+
+**Implementation order — this specification comes before the provider migration.** Spec numbers are
+identifiers, not a sequence, and this one is built first despite its higher number. The reason is that the
+provider migration both adds storage (wellness records, notification markers, sync state) and removes it
+(the previous provider's authorization records). Porting the storage engine first means porting a schema
+that is standing still, and gives the provider migration an automatic schema-evolution mechanism to use.
+Doing it the other way round means porting a moving target by hand, twice.
+
 **Inherited and not re-argued here**: spec 001 established that all athlete data lives in one deletable
 directory and that no separately administered database service may be required.
 

@@ -97,6 +97,20 @@
 **Deferred by design** — the following are stated as requirements here and specified in detail elsewhere:
 FR-019 through FR-023 (guardrails), and the implementation of FR-003, FR-007, and FR-009.
 
+**Iteration 4 — cross-specification analysis:**
+
+11. *Consent rule was calendar-shaped and had to be generalized* — FR-019 originally forbade unapproved
+    writes to the athlete's *calendar*. The first-run specification later required corrections to be
+    written back to the athlete's *profile* at the source, which is an outbound mutation of their account
+    that no requirement governed. FR-019 now covers every outbound mutation, and FR-019a requires the
+    authorizing approval to be recorded so SC-006 is verifiable after the fact. This gap was invisible
+    while writing either specification alone and only appeared when they were read together.
+
+12. *Implementation order made explicit* — the specifications were written in a convenient order, not a
+    buildable one, and none declared dependencies. An order is now stated in Scope, with the note that spec
+    numbers are identifiers rather than a sequence. The consequential correction is that the database
+    migration is built before the provider migration, reversing their numbering.
+
 **Status**: All checklist items pass. Ready for `/speckit-plan`.
 
 Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.

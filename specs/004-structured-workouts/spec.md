@@ -21,6 +21,10 @@ this without disturbing the many parts of the system that already read planned s
 separately and depends on this work. Also excluded: changing periodization logic, changing how weekly load
 targets are set, and changing how completed activities are matched to planned sessions.
 
+**Depends on**: nothing in the other specifications, but it changes how plans are generated, which the
+first-run and goal-change work triggers. Those two touch the same generation path and should not be built
+simultaneously.
+
 **Why this comes before the push feature**: a session described only as "intervals, Z4, 60 minutes, 65 TSS"
 cannot be transmitted to a device, because a device needs the actual steps. This specification exists to
 close that gap; the push feature depends on it entirely.
@@ -226,6 +230,14 @@ once other people deploy.
 - **FR-013**: Plans stored in the previous shape MUST continue to load and to work with every feature that
   reads them.
 - **FR-014**: Where a session genuinely has no steps, absence MUST be reported rather than fabricated.
+- **FR-014a**: The offline plan-quality evaluation capability MUST continue to function after generation
+  moves to a library, so that the effect of this change on plan quality is measurable rather than assumed.
+  Because this work replaces how sessions are produced, that capability cannot be assumed to survive
+  untouched and MUST be exercised as part of the change.
+- **FR-014b**: Evaluation MUST be able to compare plans produced before and after this change, so the
+  change can be shown not to have degraded plan quality.
+- **FR-014c**: Changes to plan generation MUST ship with tests covering the generation path, per the
+  project's constitutional requirement that engine changes be test-covered.
 
 #### Session library
 
@@ -291,6 +303,10 @@ once other people deploy.
 - **SC-004**: Activity-to-session matching and adherence scoring produce byte-identical results on a corpus
   of historical activities before and after the change.
 - **SC-005**: A plan created under the previous shape loads and works with every feature that reads it.
+- **SC-005a**: Offline plan-quality evaluation runs successfully against library-generated plans, and
+  produces a comparison against plans generated the previous way showing no quality regression.
+- **SC-005b**: The daily session reminder and the weekly review both continue to produce correct output
+  against sessions carrying steps, verified explicitly rather than assumed.
 - **SC-006**: A contributor adds a working session template without modifying any generation logic.
 - **SC-007**: The library contains at least one suitable template for every session type in every
   periodization phase, with no gaps.
