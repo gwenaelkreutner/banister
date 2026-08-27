@@ -20,6 +20,7 @@ from app.db.lifecycle import (
     run_migrations,
     verify_intervals_credential,
 )
+from app.providers.intervals.poller import run_poller_scheduler
 
 logging.config.dictConfig({
     "version": 1,
@@ -85,6 +86,7 @@ async def lifespan(app: FastAPI):
 
     recap_scheduler_task = asyncio.create_task(_weekly_recap_scheduler(bot))
     reminder_scheduler_task = asyncio.create_task(_session_reminder_scheduler(bot))
+    poller_scheduler_task = asyncio.create_task(_run_intervals_poller())
 
     yield
 
@@ -97,6 +99,12 @@ async def lifespan(app: FastAPI):
     reminder_scheduler_task.cancel()
     try:
         await reminder_scheduler_task
+    except asyncio.CancelledError:
+        pass
+
+    poller_scheduler_task.cancel()
+    try:
+        await poller_scheduler_task
     except asyncio.CancelledError:
         pass
 
@@ -281,6 +289,24 @@ async def strava_webhook_event(request: Request):
     except Exception:
         logger.exception("Erreur traitement webhook Strava")
     return JSONResponse({"ok": True})
+
+async def _run_intervals_poller() -> None:
+    """spec 002 T037. Detection only for now (Phase 5) — see poller.py's module
+    docstring. `client_factory` builds a fresh IntervalsClient per tick rather than
+    reusing one across the whole app lifetime, matching IntervalsClient's own contract
+    (it opens a new httpx.AsyncClient per request already, so there is no connection
+    state to keep alive between ticks)."""
+    from app.db.client import AsyncSessionFactory
+    from app.providers.intervals.client import IntervalsClient
+
+    def _client_factory() -> IntervalsClient:
+        return IntervalsClient(
+            settings.intervals_api_key.get_secret_value(),
+            athlete_id=settings.intervals_athlete_id,
+        )
+
+    await run_poller_scheduler(AsyncSessionFactory, _client_factory)
+
 
 async def _weekly_recap_scheduler(bot):
     """Envoie le bilan hebdomadaire à tous les utilisateurs actifs chaque dimanche à 20h00 UTC."""

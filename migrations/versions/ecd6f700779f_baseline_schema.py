@@ -38,8 +38,8 @@ def upgrade() -> None:
     sa.Column('reminder_hour', sa.SmallInteger(), nullable=False),
     sa.Column('reminder_minute', sa.SmallInteger(), nullable=False),
     sa.Column('reminder_last_sent_at', sa.Date(), nullable=True),
-    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_users_telegram_id'), 'users', ['telegram_id'], unique=True)
@@ -64,8 +64,8 @@ def upgrade() -> None:
     sa.Column('tss', sa.Float(), nullable=True),
     sa.Column('tss_method', sa.String(length=16), nullable=True),
     sa.Column('ftp_used', sa.SmallInteger(), nullable=True),
-    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
@@ -79,8 +79,8 @@ def upgrade() -> None:
     sa.Column('profile', sa.JSON(), nullable=False),
     sa.Column('coach_memory', sa.JSON(), nullable=False),
     sa.Column('athlete_notes', sa.JSON(), nullable=False),
-    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
@@ -92,8 +92,8 @@ def upgrade() -> None:
     sa.Column('content', sa.Text(), nullable=False),
     sa.Column('intent', sa.String(length=64), nullable=True),
     sa.Column('tool_used', sa.String(length=64), nullable=True),
-    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
@@ -107,8 +107,8 @@ def upgrade() -> None:
     sa.Column('refresh_token', sa.Text(), nullable=False),
     sa.Column('token_expires_at', app.db.types.UtcDateTime(timezone=True), nullable=False),
     sa.Column('provider_user_id', sa.String(length=64), nullable=False),
-    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('user_id', 'provider', name='uq_oauth_user_provider')
@@ -123,8 +123,8 @@ def upgrade() -> None:
     sa.Column('plan_technical', sa.JSON(), nullable=False),
     sa.Column('plan_narrative', sa.JSON(), nullable=False),
     sa.Column('status', sa.String(length=20), nullable=False),
-    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
@@ -162,8 +162,8 @@ def upgrade() -> None:
     sa.Column('atl_at_session', sa.Float(), nullable=True),
     sa.Column('tsb_at_session', sa.Float(), nullable=True),
     sa.Column('kpi_contribution', sa.Float(), nullable=True),
-    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['plan_id'], ['training_plans.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
@@ -183,7 +183,7 @@ def upgrade() -> None:
     sa.Column('sessions_planned', sa.SmallInteger(), nullable=True),
     sa.Column('compliance_pct', sa.Float(), nullable=True),
     sa.Column('tss_7d', sa.Float(), nullable=False),
-    sa.Column('computed_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('computed_at', app.db.types.UtcDateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['plan_id'], ['training_plans.id'], ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),

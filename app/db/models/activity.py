@@ -2,7 +2,6 @@ import uuid
 from datetime import date
 
 from sqlalchemy import (
-    BigInteger,
     Boolean,
     Date,
     ForeignKey,
@@ -52,7 +51,12 @@ class Activity(Base, TimestampMixin):
     )
 
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="strava")
-    source_activity_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # String, not numeric (spec 002 T038): Strava's ids happen to be integers, but
+    # intervals.icu's are not (e.g. "i180170537", confirmed against the live account) —
+    # an opaque external id should never have been typed as BigInteger to begin with.
+    # Existing Strava-sourced rows keep working unchanged; SQLite has no strict column
+    # typing to violate, and this project targets SQLite only (spec 003 cutover).
+    source_activity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     activity_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
