@@ -40,6 +40,9 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Alembic-generated revisions (spec 003) are machine-produced and get regenerated on
+# every autogenerate run — hand-styling them fights the tool that owns them.
+extend-exclude = ["migrations/versions/*.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]

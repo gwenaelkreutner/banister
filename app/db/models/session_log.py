@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import JSON, BigInteger, Date, ForeignKey, SmallInteger, String, Uuid
+from sqlalchemy import JSON, BigInteger, Date, ForeignKey, Index, SmallInteger, String, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import Base, TimestampMixin
@@ -11,13 +11,25 @@ class SessionLog(Base, TimestampMixin):
     """Log d'une séance réalisée ou sautée."""
 
     __tablename__ = "session_logs"
+    __table_args__ = (
+        # Three indexes present in migrations/init.sql but absent from this model until
+        # spec 003's structural fidelity pass (T024) — found while comparing an Alembic
+        # baseline against the live schema.
+        Index("idx_session_logs_user_date", "user_id", "logged_date"),
+        Index(
+            "idx_session_logs_strava_activity",
+            "strava_activity_id",
+            postgresql_where=text("strava_activity_id IS NOT NULL"),
+            sqlite_where=text("strava_activity_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     plan_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("training_plans.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("training_plans.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     week_number: Mapped[int] = mapped_column(SmallInteger, nullable=False)

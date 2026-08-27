@@ -41,6 +41,9 @@ class Activity(Base, TimestampMixin):
             postgresql_where=text("source_activity_id IS NOT NULL"),
             sqlite_where=text("source_activity_id IS NOT NULL"),
         ),
+        # Present in migrations/init.sql, absent from this model until spec 003's
+        # structural fidelity pass (T024).
+        Index("idx_activities_user_date", "user_id", "activity_date"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)

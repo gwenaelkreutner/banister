@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, Float, ForeignKey, SmallInteger, UniqueConstraint, Uuid, func
+from sqlalchemy import Date, Float, ForeignKey, Index, SmallInteger, UniqueConstraint, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.models.base import Base
@@ -12,7 +12,12 @@ class WeeklyAdherence(Base):
     """Snapshot d'adhérence hebdomadaire — persisté à chaque /recap."""
 
     __tablename__ = "weekly_adherence"
-    __table_args__ = (UniqueConstraint("user_id", "week_start_date", name="uq_weekly_adherence_user_week"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "week_start_date", name="uq_weekly_adherence_user_week"),
+        # Present in migrations/init.sql, absent from this model until spec 003's
+        # structural fidelity pass (T024) — serves get_recent()'s ORDER BY ... DESC LIMIT.
+        Index("idx_weekly_adherence_user_date", "user_id", "week_start_date"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(

@@ -24,3 +24,15 @@ class ProfileNotFoundError(BanisterError):
 
 class PersonaNotFoundError(BanisterError):
     """Raised when a persona YAML file cannot be found."""
+
+
+class SchemaTooNewError(BanisterError):
+    """Raised at startup when the database's stamped Alembic revision is not among the
+    revisions this running code knows about — spec 003 FR-021. Running anyway would write
+    data shaped for a schema structure this version does not understand."""
+
+
+class MigrationFailedError(BanisterError):
+    """Raised at startup when applying a schema migration fails partway — spec 003
+    FR-020. The database must be left in its previous working state; this exception
+    signals that startup should not proceed as if migration succeeded."""

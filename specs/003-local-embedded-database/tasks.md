@@ -116,14 +116,36 @@ signal):
 **Independent Test**: Take a deployment on an older revision, start current software, confirm the schema
 updates with data intact.
 
-- [ ] T023 [US5] Initialise Alembic in `migrations/` with an async-aware `env.py` reading the database URL from `app/config.py` and importing metadata from `app/db/models`
-- [ ] T024 [US5] Generate the baseline revision in `migrations/versions/` and verify a database created from it is structurally identical to one created from `migrations/init.sql`
-- [ ] T025 [US5] Implement automatic migration on startup in `app/db/lifecycle.py`, invoked from the FastAPI lifespan in `app/main.py`
-- [ ] T026 [US5] Implement the newer-schema guard in `app/db/lifecycle.py`: refuse to start when the recorded revision is unknown to the running code (FR-021)
-- [ ] T027 [US5] Write `tests/test_db/test_migrations.py` covering: applying to an older schema preserves data; running against a current schema changes nothing (idempotence, FR-019); a failing migration leaves the previous working schema (FR-020); a newer-than-known revision refuses to start (FR-021)
+- [X] T023 [US5] Initialise Alembic in `migrations/` with an async-aware `env.py` reading the database URL from `app/config.py` and importing metadata from `app/db/models`
+- [X] T024 [US5] Generate the baseline revision in `migrations/versions/` and verify a database created from it is structurally identical to one created from `migrations/init.sql`
+- [X] T025 [US5] Implement automatic migration on startup in `app/db/lifecycle.py`, invoked from the FastAPI lifespan in `app/main.py`
+- [X] T026 [US5] Implement the newer-schema guard in `app/db/lifecycle.py`: refuse to start when the recorded revision is unknown to the running code (FR-021)
+- [X] T027 [US5] Write `tests/test_db/test_migrations.py` covering: applying to an older schema preserves data; running against a current schema changes nothing (idempotence, FR-019); a failing migration leaves the previous working schema (FR-020); a newer-than-known revision refuses to start (FR-021)
 
 **Checkpoint**: Schema evolution is automatic, idempotent, and guarded in both directions. `init.sql` still
 exists and is removed at cutover, not here.
+
+**Three findings from Phase 4, all caught by actually running the migration rather than reading the code:**
+
+1. **The ORM was missing five indexes that `init.sql` declares** — a composite on `session_logs(user_id,
+   logged_date)`, a single index on `session_logs.plan_id`, a partial index on
+   `session_logs.strava_activity_id`, a composite on `activities(user_id, activity_date)`, and composites
+   on `chat_messages` and `weekly_adherence`. None of these were unique constraints (unlike T018's finding),
+   so nothing was silently broken — but Alembic's baseline would have generated a schema quietly missing
+   query-performance indexes the running application relies on. Found by systematically diffing every
+   `CREATE INDEX` in `init.sql` against the models before generating the baseline, not by trusting the
+   individual per-model conversions from Phase 2 were complete.
+2. **`env.py` unconditionally overwrote any `sqlalchemy.url` already set on the `Config` object.** This
+   meant `command.upgrade(cfg, "head")` with a test database URL still connected to the real
+   `.env`-configured **production** Supabase database — caught only because the migration tests actually
+   ran end to end and asyncpg tried to resolve a Supabase hostname no test should ever touch. Fixed by
+   checking `config.get_main_option("sqlalchemy.url")` first. This is the kind of bug a code read does not
+   catch: the logic looked correct in isolation, and only broke once something else in the same process
+   (a test, or `app/db/lifecycle.py`) also tried to set the URL.
+3. **Autogenerate does not reliably emit the import a custom `TypeDecorator` needs.** The first-generated
+   baseline referenced `app.db.types.UtcDateTime` with no `import app.db.types` — a `NameError` at
+   migration run time, not a lint nit. Fixed in `migrations/script.py.mako` so every future generated
+   migration carries the import unconditionally, rather than patching the one file.
 
 ---
 

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.setup import create_bot, create_dispatcher
 from app.config import settings
 from app.db.client import get_session
+from app.db.lifecycle import run_migrations
 
 logging.config.dictConfig({
     "version": 1,
@@ -48,6 +49,11 @@ dp = create_dispatcher()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     polling_task = None
+
+    # Schema migration first, before anything else touches the database (spec 003
+    # FR-018): a scheduler or the bot itself hitting a stale schema would surface as an
+    # obscure query error rather than the clear startup failure this is meant to be.
+    await run_migrations()
 
     if settings.use_webhook:
         webhook_url = f"{settings.telegram_webhook_url}"
