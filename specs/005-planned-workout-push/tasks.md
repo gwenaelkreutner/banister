@@ -61,17 +61,17 @@ Existing single-project layout (`app/`, `tests/`) — see plan.md's Project Stru
 
 ### Tests for User Story 1
 
-- [ ] T012 [P] [US1] Test event payload construction (`start_date_local`, `category="WORKOUT"`, `type="Ride"`, `name`, `external_id`, `description`) per contracts/calendar-publication.md §2, in `tests/test_providers/test_calendar.py`
-- [ ] T013 [P] [US1] Test that a session with no steps is refused and reported, never published empty (FR-009), in `tests/test_services/test_publication.py`
+- [X] T012 [P] [US1] Test event payload construction (`start_date_local`, `category="WORKOUT"`, `type="Ride"`, `name`, `external_id`, `description`) per contracts/calendar-publication.md §2, in `tests/test_providers/test_calendar.py`
+- [X] T013 [P] [US1] Test that a session with no steps is refused and reported, never published empty (FR-009), in `tests/test_services/test_publication.py`
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Implement `build_external_id(plan_id, session_date, workout_type, week, dow)` in `app/providers/intervals/calendar.py` per data-model.md §External id (`banister:<plan_id_short>:<yyyy-MM-dd>:<workout_type>-<week>-<dow>`)
-- [ ] T015 [US1] Implement `publish_sessions(client, plan, horizon_start, horizon_end)` in `app/providers/intervals/calendar.py` — renders each session's DSL (T008), builds the event payload (T014), calls `create_event()`; a session without steps is collected as a refusal, never raised past the batch (FR-009) (depends on T007, T008, T014)
-- [ ] T016 [US1] Implement `request_publication(session, user, plan)` in `app/services/publication.py` — computes the horizon (current + following week, FR-010), builds the approval-request text listing every session and date per contracts/calendar-publication.md §3 including the device-forwarding caveat (FR-012, SC-009), and creates a `pending` `PublicationApproval` via `publication_repo` (depends on T010, T011)
-- [ ] T017 [US1] Implement `/publish` command and the approve/decline inline keyboard (`pub:` prefix) in `app/bot/routers/publish.py` + `app/bot/keyboards/publish.py`, rendering the request from T016
-- [ ] T018 [US1] Wire the approve callback: call `calendar.publish_sessions()` (T015) and report the per-session outcome to the athlete, in `app/bot/routers/publish.py`
-- [ ] T019 [US1] Register `publish_router` in `app/bot/setup.py`, before `chat_router`
+- [X] T014 [US1] Implement `build_external_id(plan_id, session_date, workout_type, week, dow)` in `app/providers/intervals/calendar.py` per data-model.md §External id (`banister:<plan_id_short>:<yyyy-MM-dd>:<workout_type>-<week>-<dow>`)
+- [X] T015 [US1] Implement `publish_sessions(client, plan, horizon_start, horizon_end)` in `app/providers/intervals/calendar.py` — renders each session's DSL (T008), builds the event payload (T014), calls `create_event()`; a session without steps is collected as a refusal, never raised past the batch (FR-009) (depends on T007, T008, T014)
+- [X] T016 [US1] Implement `request_publication(session, user, plan)` in `app/services/publication.py` — computes the horizon (current + following week, FR-010), builds the approval-request text listing every session and date per contracts/calendar-publication.md §3 including the device-forwarding caveat (FR-012, SC-009), and creates a `pending` `PublicationApproval` via `publication_repo` (depends on T010, T011)
+- [X] T017 [US1] Implement `/publish` command and the approve/decline inline keyboard (`pub:` prefix) in `app/bot/routers/publish.py` + `app/bot/keyboards/publish.py`, rendering the request from T016
+- [X] T018 [US1] Wire the approve callback: call `calendar.publish_sessions()` (T015) and report the per-session outcome to the athlete, in `app/bot/routers/publish.py`
+- [X] T019 [US1] Register `publish_router` in `app/bot/setup.py`, before `chat_router`
 
 **Checkpoint**: User Story 1 is independently functional — a week can be approved and published in executable form.
 

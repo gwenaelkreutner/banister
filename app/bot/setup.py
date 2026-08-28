@@ -28,6 +28,7 @@ def create_dispatcher() -> Dispatcher:
     from app.bot.routers.forme import router as forme_router
     from app.bot.routers.recap import router as recap_router
     from app.bot.routers.reminders import router as reminders_router
+    from app.bot.routers.publish import router as publish_router
     from app.bot.routers.chat import router as chat_router
 
     dp.include_router(common_router)
@@ -37,6 +38,7 @@ def create_dispatcher() -> Dispatcher:
     dp.include_router(forme_router)
     dp.include_router(recap_router)
     dp.include_router(reminders_router)
+    dp.include_router(publish_router)
     dp.include_router(chat_router)  # doit être en dernier (handler générique)
 
     return dp
