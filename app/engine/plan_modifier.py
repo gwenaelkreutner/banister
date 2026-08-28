@@ -8,7 +8,15 @@ Appelé par les outils LLM — garantit la cohérence mathématique
 import uuid
 from datetime import date, timedelta
 
-from app.engine.schemas import SessionSpec, TrainingPlanSchema, WeekPlan
+from app.engine.schemas import (
+    RepeatGroup,
+    SessionSpec,
+    Step,
+    TrainingPlanSchema,
+    WeekPlan,
+    derive_duration_minutes,
+    derive_target_time_in_zone_minutes,
+)
 
 # Zones dans l'ordre croissant d'intensité
 _ZONE_ORDER = ["Z1", "Z2", "Z3", "Z4", "Z5", "Z6"]
@@ -27,6 +35,66 @@ _REDUCTION_FACTORS = {
     "skip_session": 0.0,        # séance supprimée
     "swap_to_recovery": 0.50,   # tout passe en Z1/Z2
 }
+
+
+# ── Steps : mise à l'échelle et transit par proposition JSON (spec 004 T018-T020) ──
+
+
+def _scale_steps(
+    steps: list[Step | RepeatGroup] | None,
+    factor: float,
+    zone_remap: dict[str, str] | None = None,
+) -> list[Step | RepeatGroup] | None:
+    """Scale chaque step de `factor` (minimum 1 minute) et remappe les zones selon
+    `zone_remap`. Retourne None si `steps` est None — une séance legacy le reste,
+    aucune structure n'est fabriquée pour elle (FR-014).
+
+    Mise à l'échelle proportionnelle simple, pas du fitting qui « préserve le
+    caractère structurel » (c'est le rôle d'app/engine/fitting.py, Phase 7) — les
+    ajustements ad hoc de ce module appliquaient déjà un `int(x * factor)` plat sur
+    le résumé ; ceci garde la même philosophie pour les steps plutôt que d'en
+    introduire une seconde."""
+    if steps is None:
+        return None
+    zone_remap = zone_remap or {}
+
+    def _scale_one(s: Step) -> Step:
+        return Step(
+            kind=s.kind,
+            duration_minutes=max(1, round(s.duration_minutes * factor)),
+            zone_code=zone_remap.get(s.zone_code, s.zone_code),
+        )
+
+    result: list[Step | RepeatGroup] = []
+    for item in steps:
+        if isinstance(item, RepeatGroup):
+            scaled_inner = [_scale_one(s) for s in item.steps]
+            result.append(RepeatGroup(repeat=item.repeat, steps=scaled_inner))
+        else:
+            result.append(_scale_one(item))
+    return result
+
+
+def _steps_to_json(steps: list[Step | RepeatGroup] | None) -> list[dict] | None:
+    """Sérialise les steps pour transiter dans un dict de proposition (affiché à
+    l'utilisateur puis renvoyé tel quel à apply_proposed_modification)."""
+    if steps is None:
+        return None
+    return [item.model_dump(mode="json") for item in steps]
+
+
+def _steps_from_json(data: list[dict] | None) -> list[Step | RepeatGroup] | None:
+    """Reconstruit les steps depuis leur forme JSON — un RepeatGroup se distingue
+    d'un Step par la présence de la clé `repeat`."""
+    if data is None:
+        return None
+    result: list[Step | RepeatGroup] = []
+    for item in data:
+        if "repeat" in item:
+            result.append(RepeatGroup.model_validate(item))
+        else:
+            result.append(Step.model_validate(item))
+    return result
 
 
 def adapt_plan_for_injury(plan, injury_data: dict) -> dict:
@@ -59,14 +127,23 @@ def adapt_plan_for_injury(plan, injury_data: dict) -> dict:
         for sess in week.sessions:
             new_zone = zone_restrictions.get(sess.zone_code, sess.zone_code)
             new_tss = round(sess.tss_target * factor, 1)
+            zone_remap = {sess.zone_code: new_zone} if new_zone != sess.zone_code else None
+            new_steps = _scale_steps(sess.steps, factor, zone_remap)
             new_sess = SessionSpec(
                 day_of_week=sess.day_of_week,
                 workout_type=sess.workout_type if new_zone not in ("Z5", "Z6") else "endurance",
                 zone_code=new_zone,
-                duration_minutes=max(20, int(sess.duration_minutes * factor)),
-                target_time_in_zone_minutes=int(sess.target_time_in_zone_minutes * factor),
+                duration_minutes=(
+                    derive_duration_minutes(new_steps) if new_steps is not None
+                    else max(20, int(sess.duration_minutes * factor))
+                ),
+                target_time_in_zone_minutes=(
+                    derive_target_time_in_zone_minutes(new_steps) if new_steps is not None
+                    else int(sess.target_time_in_zone_minutes * factor)
+                ),
                 tss_target=new_tss,
                 description_fr=f"{sess.description_fr} [adapté blessure {week_offset+1}/3]",
+                steps=new_steps,
             )
             new_sessions.append(new_sess)
 
@@ -146,13 +223,23 @@ def propose_week_adjustment(plan, week_offset: int, modification_type: str) -> d
             new_tss = round(sess.tss_target * factor, 1)
 
         dur_comp = _downgrade_duration_factor(sess.zone_code) if new_zone != sess.zone_code else 1.0
+        effective_factor = max(factor, 0.6) * dur_comp
+        zone_remap = {sess.zone_code: new_zone} if new_zone != sess.zone_code else None
+        new_steps = _scale_steps(sess.steps, effective_factor, zone_remap)
         after_sessions.append({
             "day": sess.day_of_week,
             "workout_type": sess.workout_type if new_zone not in _HIGH_INTENSITY else "endurance",
             "zone": new_zone,
-            "duration_minutes": max(20, int(sess.duration_minutes * max(factor, 0.6) * dur_comp)),
-            "target_time_in_zone_minutes": int(sess.target_time_in_zone_minutes * max(factor, 0.6)),
+            "duration_minutes": (
+                derive_duration_minutes(new_steps) if new_steps is not None
+                else max(20, int(sess.duration_minutes * effective_factor))
+            ),
+            "target_time_in_zone_minutes": (
+                derive_target_time_in_zone_minutes(new_steps) if new_steps is not None
+                else int(sess.target_time_in_zone_minutes * effective_factor)
+            ),
             "tss_target": new_tss,
+            "steps": _steps_to_json(new_steps),
         })
 
     proposal_id = str(uuid.uuid4())
@@ -200,6 +287,7 @@ def apply_proposed_modification(plan, proposal: dict) -> bool:
             target_time_in_zone_minutes=s.get("target_time_in_zone_minutes", 0),
             tss_target=s["tss_target"],
             description_fr=f"Séance ajustée ({modification_type})",
+            steps=_steps_from_json(s.get("steps")),
         ))
 
     week_idx = next(i for i, w in enumerate(schema.weeks) if w.week_number == target_week_num)
@@ -414,14 +502,27 @@ def apply_session_adjustment(plan, proposal: dict) -> bool:
         new_sessions = []
         for s in week.sessions:
             if s.day_of_week == orig_dow:
+                # zone unchanged for reduce_50 (see propose_session_adjustment) — no
+                # remap needed. Duration scales by 0.65 there (propose_session_adjustment's
+                # new_duration), not by 0.50 — TSS and duration are deliberately scaled by
+                # different factors, so steps must follow duration's 0.65 to stay
+                # consistent with session_after["duration_minutes"].
+                new_steps = _scale_steps(s.steps, 0.65)
                 new_sessions.append(SessionSpec(
                     day_of_week=s.day_of_week,
                     workout_type=session_after["workout_type"],
                     zone_code=session_after["zone"],
-                    duration_minutes=session_after["duration_minutes"],
-                    target_time_in_zone_minutes=int(s.target_time_in_zone_minutes * 0.50),
+                    duration_minutes=(
+                        derive_duration_minutes(new_steps) if new_steps is not None
+                        else session_after["duration_minutes"]
+                    ),
+                    target_time_in_zone_minutes=(
+                        derive_target_time_in_zone_minutes(new_steps) if new_steps is not None
+                        else int(s.target_time_in_zone_minutes * 0.50)
+                    ),
                     tss_target=session_after["tss_target"],
                     description_fr=session_after["description"],
+                    steps=new_steps,
                 ))
             else:
                 new_sessions.append(s)
@@ -438,6 +539,7 @@ def apply_session_adjustment(plan, proposal: dict) -> bool:
         new_sessions = []
         for s in week.sessions:
             if s.day_of_week == orig_dow:
+                # Only the description changes — same charge, same structure.
                 new_sessions.append(SessionSpec(
                     day_of_week=s.day_of_week,
                     workout_type=s.workout_type,
@@ -446,6 +548,7 @@ def apply_session_adjustment(plan, proposal: dict) -> bool:
                     target_time_in_zone_minutes=s.target_time_in_zone_minutes,
                     tss_target=s.tss_target,
                     description_fr=session_after["description"],
+                    steps=s.steps,
                 ))
             else:
                 new_sessions.append(s)
@@ -467,6 +570,7 @@ def apply_session_adjustment(plan, proposal: dict) -> bool:
         new_date = date.fromisoformat(session_after["date"])
         new_week_num = (new_date - plan.start_date).days // 7 + 1
 
+        # Only the day changes — same structure, unmodified.
         shifted_sess = SessionSpec(
             day_of_week=new_day,
             workout_type=orig_sess.workout_type,
@@ -475,6 +579,7 @@ def apply_session_adjustment(plan, proposal: dict) -> bool:
             target_time_in_zone_minutes=orig_sess.target_time_in_zone_minutes,
             tss_target=orig_sess.tss_target,
             description_fr=orig_sess.description_fr,
+            steps=orig_sess.steps,
         )
 
         # Supprimer du jour d'origine
@@ -527,14 +632,24 @@ def _apply_progressive_recovery(schema: TrainingPlanSchema, base_week_num: int) 
             orig_zone = sess.zone_code
             new_zone = _downgrade_zone(orig_zone) if factor < 0.85 else orig_zone
             dur_comp = _downgrade_duration_factor(orig_zone) if new_zone != orig_zone else 1.0
+            effective_factor = factor * dur_comp
+            zone_remap = {orig_zone: new_zone} if new_zone != orig_zone else None
+            new_steps = _scale_steps(sess.steps, effective_factor, zone_remap)
             new_sessions.append(SessionSpec(
                 day_of_week=sess.day_of_week,
                 workout_type=sess.workout_type,
                 zone_code=new_zone,
-                duration_minutes=max(20, int(sess.duration_minutes * factor * dur_comp)),
-                target_time_in_zone_minutes=int(sess.target_time_in_zone_minutes * factor),
+                duration_minutes=(
+                    derive_duration_minutes(new_steps) if new_steps is not None
+                    else max(20, int(sess.duration_minutes * effective_factor))
+                ),
+                target_time_in_zone_minutes=(
+                    derive_target_time_in_zone_minutes(new_steps) if new_steps is not None
+                    else int(sess.target_time_in_zone_minutes * factor)
+                ),
                 tss_target=round(sess.tss_target * factor, 1),
                 description_fr=f"{sess.description_fr} [reprise S+{offset}]",
+                steps=new_steps,
             ))
 
         week_idx = next(i for i, w in enumerate(schema.weeks) if w.week_number == target)
