@@ -77,15 +77,8 @@ def is_intensity_allowed(prev_tss: float, prev_workout_type: str, target_zone: s
 # SWEET_SPOT_STRUCTURES/THRESHOLD_STRUCTURES/VO2_STRUCTURES supprimées — leur
 # contenu vit maintenant dans sessions/sweet-spot.yaml, sessions/threshold.yaml,
 # sessions/vo2.yaml, éditables sans toucher ce fichier (FR-016, FR-018).
-
-ZONE_NAMES = {
-    "Z1": "Récupération active",
-    "Z2": "Endurance",
-    "Z3": "Tempo",
-    "Z4": "Seuil lactique",
-    "Z5": "VO2 Max",
-    "Z6": "Anaérobie",
-}
+# ZONE_NAMES supprimée (spec 004 T048) — _session_description() délègue à
+# session_render.py, qui a son propre nommage de zones par langue.
 
 
 WARMUP_MIN = 15       # échauffement Z1 — sweet spot / threshold
@@ -814,27 +807,15 @@ def _tss_to_duration(tss: float, zone: str, coaching_mode: str, ftp: int | None)
     return max(20, min(300, int((tss / tph) * 60))) if tph else 60
 
 
-def _session_description(wtype: str, zone: str, detail: str = "", coaching_mode: str = "hr") -> str:
-    """
-    Génère la description française d'une séance.
-    En mode HR + Z6, ajoute automatiquement une note RPE (inertie cardiaque trop élevée).
-    """
-    zone_name = ZONE_NAMES.get(zone, zone)
-    if wtype == "long_ride":
-        base = f"Sortie longue {zone} ({zone_name})"
-        desc = f"{base} — {detail}" if detail else base
-    elif wtype == "endurance":
-        base = f"Endurance {zone} ({zone_name})"
-        desc = f"{base} — {detail}" if detail else base
-    elif wtype == "recovery":
-        desc = f"Récupération active {zone} ({zone_name})"
-    elif detail:
-        desc = f"Intervalles {zone} ({zone_name}) — {detail}"
-    else:
-        desc = f"Intervalles {zone} ({zone_name})"
-    if zone in ("Z5", "Z6") and coaching_mode == "hr":
-        desc += " (Pilotage au RPE 9/10 — le cardio monte trop lentement sur ces intervalles courts ; suivre la sensation d'effort, pas la FC)"
-    return desc
+def _session_description(
+    wtype: str, steps: list[Step | RepeatGroup], detail: str = "", coaching_mode: str = "hr",
+) -> str:
+    """Génère la description d'une séance — délègue à session_render.py (spec 004
+    T048), qui la dérive des steps réels plutôt que de faire confiance à `detail`
+    pour correspondre à la structure. `description_fr` reste peuplé (compatibilité
+    FR-008/FR-030) ; language="fr" est le défaut du renderer, pas un choix figé ici."""
+    from app.engine.session_render import render_description
+    return render_description(wtype, steps, coaching_mode=coaching_mode, detail=detail)
 
 
 # ── Constructeur de semaine ───────────────────────────────────────────────────
@@ -927,7 +908,7 @@ def _build_sessions(
                     duration_minutes=45,
                     target_time_in_zone_minutes=0,
                     tss_target=estimate_structured_session_tss(z1_steps, coaching_mode, ftp),
-                    description_fr=_session_description("recovery", "Z1", coaching_mode=coaching_mode),
+                    description_fr=_session_description("recovery", z1_steps, coaching_mode=coaching_mode),
                     steps=z1_steps,
                 ))
             else:
@@ -944,7 +925,9 @@ def _build_sessions(
                     duration_minutes=final_dur,
                     target_time_in_zone_minutes=0,
                     tss_target=max(20.0, tss),
-                    description_fr=_session_description("endurance", "Z2", "récupération active", coaching_mode=coaching_mode),
+                    description_fr=_session_description(
+                        "endurance", end_steps, "récupération active", coaching_mode=coaching_mode
+                    ),
                     steps=end_steps,
                 ))
         return sessions
@@ -1074,7 +1057,7 @@ def _build_sessions(
             duration_minutes=final_duration,
             target_time_in_zone_minutes=derive_target_time_in_zone_minutes(steps),
             tss_target=max(1.0, tss),
-            description_fr=_session_description(wtype, zone, detail, coaching_mode=coaching_mode),
+            description_fr=_session_description(wtype, steps, detail, coaching_mode=coaching_mode),
             steps=steps,
         ))
 
