@@ -14,17 +14,19 @@ source est spécifiée dans `specs/001` à `007`, et gouvernée par `.specify/me
 
 **✅ Fait** : spec 003 (SQLite local remplace Supabase), spec 002 (intervals.icu remplace Strava, log manuel
 supprimé), spec 004 (séances structurées, bibliothèque de templates, fitting), spec 005 (push des séances
-vers le calendrier intervals.icu — `/publish`, `/unpublish`) — voir sections ci-dessous, à jour.
+vers le calendrier intervals.icu — `/publish`, `/unpublish`), spec 006 (garde-fous d'entraînement +
+vérification des chiffres de la réponse LLM) — voir sections ci-dessous, à jour.
 
 Ce qui reste à faire, et qui rendra d'autres sections de ce fichier obsolètes :
 
 | Décision | Effet sur ce document |
 |---|---|
 | Câblage de `load_persona()` (voix du coach configurable) | Sections chat/prompts |
+| Premier lancement (spec 007) — relocalisera `DISCLAIMER_TEXT` au flux first-run | Section garde-fous |
 
 **Ordre de construction** (les numéros de spec sont des identifiants, pas une séquence) :
 ~~`003` base locale~~ (fait) → ~~`002` intervals.icu~~ (fait) → ~~`004` séances structurées~~ (fait) →
-~~`005` push calendrier~~ (fait) → `006` guardrails → `007` premier lancement.
+~~`005` push calendrier~~ (fait) → ~~`006` garde-fous~~ (fait) → `007` premier lancement.
 
 Mettre ce fichier à jour **au fil de** chaque migration, pas après coup.
 
@@ -87,13 +89,17 @@ app/
 │   ├── models/              # ORM SQLAlchemy
 │   └── repositories/        # Accès DB — jamais de SQL dans les handlers
 │       ├── weekly_adherence_repo.py  # upsert + get_recent — persistance taux d'adhérence /recap
-│       └── publication_repo.py       # PublicationApproval + PublishedEntry (spec 005)
+│       ├── publication_repo.py       # PublicationApproval + PublishedEntry (spec 005)
+│       └── guardrail_repo.py         # ResponseCheckFailure + GuardrailAcknowledgement (spec 006)
 ├── services/                # Orchestration : repos + LLM, sans dépendance aiogram
 │   ├── weekly_recap.py      # compute_weekly_recap() → WeeklyRecapResult
 │   ├── activity_feedback.py # assemble_activity_feedback() — contexte post-séance, sans dépendance bot
 │   ├── fitness.py           # get_current_fitness() — CTL/ATL/TSB courants depuis la table wellness
-│   └── publication.py       # spec 005 : cycle de vie approbation, barrière authorize_publication(),
-│                            # diff plan↔calendrier, check_divergence(), retrait — sans dépendance aiogram
+│   ├── publication.py       # spec 005 : cycle de vie approbation, barrière authorize_publication(),
+│   │                        # diff plan↔calendrier, check_divergence(), retrait — sans dépendance aiogram
+│   ├── guardrail_service.py # spec 006 : assemble_workload/recovery_findings, recovery_insufficiency,
+│   │                        # décline/accepte via chemins existants — AUCUN chemin d'écriture propre
+│   └── response_verification.py  # spec 006 : MetricRegistry + verify_response + apply_result (US3)
 ├── engine/                  # Moteur déterministe — zéro LLM ici
 │   ├── schemas.py           # Pydantic : AthleteProfileSchema, TrainingPlanSchema, SessionSpec, Step, RepeatGroup
 │   ├── periodization.py     # Blocs Base/Build/Peak/Taper
@@ -104,7 +110,10 @@ app/
 │   ├── session_render.py    # Description dérivée des steps, paramétrée par langue (spec 004)
 │   ├── atl_ctl.py           # ATL/CTL/TSB (EMA τ=7j/42j) — calculé localement, la source ne le fournit pas
 │   ├── adherence_kpi.py     # Score KPI par séance (0–2.0 pts) + bloc KPI hebdo
-│   └── weekly_snapshot.py   # WeeklySnapshot : tendance charge, monotonie Foster
+│   ├── weekly_snapshot.py   # WeeklySnapshot : tendance charge, monotonie Foster (corrigée spec 006)
+│   ├── guardrails.py        # spec 006 : évaluateurs purs (ACWR, ramp, monotonie, VFC, FC repos) + GuardrailFinding
+│   ├── baselines.py         # spec 006 : baselines glissantes personnelles (rolling_baseline*)
+│   └── guardrail_thresholds.py  # spec 006 : tous les seuils + leur source publiée (FR-016, SC-007)
 ├── llm/
 │   ├── factory.py           # Sélection provider (openrouter | anthropic)
 │   ├── providers/           # anthropic.py, openrouter.py — interface commune generate()
@@ -242,6 +251,64 @@ consentement + diff + persistance, **sans dépendance aiogram** ; `bot/routers/p
 **Scripts** : `scripts/calendar_state.py --describe` (lecture seule) / `--withdraw-all --confirm` ;
 `scripts/publish_horizon.py --approve-for-test` (request→approve→publish, pour les scénarios quickstart).
 
+## Garde-fous d'entraînement (spec 006)
+
+Le coach signale quand l'athlète va vers un mur — charge qui monte trop vite, entraînement sans
+récupération, semaine monotone — et **vérifie que les chiffres qu'il énonce sont vrais**.
+
+**Tout est déterministe** (`app/engine/guardrails.py`, `baselines.py`, `guardrail_thresholds.py`) : le
+LLM restitue des `GuardrailFinding` qu'on lui donne, il n'en produit aucun (FR-022). Un `GuardrailFinding`
+dont l'`action` est vide est **inconstructible** (SC-003).
+
+**Signaux de charge** (`assemble_workload_findings`) :
+- ratio aigu/chronique = `ATL / CTL` **lu depuis la table `wellness`** (autoritaire, dédupliqué, présent les
+  jours de repos — pas recalculé depuis une série locale qui double-compte, R3). Se déclenche uniquement
+  au-dessus de la plage ; un taper (ratio bas) n'est jamais signalé comme désentraînement.
+- `ramp_rate` = gain de CTL/semaine calculé par la source (R4), signal indépendant.
+- monotonie Foster **corrigée** (voir Snapshot hebdo ci-dessous).
+- si un signal exige de baisser la charge → `GUARDRAIL_LOAD_REDUCTION_RULE` ajoutée au system prompt : la
+  réponse ne peut plus recommander d'augmenter la charge (FR-003).
+
+**Signaux de récupération** (`assemble_recovery_findings`) — VFC et FC de repos seulement (pas de seuil
+publié pour le sommeil) :
+- baselines glissantes **personnelles** (`baselines.rolling_baseline*`), `None` sous `BASELINE_MIN_SAMPLES`.
+- une finding exige le seuil franchi **2 jours consécutifs**, aucun aberrant (`is_anomalous_reading`,
+  `sustained_recovery_finding`) — un seul mauvais jour ou un glitch capteur ne déclenche jamais seul
+  (FR-011).
+- ≥2 signaux bas → une seule finding `recovery_multi` de sévérité haute (FR-009).
+- conflit avec une séance dure prévue → énoncé ouvertement (`state_conflict_with_plan`, FR-012).
+- si non évaluable → `recovery_insufficiency()` renvoie une raison (aucun historique / baseline périmée /
+  baseline courante sans mesure du jour), affichée au coach pour que le silence ne passe pas pour « récup
+  OK » (FR-014). ⚠️ état réel du compte : plus aucune mesure VFC/FC repos depuis juillet 2025 → cette
+  branche est le chemin réellement exercé.
+
+**Advisory, jamais autoritaire** : `guardrail_service` **n'a aucun chemin d'écriture** (vérifié par scan
+AST dans les tests). Une acceptation passe par `plan_modifier` / `authorize_publication` existants. Un
+refus est enregistré (`GuardrailAcknowledgement`, clé `kind:jour`) → l'`action` est démotée en simple
+rappel factuel mais le signal continue d'apparaître (FR-025/FR-026) ; l'occurrence du lendemain est neuve.
+
+**Vérification des réponses** (`app/services/response_verification.py`, US3) :
+- `MetricRegistry` = `{nom: valeur}` assemblé dans `chat.py` — la définition de « retrouvé » (FR-018).
+- `verify_response()` : **ancrage sur mots-clés** — un nombre est une affirmation seulement s'il est dans
+  la même clause qu'un terme métrique (CTL, ATL, TSB, ratio, VFC…). Durées, zones, `%` relatifs → jamais
+  des affirmations (R5). Classe `pass` / `mismatch` / `unretrieved` avec tolérance (arrondi d'affichage OK).
+- `apply_result()` : retire **la phrase** portant une affirmation fautive, jamais toute la réponse, ne
+  réécrit jamais autour d'un nombre corrigé (R6).
+- Échecs enregistrés (`response_check_failures`, gardés indéfiniment — SC-001/SC-002 sont des mesures).
+- `chat.py` : `verify → record → apply` après `run_agentic_loop`, avant de renvoyer.
+
+**Disclaimer** : `prompts.DISCLAIMER_TEXT` (« ni médecin ni coach certifié, les séances sont des
+suggestions ») émis en fin de `/setup` + README (FR-028). `prompts.SCOPE_OF_ADVICE_RULES` (renvoi médecin
+si signaux d'infection, jamais de diagnostic sur une douleur) dans `build_ux_system_prompt`. Spec 007
+relocalisera le disclaimer au flux first-run.
+
+**Seuils** : `app/engine/guardrail_thresholds.py` — chaque seuil avec sa source publiée, lu comme de la
+doc (FR-016, SC-007). ⚠️ le ratio `ATL/CTL` est du 7j:42j (EWMA), la plage 0.8–1.3 de Gabbett était du
+7:28 (rolling) — provenance signalée dans le module (Williams et al. 2017).
+
+**Scripts** : `scripts/guardrail_state.py --describe` (état des signaux par athlète) ;
+`scripts/verify_corpus.py --last N` (revue manuelle du taux de faux positifs du vérificateur).
+
 ## Tables SQLite
 
 | Table | Description |
@@ -253,7 +320,9 @@ consentement + diff + persistance, **sans dépendance aiogram** ; `bot/routers/p
 | `chat_messages` | Historique LLM (role, content, intent, tool_used) |
 | `activities` | Import historique (`source="intervals_icu"`, `source_activity_id`, `tss`, `tss_method`, `device_watts`) |
 | `weekly_adherence` | Taux d'adhérence hebdomadaire — upsert à chaque `/recap` ; clé `(user_id, week_start_date)` ; colonnes : `sessions_done`, `sessions_planned`, `compliance_pct`, `tss_7d`, `week_number`, `plan_id` |
-| `wellness` | HRV / FC repos / sommeil / CTL / ATL quotidiens — ingérée à chaque tick du poller (`ingest_wellness`), source de `get_current_fitness()` |
+| `wellness` | HRV / FC repos / sommeil / CTL / ATL / **`ramp_rate`** quotidiens — ingérée à chaque tick du poller (`ingest_wellness`), source de `get_current_fitness()` et des signaux de charge (spec 006). `ramp_rate` = gain de CTL/semaine calculé par la source, consommé tel quel |
+| `response_check_failures` | spec 006 — une ligne par chiffre d'une réponse LLM qui ne correspond pas à ce qui a été retrouvé (`failure_kind` mismatch/unretrieved, `stated_value`, `expected_value`, `response_excerpt`). Jamais purgée : SC-001/SC-002 sont des mesures sur un corpus |
+| `guardrail_acknowledgements` | spec 006 — décision de l'athlète sur une occurrence de garde-fou (`occurrence_key` = `kind:jour`, `decision` accepted/declined). Un refus démote l'action sans museler le signal (FR-025/FR-026) |
 | `publication_approvals` | spec 005 — consentement enregistré et lié au contenu (`content_hash` SHA-256 sur ce qui a été montré) ; `status` pending/approved/declined (terminal, jamais supprimé — FR-003) ; `horizon_start`/`horizon_end`, `session_count` |
 | `published_entries` | spec 005 — une ligne par séance écrite au calendrier ; `external_id` unique/user (`banister:<plan>:<date>:<slug>`), `intervals_event_id`, `approval_id` (FR-005), `content_hash`, `withdrawn_at` (gardée en historique — distingue « retirée par nous » de « supprimée par l'athlète ») |
 
@@ -371,7 +440,12 @@ points d'écart, pas une nuance.
 ### Snapshot hebdomadaire (`app/engine/weekly_snapshot.py`)
 - `compute_weekly_snapshot(logs, today)` → `WeeklySnapshot` (tss_7d, tss_6w_avg, load_trend_pct, sessions_done_7d, monotony_index)
 - Fenêtre 7j : `[today-6 .. today]` ; 6 semaines : les 6 semaines complètes avant la fenêtre courante (pas de chevauchement)
-- **Monotonie Foster** : `mean(TSS journaliers) / std` — score > 2.0 = charge monotone = risque ; `None` si std=0 ou < 2 jours
+- **Monotonie Foster** : `mean(TSS journaliers) / std` **sur les 7 jours de la fenêtre, jours de repos à 0**
+  — score > `MONOTONY_HIGH` (2.0) = charge monotone = risque ; `None` si aucun entraînement dans la fenêtre
+  ou 7 jours identiques (std=0). ⚠️ **corrigé spec 006 R2** : l'ancienne version jetait les jours de repos
+  et sur-signalait (indice ~2.6 sur une semaine en réalité très variée). 3 call sites migrés vers la
+  constante `MONOTONY_HIGH` (`weekly_recap.py` ×2, `activity_analysis.py`) — comportement utilisateur
+  changé, pas une simple refacto
 - Fonction pure, pas de requête DB — prend la liste `logs` déjà en mémoire
 
 ### Analyse LLM post-séance (`app/llm/activity_analysis.py`)
@@ -494,5 +568,10 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier le texte de la demande d'approbation `/publish` | `app/services/publication.py` — `build_approval_request_text()` |
 | Modifier la détection de divergence plan↔calendrier | `app/services/publication.py` — `check_divergence()` |
 | Modifier le flux `/publish` / `/unpublish` (clavier, callbacks) | `app/bot/routers/publish.py` + `app/bot/keyboards/publish.py` |
+| Modifier un seuil de garde-fou (ACWR, ramp, monotonie, VFC, FC repos, outlier…) | `app/engine/guardrail_thresholds.py` |
+| Modifier un évaluateur de signal (charge ou récup) | `app/engine/guardrails.py` — `evaluate_*` |
+| Modifier l'assemblage des signaux / la raison d'insuffisance | `app/services/guardrail_service.py` |
+| Modifier la vérification des chiffres de la réponse LLM (ancrage, tolérance, retrait) | `app/services/response_verification.py` |
+| Modifier le disclaimer ou les règles no-diagnostic | `app/llm/prompts.py` — `DISCLAIMER_TEXT`, `SCOPE_OF_ADVICE_RULES` |
 | Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `alembic revision --autogenerate` |
 | Architecture complète | `docs/ARCHITECTURE.md` |
