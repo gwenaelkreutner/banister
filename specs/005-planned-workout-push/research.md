@@ -172,7 +172,9 @@ hypothetical here — every one of these verbs is a path that must be gated on a
    against the stored `PublishedEntry.content_hash` — a mismatch means the remote event is neither
    what we last wrote nor what we would write now, i.e. an out-of-band edit. This sidesteps the
    `updated`-timestamp ambiguity entirely.
-   **One probe still owed on the live account**: confirm intervals.icu echoes the `description`
-   field back byte-for-byte (no server-side reformatting of the DSL text). If it rewrites
-   `description` on save, every entry would look "edited" on the next republish. The Phase 7 code
-   assumes a clean round-trip; T054's real-account quickstart run is where this gets verified.
+   **Probe done (T054, live account, 2026-08-28)**: intervals.icu echoes `description` back
+   **byte-for-byte** — a session published then re-read has an identical `description`, and five
+   consecutive republications all report "unchanged" with zero writes. The content-based detection
+   is sound. Confirmed alongside: `workout_doc` is derived server-side (3 steps for the probe's
+   warmup/3×/cooldown shape), and `moving_time` matched the plan's `derive_duration_minutes()`
+   exactly (78 min, then 72 min after a step-length change) — R4 holds on real data.
