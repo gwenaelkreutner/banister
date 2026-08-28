@@ -85,16 +85,16 @@ Existing single-project layout (`app/`, `tests/`) — see plan.md's Project Stru
 
 ### Tests for User Story 2
 
-- [ ] T020 [P] [US2] Test that every write path refuses without a stored `approved` `PublicationApproval` whose `content_hash` matches the current plan (FR-001, FR-004), in `tests/test_services/test_publication.py -k approval`
-- [ ] T021 [P] [US2] Test that declining writes nothing and does not re-ask unprompted (FR-003), in `tests/test_services/test_publication.py`
+- [X] T020 [P] [US2] Test that every write path refuses without a stored `approved` `PublicationApproval` whose `content_hash` matches the current plan (FR-001, FR-004), in `tests/test_services/test_publication.py -k approval`
+- [X] T021 [P] [US2] Test that declining writes nothing and does not re-ask unprompted (FR-003), in `tests/test_services/test_publication.py`
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Implement `authorize_publication(approval_id, plan)` in `app/services/publication.py` — recomputes the plan's current content hash and refuses (fresh approval required) if it no longer matches the approval's `content_hash` (FR-004); call this before every write reaches `calendar.py` (depends on T016)
-- [ ] T023 [US2] Wire the decline callback in `app/bot/routers/publish.py`: mark the approval `declined` via `publication_repo`, confirm nothing was written, no further unprompted asking (FR-003)
-- [ ] T024 [US2] Thread `approval_id` through `publish_sessions()` onto every `PublishedEntry` it writes (FR-005) (depends on T015, T022)
-- [ ] T025 [US2] Build the post-publication report — per-session ✅/❌ list, never a blanket success (FR-006) per contracts/calendar-publication.md §3 — in `app/services/publication.py`, consumed by T018's callback
-- [ ] T026 [US2] Enumerate, by grep, every call site reaching `create_event`/`update_event`/`delete_event` and confirm each sits behind `authorize_publication()` (quickstart.md Scenario 2: "a grep, not a vibe") — record the enumeration in the commit message
+- [X] T022 [US2] Implement `authorize_publication(approval_id, plan)` in `app/services/publication.py` — recomputes the plan's current content hash and refuses (fresh approval required) if it no longer matches the approval's `content_hash` (FR-004); call this before every write reaches `calendar.py` (depends on T016)
+- [X] T023 [US2] Wire the decline callback in `app/bot/routers/publish.py`: mark the approval `declined` via `publication_repo`, confirm nothing was written, no further unprompted asking (FR-003)
+- [X] T024 [US2] Thread `approval_id` through `publish_sessions()` onto every `PublishedEntry` it writes (FR-005) (depends on T015, T022)
+- [X] T025 [US2] Build the post-publication report — per-session ✅/❌ list, never a blanket success (FR-006) per contracts/calendar-publication.md §3 — in `app/services/publication.py`, consumed by T018's callback
+- [X] T026 [US2] Enumerate, by grep, every call site reaching `create_event`/`update_event`/`delete_event` and confirm each sits behind `authorize_publication()` (quickstart.md Scenario 2: "a grep, not a vibe") — record the enumeration in the commit message
 
 **Checkpoint**: US1 + US2 together are the MVP — publication only ever happens with recorded, content-bound consent.
 

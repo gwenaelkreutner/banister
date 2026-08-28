@@ -3,10 +3,16 @@
 """
 from __future__ import annotations
 
+import uuid
+
+import pytest
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.db.models.user import User
 from app.db.repositories import plan_repo, publication_repo
 from app.engine.plan_builder import generate_plan
 from app.engine.schemas import TrainingPlanSchema
+from app.providers.intervals.calendar import iter_horizon_sessions
 from app.services import publication
 from tests.test_engine.test_plan_builder import make_profile
 
@@ -58,7 +64,6 @@ async def test_session_without_steps_is_flagged_and_not_counted(db_session):
     excluded from the publishable count and never written (FR-009)."""
     from datetime import timedelta
 
-    from app.providers.intervals.calendar import iter_horizon_sessions
 
     user = await _make_user(db_session)
     plan = await _make_plan(db_session, user.id, legacy_first=True)
@@ -100,3 +105,73 @@ async def test_execute_publication_writes_one_entry_per_created_session(db_sessi
     assert all(e.approval_id == request.approval.id for e in entries)
     # Report is per-session, never a blanket "done" (FR-006).
     assert report.text.count("✅") >= report.created
+
+
+# ── US2: nothing is written without a matching, approved consent ──────────────
+
+
+async def _approved_request(db_session, user, plan):
+    request = await publication.request_publication(db_session, user, plan)
+    await publication_repo.mark_approved(db_session, request.approval.id)
+    return request
+
+
+async def test_no_approval_at_all_refuses(db_session):
+
+    user = await _make_user(db_session)
+    plan = await _make_plan(db_session, user.id)
+
+    with pytest.raises(publication.PublicationNotAuthorized):
+        await publication.authorize_publication(db_session, uuid.uuid4(), plan)
+
+
+async def test_pending_approval_is_not_a_green_light(db_session):
+
+    user = await _make_user(db_session)
+    plan = await _make_plan(db_session, user.id)
+    request = await publication.request_publication(db_session, user, plan)  # stays pending
+
+    client = _StubClient()
+    with pytest.raises(publication.PublicationNotAuthorized):
+        await publication.execute_publication(db_session, client, user, plan, request.approval)
+    assert client.payloads == []  # nothing written (FR-001)
+
+
+async def test_plan_change_after_approval_refuses_and_writes_nothing(db_session):
+
+    user = await _make_user(db_session)
+    plan = await _make_plan(db_session, user.id)
+    request = await _approved_request(db_session, user, plan)
+
+    # Modify an in-horizon session's name through the plan (FR-004 scenario).
+    schema = TrainingPlanSchema.model_validate(plan.plan_technical)
+    hs, he = request.approval.horizon_start, request.approval.horizon_end
+
+    target = iter_horizon_sessions(schema, hs, he)[0]
+    for w in schema.weeks:
+        for s in w.sessions:
+            if s is target.spec:
+                s.description_fr = s.description_fr + " (modifiée)"
+    plan.plan_technical = schema.model_dump(mode="json")
+    flag_modified(plan, "plan_technical")
+    await db_session.flush()
+
+    client = _StubClient()
+    with pytest.raises(publication.StaleApprovalError):
+        await publication.execute_publication(db_session, client, user, plan, request.approval)
+    assert client.payloads == []
+    entries = await publication_repo.get_active_entries_for_plan(db_session, user.id, plan.id)
+    assert entries == []
+
+
+async def test_declining_writes_nothing_and_records_the_no(db_session):
+    user = await _make_user(db_session)
+    plan = await _make_plan(db_session, user.id)
+    request = await publication.request_publication(db_session, user, plan)
+
+    await publication_repo.mark_declined(db_session, request.approval.id)
+
+    refreshed = await publication_repo.get_approval(db_session, request.approval.id)
+    assert refreshed.status == "declined"  # kept, not deleted (FR-003)
+    entries = await publication_repo.get_active_entries_for_plan(db_session, user.id, plan.id)
+    assert entries == []

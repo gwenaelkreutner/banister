@@ -6,8 +6,10 @@ events API live in app/providers/intervals/; this module owns consent and record
 and never imports aiogram. app/engine/ is not touched at all — this feature reads
 sessions, it does not generate or modify them.
 
-Phase 3 (US1): request_publication (T016) + execute_publication (T018). The content-hash
-gate that refuses a stale approval (FR-004) lands with US2 (T022).
+request_publication (T016) records consent; authorize_publication (T022) is the gate
+every write path passes before anything reaches calendar.py — it refuses a missing,
+wrong-plan, un-approved, or content-stale approval (FR-001, FR-004). execute_publication
+(T018) calls it as its first statement.
 """
 from __future__ import annotations
 
@@ -172,6 +174,50 @@ async def request_publication(
     return PublicationRequest(approval=approval, text=text, session_count=publishable)
 
 
+class PublicationNotAuthorized(Exception):
+    """No usable approval stands behind a write attempt — no such approval, wrong
+    athlete, wrong plan, or not in `approved` state (FR-001)."""
+
+
+class StaleApprovalError(PublicationNotAuthorized):
+    """The plan's current content no longer matches what the athlete approved (FR-004).
+    A fresh approval is required — publication must not silently re-authorise itself."""
+
+
+async def authorize_publication(
+    session: AsyncSession, approval_id, plan: TrainingPlan
+) -> PublicationApproval:
+    """The single gate every write path must pass before anything reaches calendar.py
+    (FR-001, FR-004). Recomputes the plan's current content hash over the approved
+    horizon and refuses if it differs from what was shown.
+
+    Called by execute_publication() and by every future write path (withdrawal in US4,
+    republish diffing in US3) — enumerated by grep at T026, not by trust.
+    """
+    approval = await publication_repo.get_approval(session, approval_id)
+    if approval is None:
+        raise PublicationNotAuthorized(f"no PublicationApproval {approval_id}")
+    if approval.user_id != plan.user_id:
+        raise PublicationNotAuthorized("approval belongs to a different athlete")
+    if approval.plan_id != plan.id:
+        raise PublicationNotAuthorized("approval was recorded for a different plan")
+    if approval.status != "approved":
+        raise PublicationNotAuthorized(
+            f"approval {approval_id} is {approval.status!r}, not 'approved'"
+        )
+
+    schema = TrainingPlanSchema.model_validate(plan.plan_technical)
+    current_hash = plan_content_hash(
+        schema, approval.horizon_start, approval.horizon_end
+    )
+    if current_hash != approval.content_hash:
+        raise StaleApprovalError(
+            "the plan changed since this approval was given — fresh approval required "
+            "(FR-004)"
+        )
+    return approval
+
+
 @dataclass
 class PublicationReport:
     text: str
@@ -189,7 +235,11 @@ async def execute_publication(
 ) -> PublicationReport:
     """Run the approved publication: write the events, persist a PublishedEntry per
     written session carrying the authorising approval_id (FR-005), and build the
-    per-session report — never a blanket "done" (FR-006)."""
+    per-session report — never a blanket "done" (FR-006).
+
+    Gated: authorize_publication() runs before a single event is written, so a stale or
+    missing approval refuses here rather than deep in the batch (FR-001, FR-004)."""
+    approval = await authorize_publication(session, approval.id, plan)
     schema = TrainingPlanSchema.model_validate(plan.plan_technical)
     outcomes = await publish_sessions(
         client, schema, plan.id, approval.horizon_start, approval.horizon_end

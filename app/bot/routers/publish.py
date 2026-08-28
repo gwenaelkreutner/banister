@@ -101,6 +101,19 @@ async def cb_approve(callback: CallbackQuery, session: AsyncSession, user: User)
         report = await publication.execute_publication(
             session, _client(), user, plan, approval
         )
+    except publication.StaleApprovalError:
+        await callback.message.edit_text(
+            "⚠️ Ton plan a changé depuis cette demande — rien n'a été publié. "
+            "Relance /publish pour approuver la version à jour.",
+            parse_mode="HTML",
+        )
+        return
+    except publication.PublicationNotAuthorized:
+        logger.warning("Publication refused for approval %s", approval_id)
+        await callback.message.edit_text(
+            "⚠️ Cette demande n'est plus valide — relance /publish.", parse_mode="HTML"
+        )
+        return
     except Exception:  # noqa: BLE001
         logger.exception("Publication failed for approval %s", approval_id)
         await callback.message.edit_text(
