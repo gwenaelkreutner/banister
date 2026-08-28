@@ -23,6 +23,7 @@ from app.engine.guardrail_thresholds import (
     ACWR_SAFE_LOW,
     HRV_DROP_PCT,
     MONOTONY_HIGH,
+    OUTLIER_SD,
     RAMP_RATE_CAUTION,
     RAMP_RATE_HIGH,
     RHR_RISE_BPM,
@@ -253,6 +254,58 @@ def combine_recovery_findings(findings: list[GuardrailFinding]) -> list[Guardrai
         occurrence_key=f"recovery_multi:{day}",
     )
     return [*others, combined]
+
+
+def is_anomalous_reading(
+    value: float, baseline_mean: float, baseline_sd: float | None
+) -> bool:
+    """`value` is far enough from the athlete's baseline to be a probable device error
+    rather than a real physiological change (FR-011, SC-005).
+
+    "Far enough" is `OUTLIER_SD` standard deviations — but with a relative floor on the
+    spread so a baseline that happens to be very flat does not make an ordinary
+    day-to-day change (a real +7 bpm) look like a glitch. The primary single-reading
+    guard is the two-consecutive-days requirement in `sustained_recovery_finding`; this
+    is the backstop for one genuinely wild value.
+    """
+    if baseline_sd is None:
+        return False
+    effective_sd = max(baseline_sd, abs(baseline_mean) * 0.15)
+    if effective_sd <= 0:
+        return False
+    return abs(value - baseline_mean) > OUTLIER_SD * effective_sd
+
+
+def sustained_recovery_finding(
+    evaluator,
+    today_value: float | None,
+    yesterday_value: float | None,
+    baseline_mean: float | None,
+    baseline_sd: float | None,
+    *,
+    finding_date: date,
+) -> GuardrailFinding | None:
+    """A recovery finding requires the threshold crossed on **two consecutive days**,
+    neither of them an anomalous reading (FR-011): a single bad day — or a single device
+    glitch — never fires on its own (SC-005).
+
+    `evaluator` is `evaluate_hrv` or `evaluate_resting_hr`.
+    """
+    if today_value is None or baseline_mean is None:
+        return None
+    if is_anomalous_reading(today_value, baseline_mean, baseline_sd):
+        return None
+    today_finding = evaluator(today_value, baseline_mean, finding_date=finding_date)
+    if today_finding is None:
+        return None
+    # One reading is not enough — need yesterday to confirm it is sustained.
+    if yesterday_value is None or is_anomalous_reading(
+        yesterday_value, baseline_mean, baseline_sd
+    ):
+        return None
+    if evaluator(yesterday_value, baseline_mean, finding_date=finding_date) is None:
+        return None
+    return today_finding
 
 
 def as_signal_only(finding: GuardrailFinding) -> GuardrailFinding:

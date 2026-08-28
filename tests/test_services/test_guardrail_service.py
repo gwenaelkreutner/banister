@@ -95,20 +95,73 @@ async def test_recovery_baseline_present_but_today_absent_fires_nothing(db_sessi
     assert findings == []
 
 
-async def test_recovery_rhr_elevated_today_against_baseline_fires(db_session):
+async def test_recovery_rhr_elevated_for_two_days_fires(db_session):
+    """FR-011 — a sustained breach fires; a single day would not (see the sufficiency
+    engine tests)."""
     u = await _user(db_session)
     await _seed_rhr_baseline(db_session, u.id, value=50.0)
-    await wellness_repo.upsert(db_session, u.id, TODAY, resting_hr=57)  # +7
+    await wellness_repo.upsert(db_session, u.id, TODAY - timedelta(days=1), resting_hr=56)  # +6
+    await wellness_repo.upsert(db_session, u.id, TODAY, resting_hr=57)                       # +7
     findings = await assemble_recovery_findings(db_session, u.id, today=TODAY)
     assert [f.kind for f in findings] == ["rhr_high"]
     assert findings[0].action
 
 
+async def test_recovery_single_elevated_day_does_not_fire(db_session):
+    u = await _user(db_session)
+    await _seed_rhr_baseline(db_session, u.id, value=50.0)
+    await wellness_repo.upsert(db_session, u.id, TODAY, resting_hr=57)  # today only
+    findings = await assemble_recovery_findings(db_session, u.id, today=TODAY)
+    assert findings == []  # FR-011 — one reading never fires alone
+
+
 async def test_recovery_conflict_with_a_hard_prescribed_session_is_stated(db_session):
     u = await _user(db_session)
     await _seed_rhr_baseline(db_session, u.id, value=50.0)
+    await wellness_repo.upsert(db_session, u.id, TODAY - timedelta(days=1), resting_hr=57)
     await wellness_repo.upsert(db_session, u.id, TODAY, resting_hr=58)
     findings = await assemble_recovery_findings(
         db_session, u.id, prescribed_workout_type="intervals", prescribed_zone="Z4", today=TODAY
     )
     assert findings and "plan prévoit" in findings[0].action  # FR-012
+
+
+async def test_recovery_insufficiency_reason_when_baseline_present_but_reading_absent(db_session):
+    """FR-013/FR-014 — a current baseline, nothing today: the coach's context must say
+    it cannot judge, not stay silent."""
+    from app.services.guardrail_service import recovery_insufficiency
+
+    u = await _user(db_session)
+    await _seed_rhr_baseline(db_session, u.id, value=50.0)  # full recent baseline, nothing today
+
+    note = await recovery_insufficiency(db_session, u.id, today=TODAY)
+    assert note is not None
+    assert "FC de repos" in note
+    assert "aucune mesure aujourd'hui" in note
+    assert "n'en sais rien" in note  # never implies recovery is fine
+
+
+async def test_recovery_insufficiency_names_a_baseline_gone_stale(db_session):
+    """research R1's exact state — measured for weeks, then the device stopped syncing.
+    The stale baseline must NOT be treated as current (FR-014)."""
+    from app.services.guardrail_service import recovery_insufficiency
+
+    u = await _user(db_session)
+    for i in range(20):  # 20 readings, all 40+ days ago
+        await wellness_repo.upsert(
+            db_session, u.id, TODAY - timedelta(days=45 + i), resting_hr=50
+        )
+    note = await recovery_insufficiency(db_session, u.id, today=TODAY)
+    assert note is not None
+    assert "plus aucune mesure depuis" in note
+
+
+async def test_recovery_insufficiency_none_when_fully_evaluable(db_session):
+    from app.services.guardrail_service import recovery_insufficiency
+
+    u = await _user(db_session)
+    await _seed_rhr_baseline(db_session, u.id, value=50.0)
+    await wellness_repo.upsert(db_session, u.id, TODAY, resting_hr=50)
+    # HRV still has no data — so a note is still expected, mentioning VFC only.
+    note = await recovery_insufficiency(db_session, u.id, today=TODAY)
+    assert note is not None and "VFC" in note and "FC de repos" not in note

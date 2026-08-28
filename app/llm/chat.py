@@ -111,6 +111,7 @@ async def run_chat(
     )
 
     guardrail_findings: list = []
+    recovery_gap: str | None = None
     try:
         _today = date.today()
         # Séance dure prévue aujourd'hui ? (pour l'énoncé de conflit FR-012)
@@ -137,6 +138,10 @@ async def run_chat(
         guardrail_findings = sorted(
             workload + recovery, key=lambda f: f.severity, reverse=True
         )
+        if not recovery:
+            from app.services.guardrail_service import recovery_insufficiency
+
+            recovery_gap = await recovery_insufficiency(session, user.id, today=_today)
     except Exception:
         logger.warning("Impossible de calculer les signaux garde-fous")
 
@@ -152,6 +157,7 @@ async def run_chat(
         athlete_notes=dict(profile_row.athlete_notes or {}) if profile_row else None,
         calendar_divergence=calendar_divergence,
         guardrail_findings=guardrail_findings,
+        recovery_insufficiency=recovery_gap,
     )
     system = f"{ux_rules}\n\n---\n\n{coaching_ctx}"
     if has_load_reduction_finding(guardrail_findings):

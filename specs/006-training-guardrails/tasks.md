@@ -157,16 +157,16 @@ Existing single-project layout (`app/`, `tests/`, `scripts/`) — see plan.md's 
 
 ### Tests for User Story 5
 
-- [ ] T044 [P] [US5] Test the insufficiency gate in `tests/test_engine/test_guardrails_sufficiency.py` — below `BASELINE_MIN_SAMPLES` no recovery finding fires and the insufficiency is expressible (FR-013, SC-004)
-- [ ] T045 [P] [US5] Test "baseline present, current reading absent" — a full baseline history plus `today's row = None` for that signal yields no finding and an explicit "cannot judge" state, never a comparison against the stale baseline (FR-014, research R1), in `tests/test_engine/test_guardrails_sufficiency.py`
-- [ ] T046 [P] [US5] Test the outlier guard — one reading beyond `OUTLIER_SD` from baseline, in otherwise normal data, fires nothing (FR-011, SC-005); the same value sustained across ≥2 days does fire, in `tests/test_engine/test_guardrails_sufficiency.py`
+- [X] T044 [P] [US5] Test the insufficiency gate in `tests/test_engine/test_guardrails_sufficiency.py` — below `BASELINE_MIN_SAMPLES` no recovery finding fires and the insufficiency is expressible (FR-013, SC-004)
+- [X] T045 [P] [US5] Test "baseline present, current reading absent" — a full baseline history plus `today's row = None` for that signal yields no finding and an explicit "cannot judge" state, never a comparison against the stale baseline (FR-014, research R1), in `tests/test_engine/test_guardrails_sufficiency.py`
+- [X] T046 [P] [US5] Test the outlier guard — one reading beyond `OUTLIER_SD` from baseline, in otherwise normal data, fires nothing (FR-011, SC-005); the same value sustained across ≥2 days does fire, in `tests/test_engine/test_guardrails_sufficiency.py`
 
 ### Implementation for User Story 5
 
-- [ ] T047 [US5] Implement the outlier guard in `app/engine/guardrails.py` — a signal value beyond `OUTLIER_SD` standard deviations from its baseline is not evaluated on its own; a finding requires the threshold crossed on ≥2 consecutive days (FR-011)
-- [ ] T048 [US5] Implement an `InsufficiencyReason` return path in `app/services/guardrail_service.py` — when a recovery signal cannot be evaluated, `assemble_recovery_findings` also returns a structured reason (no baseline / no current reading / stale-only) so the context block can state it where relevant (FR-013) rather than being silently empty
-- [ ] T049 [US5] Render the insufficiency in the coach's context — extend the `guardrail_findings` block (T019) so a "cannot yet judge recovery: no RHR since <date>, no HRV" line appears when relevant, and confirm no wording implies signals are normal (FR-014, contracts §2) (depends on T048)
-- [ ] T050 [P] [US5] Implement `scripts/guardrail_state.py --describe` — per signal: days with data, date range, whether a baseline is establishable, whether a current observation exists (quickstart Scenario 0)
+- [X] T047 [US5] Implement the outlier guard in `app/engine/guardrails.py` — a signal value beyond `OUTLIER_SD` standard deviations from its baseline is not evaluated on its own; a finding requires the threshold crossed on ≥2 consecutive days (FR-011)
+- [X] T048 [US5] Implement an `InsufficiencyReason` return path in `app/services/guardrail_service.py` — when a recovery signal cannot be evaluated, `assemble_recovery_findings` also returns a structured reason (no baseline / no current reading / stale-only) so the context block can state it where relevant (FR-013) rather than being silently empty
+- [X] T049 [US5] Render the insufficiency in the coach's context — extend the `guardrail_findings` block (T019) so a "cannot yet judge recovery: no RHR since <date>, no HRV" line appears when relevant, and confirm no wording implies signals are normal (FR-014, contracts §2) (depends on T048)
+- [X] T050 [P] [US5] Implement `scripts/guardrail_state.py --describe` — per signal: days with data, date range, whether a baseline is establishable, whether a current observation exists (quickstart Scenario 0)
 
 **Checkpoint**: US1–US5 — the guardrails are honest about their own blind spots; the real account's empty-recovery state produces silence with a reason, not false calm.
 

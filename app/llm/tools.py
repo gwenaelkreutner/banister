@@ -310,6 +310,7 @@ def build_system_prompt(
     athlete_notes: dict | None = None,
     calendar_divergence: str | None = None,
     guardrail_findings: list | None = None,
+    recovery_insufficiency: str | None = None,
 ) -> str:
     p = profile
 
@@ -438,6 +439,9 @@ def build_system_prompt(
             "Si l'athlète discute d'entraînement, mentionne le ou les signaux ci-dessus "
             "avec leur chiffre et l'action associée — c'est le cœur du métier de coach ici."
         )
+
+    if recovery_insufficiency:
+        lines += ["", f"ℹ️ {recovery_insufficiency}"]
 
     lines.append("")
     lines.append(COACH_SOUL.format(first_name=first_name))

@@ -20,7 +20,7 @@ from datetime import date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import repositories as repo
-from app.engine.baselines import rolling_baseline
+from app.engine.baselines import rolling_baseline_stats
 from app.engine.guardrail_thresholds import BASELINE_MIN_SAMPLES, BASELINE_WINDOW_DAYS
 from app.engine.guardrails import (
     RECOVERY_KINDS,
@@ -33,6 +33,7 @@ from app.engine.guardrails import (
     evaluate_ramp_rate,
     evaluate_resting_hr,
     state_conflict_with_plan,
+    sustained_recovery_finding,
 )
 from app.engine.weekly_snapshot import compute_weekly_snapshot
 
@@ -128,6 +129,7 @@ async def assemble_recovery_findings(
     today = today or date.today()
     window_start = today - timedelta(days=BASELINE_WINDOW_DAYS + 1)
     history = await repo.wellness_repo.get_range(session, user_id, window_start, today)
+    yesterday = today - timedelta(days=1)
 
     hrv_series = [(w.date, w.hrv) for w in history if w.hrv is not None and w.date < today]
     rhr_series = [
@@ -135,24 +137,33 @@ async def assemble_recovery_findings(
         for w in history
         if w.resting_hr is not None and w.date < today
     ]
-    hrv_baseline = rolling_baseline(
+    hrv_stats = rolling_baseline_stats(
         hrv_series, today=today, window_days=BASELINE_WINDOW_DAYS, min_samples=BASELINE_MIN_SAMPLES
     )
-    rhr_baseline = rolling_baseline(
+    rhr_stats = rolling_baseline_stats(
         rhr_series, today=today, window_days=BASELINE_WINDOW_DAYS, min_samples=BASELINE_MIN_SAMPLES
     )
 
+    by_date = {w.date: w for w in history}
     today_row = await repo.wellness_repo.get_by_date(session, user_id, today)
-    hrv_today = today_row.hrv if today_row is not None else None
-    rhr_today = (
-        float(today_row.resting_hr)
-        if (today_row is not None and today_row.resting_hr is not None)
-        else None
-    )
+    y_row = by_date.get(yesterday)
+
+    def _hrv(row):
+        return row.hrv if row is not None else None
+
+    def _rhr(row):
+        return float(row.resting_hr) if (row is not None and row.resting_hr is not None) else None
+
+    hrv_mean, hrv_sd = hrv_stats if hrv_stats is not None else (None, None)
+    rhr_mean, rhr_sd = rhr_stats if rhr_stats is not None else (None, None)
 
     raw = [
-        evaluate_hrv(hrv_today, hrv_baseline, finding_date=today),
-        evaluate_resting_hr(rhr_today, rhr_baseline, finding_date=today),
+        sustained_recovery_finding(
+            evaluate_hrv, _hrv(today_row), _hrv(y_row), hrv_mean, hrv_sd, finding_date=today
+        ),
+        sustained_recovery_finding(
+            evaluate_resting_hr, _rhr(today_row), _rhr(y_row), rhr_mean, rhr_sd, finding_date=today
+        ),
     ]
     findings = combine_recovery_findings([f for f in raw if f is not None])
 
@@ -173,6 +184,64 @@ async def assemble_recovery_findings(
     findings = await _apply_acknowledgements(session, user_id, findings)
     findings.sort(key=lambda f: f.severity, reverse=True)
     return findings
+
+
+async def recovery_insufficiency(
+    session: AsyncSession, user_id: uuid.UUID, *, today: date | None = None
+) -> str | None:
+    """A one-line, athlete-facing reason the recovery guardrails cannot judge today —
+    so the coach's context states it rather than being silently empty and letting the
+    athlete assume recovery is fine (FR-013, FR-014, research R1).
+
+    `None` when both signals are evaluable. Returns text when a signal has no baseline,
+    or has a baseline but no reading today (the R1 state: a June/July RHR history and
+    nothing since — the stale baseline must NOT be read as the current value).
+    """
+    today = today or date.today()
+    # A long lookback here — not the 28-day baseline window — so the message can say
+    # *when* a signal was last seen ("aucune mesure depuis le 19/07"), which is the R1
+    # state and the whole point of FR-014.
+    history = await repo.wellness_repo.get_range(
+        session, user_id, today - timedelta(days=180), today
+    )
+    today_row = await repo.wellness_repo.get_by_date(session, user_id, today)
+
+    def _status(field: str) -> str:
+        readings = [(w.date, getattr(w, field)) for w in history if getattr(w, field) is not None]
+        past = [(d, v) for d, v in readings if d < today]
+        last = max((d for d, _ in past), default=None)
+        stats = rolling_baseline_stats(
+            [(d, float(v)) for d, v in past],
+            today=today,
+            window_days=BASELINE_WINDOW_DAYS,
+            min_samples=BASELINE_MIN_SAMPLES,
+        )
+        has_today = today_row is not None and getattr(today_row, field) is not None
+
+        if stats is not None and has_today:
+            return ""  # fully evaluable
+        if stats is not None:  # baseline current, no reading today
+            return f"référence établie mais aucune mesure aujourd'hui (dernière : {last:%d/%m})"
+        if last is None:
+            return "aucun historique"
+        if len(past) >= BASELINE_MIN_SAMPLES:  # was measured, then stopped (research R1)
+            return f"référence établie par le passé mais plus aucune mesure depuis le {last:%d/%m}"
+        return f"pas assez d'historique (dernière mesure : {last:%d/%m})"
+
+    hrv_note = _status("hrv")
+    rhr_note = _status("resting_hr")
+    problems = []
+    if hrv_note:
+        problems.append(f"VFC : {hrv_note}")
+    if rhr_note:
+        problems.append(f"FC de repos : {rhr_note}")
+    if not problems:
+        return None
+    return (
+        "Je ne peux pas juger ta récupération aujourd'hui — "
+        + " ; ".join(problems)
+        + ". Ne dis pas que ta récupération est bonne : je n'en sais rien."
+    )
 
 
 def has_load_reduction_finding(findings: list[GuardrailFinding]) -> bool:

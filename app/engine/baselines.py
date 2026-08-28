@@ -11,7 +11,14 @@ Pure function, no DB. `app/services/guardrail_service.py` supplies the dated val
 from __future__ import annotations
 
 from datetime import date, timedelta
-from statistics import mean
+from statistics import mean, stdev
+
+
+def _in_window(
+    values: list[tuple[date, float]], *, today: date, window_days: int
+) -> list[float]:
+    cutoff = today - timedelta(days=window_days)
+    return [v for d, v in values if cutoff < d <= today]
 
 
 def rolling_baseline(
@@ -29,8 +36,24 @@ def rolling_baseline(
     from the list the caller builds — this function never sees one, because a missing
     reading must not be counted as data (FR-014).
     """
-    cutoff = today - timedelta(days=window_days)
-    in_window = [v for d, v in values if cutoff < d <= today]
+    in_window = _in_window(values, today=today, window_days=window_days)
     if len(in_window) < min_samples:
         return None
     return mean(in_window)
+
+
+def rolling_baseline_stats(
+    values: list[tuple[date, float]],
+    *,
+    today: date,
+    window_days: int,
+    min_samples: int,
+) -> tuple[float, float] | None:
+    """`(mean, sample stdev)` over the window, or `None` below `min_samples`. The spread
+    is what the outlier guard needs: a reading many standard deviations from the mean is
+    a probable device error, not a real change (spec 006 FR-011)."""
+    in_window = _in_window(values, today=today, window_days=window_days)
+    if len(in_window) < min_samples:
+        return None
+    spread = stdev(in_window) if len(in_window) >= 2 else 0.0
+    return mean(in_window), spread
