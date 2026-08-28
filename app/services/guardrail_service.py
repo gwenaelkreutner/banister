@@ -25,6 +25,7 @@ from app.engine.guardrail_thresholds import BASELINE_MIN_SAMPLES, BASELINE_WINDO
 from app.engine.guardrails import (
     RECOVERY_KINDS,
     GuardrailFinding,
+    as_signal_only,
     combine_recovery_findings,
     evaluate_acwr,
     evaluate_hrv,
@@ -38,6 +39,25 @@ from app.engine.weekly_snapshot import compute_weekly_snapshot
 # workout_type / zone codes that count as a "hard" prescribed session for FR-012.
 _HARD_WORKOUT_TYPES = frozenset({"intervals"})
 _HARD_ZONES = frozenset({"Z4", "Z5", "Z6"})
+
+
+async def _apply_acknowledgements(
+    session: AsyncSession, user_id: uuid.UUID, findings: list[GuardrailFinding]
+) -> list[GuardrailFinding]:
+    """A finding whose occurrence the athlete has declined keeps appearing (FR-026) but
+    its action is demoted to a restatement (FR-025). An accepted occurrence is dropped —
+    it has been acted on. No writes."""
+    out: list[GuardrailFinding] = []
+    for f in findings:
+        ack = await repo.guardrail_repo.get_acknowledgement(
+            session, user_id, f.occurrence_key
+        )
+        if ack is None:
+            out.append(f)
+        elif ack.decision == "declined":
+            out.append(as_signal_only(f))
+        # decision == "accepted" -> already acted on, do not re-raise
+    return out
 
 
 async def assemble_workload_findings(
@@ -77,7 +97,9 @@ async def assemble_workload_findings(
         evaluate_monotony(snapshot.monotony_index, finding_date=today)
     )
 
-    real = [f for f in findings if f is not None]
+    real = await _apply_acknowledgements(
+        session, user_id, [f for f in findings if f is not None]
+    )
     real.sort(key=lambda f: f.severity, reverse=True)
     return real
 
@@ -148,6 +170,7 @@ async def assemble_recovery_findings(
             for f in findings
         ]
 
+    findings = await _apply_acknowledgements(session, user_id, findings)
     findings.sort(key=lambda f: f.severity, reverse=True)
     return findings
 

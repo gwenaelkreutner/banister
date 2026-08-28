@@ -242,7 +242,50 @@ async def run_chat(
     ):
         pending_proposal = last_tool_result
 
+    # 7. Accusé de réception d'un signal garde-fou (spec 006 US4, FR-024/FR-025).
+    # Le garde-fou n'écrit rien lui-même : une acceptation passe par les outils
+    # existants (propose_plan_modification → chemin d'approbation habituel). On
+    # enregistre seulement la décision de l'athlète pour ne plus re-proposer le même
+    # changement (occurrence_key).
+    if guardrail_findings:
+        try:
+            if pending_proposal is not None:
+                decision = "accepted"
+            elif _looks_like_decline(user_message):
+                decision = "declined"
+            else:
+                decision = None
+            if decision is not None:
+                for f in guardrail_findings:
+                    if await repo.guardrail_repo.get_acknowledgement(
+                        session, user.id, f.occurrence_key
+                    ) is None:
+                        await repo.guardrail_repo.record_acknowledgement(
+                            session,
+                            user_id=user.id,
+                            finding_kind=f.kind,
+                            occurrence_key=f.occurrence_key,
+                            decision=decision,
+                        )
+        except Exception:
+            logger.warning("Impossible d'enregistrer la décision garde-fou")
+
     return response_text, intent, tool_used, pending_proposal
+
+
+_DECLINE_PHRASES = (
+    "non merci", "non je continue", "je continue quand même", "laisse tomber",
+    "pas maintenant", "pas cette fois", "je garde la séance", "je fais quand même",
+    "ça ira", "je préfère garder", "je maintiens",
+)
+
+
+def _looks_like_decline(message: str) -> bool:
+    """A deliberately narrow keyword check — only explicit refusals of a suggested
+    change count as a decline (FR-025). Anything ambiguous is left unrecorded so the
+    signal keeps being raised."""
+    low = message.lower().strip()
+    return any(p in low for p in _DECLINE_PHRASES)
 
 
 async def _execute_tool(

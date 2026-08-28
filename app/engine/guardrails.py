@@ -255,6 +255,24 @@ def combine_recovery_findings(findings: list[GuardrailFinding]) -> list[Guardrai
     return [*others, combined]
 
 
+def as_signal_only(finding: GuardrailFinding) -> GuardrailFinding:
+    """The athlete has declined acting on this occurrence. The signal keeps appearing
+    (FR-026) but its action is demoted from a recommendation to a restatement — the coach
+    does not push the same change again (FR-025)."""
+    return GuardrailFinding(
+        kind=finding.kind,
+        observed=finding.observed,
+        reference=finding.reference,
+        threshold=finding.threshold,
+        action=(
+            "(l'athlète a déjà choisi de ne pas ajuster pour ce signal — mentionne-le "
+            "factuellement s'il en reparle, sans reproposer de changement ni insister)"
+        ),
+        severity=finding.severity,
+        occurrence_key=finding.occurrence_key,
+    )
+
+
 def state_conflict_with_plan(
     finding: GuardrailFinding, prescribed_workout_type: str, prescribed_zone: str
 ) -> GuardrailFinding:

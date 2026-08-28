@@ -134,16 +134,16 @@ Existing single-project layout (`app/`, `tests/`, `scripts/`) — see plan.md's 
 
 ### Tests for User Story 4
 
-- [ ] T037 [P] [US4] Test that `assemble_workload_findings` / `assemble_recovery_findings` perform zero writes — no plan mutation, no calendar call (FR-023, SC-006), in `tests/test_services/test_guardrail_authority.py`
-- [ ] T038 [P] [US4] Test the `occurrence_key` suppression — evaluating twice within the same occurrence key yields a finding the first time and a suppressed-recommendation (but still-present signal) the second; across a day boundary the recommendation returns (FR-025, FR-026), in `tests/test_services/test_guardrail_authority.py`
-- [ ] T039 [P] [US4] Test that an accepted recommendation is dispatched to `plan_modifier` / the spec-005 approval path and nowhere else — grep-style assertion that `guardrail_service` imports no write verb of its own (FR-024, SC-006), in `tests/test_services/test_guardrail_authority.py`
+- [X] T037 [P] [US4] Test that `assemble_workload_findings` / `assemble_recovery_findings` perform zero writes — no plan mutation, no calendar call (FR-023, SC-006), in `tests/test_services/test_guardrail_authority.py`
+- [X] T038 [P] [US4] Test the `occurrence_key` suppression — evaluating twice within the same occurrence key yields a finding the first time and a suppressed-recommendation (but still-present signal) the second; across a day boundary the recommendation returns (FR-025, FR-026), in `tests/test_services/test_guardrail_authority.py`
+- [X] T039 [P] [US4] Test that an accepted recommendation is dispatched to `plan_modifier` / the spec-005 approval path and nowhere else — grep-style assertion that `guardrail_service` imports no write verb of its own (FR-024, SC-006), in `tests/test_services/test_guardrail_authority.py`
 
 ### Implementation for User Story 4
 
-- [ ] T040 [US4] Implement `occurrence_key` on each finding in `app/engine/guardrails.py` — `f"{kind}:{finding_date.isoformat()}"` per data-model.md (kind + the day the finding is about), so a decline settles that day and the next day's evaluation is genuinely new
-- [ ] T041 [US4] Implement `guardrail_repo.get_acknowledgement(user_id, occurrence_key)` and `record_acknowledgement(user_id, finding_kind, occurrence_key, decision)` in `app/db/repositories/guardrail_repo.py` (depends on T005)
-- [ ] T042 [US4] In `app/services/guardrail_service.py`, filter findings before narration — a finding whose `occurrence_key` has a `declined` acknowledgement keeps appearing in the context block but its `action` is demoted from a recommendation to a restatement of the signal (FR-025, FR-026) (depends on T040, T041)
-- [ ] T043 [US4] Wire finding acceptance through the existing paths — when the athlete accepts a guardrail's proposed change in chat, route it through `app/engine/plan_modifier.py` (plan changes) or the spec-005 `authorize_publication` flow (calendar), recording a `GuardrailAcknowledgement` with `decision="accepted"`; the decline branch records `decision="declined"` and does nothing else (FR-024, FR-025)
+- [X] T040 [US4] Implement `occurrence_key` on each finding in `app/engine/guardrails.py` — `f"{kind}:{finding_date.isoformat()}"` per data-model.md (kind + the day the finding is about), so a decline settles that day and the next day's evaluation is genuinely new
+- [X] T041 [US4] Implement `guardrail_repo.get_acknowledgement(user_id, occurrence_key)` and `record_acknowledgement(user_id, finding_kind, occurrence_key, decision)` in `app/db/repositories/guardrail_repo.py` (depends on T005)
+- [X] T042 [US4] In `app/services/guardrail_service.py`, filter findings before narration — a finding whose `occurrence_key` has a `declined` acknowledgement keeps appearing in the context block but its `action` is demoted from a recommendation to a restatement of the signal (FR-025, FR-026) (depends on T040, T041)
+- [X] T043 [US4] Wire finding acceptance through the existing paths — when the athlete accepts a guardrail's proposed change in chat, route it through `app/engine/plan_modifier.py` (plan changes) or the spec-005 `authorize_publication` flow (calendar), recording a `GuardrailAcknowledgement` with `decision="accepted"`; the decline branch records `decision="declined"` and does nothing else (FR-024, FR-025)
 
 **Checkpoint**: US1–US4 — guardrails are advisory in fact, not just in intent; declines stick without silencing the signal.
 
