@@ -23,6 +23,12 @@ dependencies = [
     "pyyaml>=6.0.0",
     "aiosqlite>=0.20.0",
     "filelock>=3.16.0",
+    # Python's zoneinfo has no bundled IANA database — it reads the host OS's, which
+    # Windows never has and a slim Docker base image (the deployment target, spec 001)
+    # may not either. Found live: ZoneInfo("Europe/Paris") in app/llm/tools.py raised
+    # ZoneInfoNotFoundError on a real machine, breaking every conversational chat
+    # message. tzdata vendors the database so this can't depend on the host.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

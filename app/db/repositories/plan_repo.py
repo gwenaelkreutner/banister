@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.training_plan import TrainingPlan
@@ -14,6 +14,24 @@ async def get_active_plan(session: AsyncSession, user_id) -> TrainingPlan | None
         .order_by(TrainingPlan.created_at.desc())
     )
     return result.scalar_one_or_none()
+
+
+async def deactivate_all_for_user(session: AsyncSession, user_id) -> None:
+    """Marque tous les plans actifs de l'utilisateur comme inactifs.
+
+    Bug réel trouvé en conditions réelles (2026-08-28) : `_finalize_setup()` avait
+    déjà le commentaire "Deactivate old plans, then create new one" mais aucun code
+    ne le faisait — chaque `/setup` créait un nouveau plan `status="active"` sans
+    jamais désactiver le précédent. `get_active_plan()` suppose un seul résultat
+    (`scalar_one_or_none`), donc un deuxième `/setup` faisait planter silencieusement
+    tout appelant de `get_active_plan()` (`/plan`, `/forme`, `/recap`, le chat...)
+    avec `MultipleResultsFound`, sans message d'erreur visible pour l'athlète."""
+    await session.execute(
+        update(TrainingPlan)
+        .where(TrainingPlan.user_id == user_id, TrainingPlan.status == "active")
+        .values(status="inactive")
+    )
+    await session.flush()
 
 
 async def create(

@@ -319,6 +319,7 @@ async def _finalize_setup(
     end_date = plan.end_date or date.today()
 
     # Deactivate old plans, then create new one
+    await repo.plan_repo.deactivate_all_for_user(session, user.id)
     await repo.plan_repo.create(
         session=session,
         user_id=user.id,

@@ -108,6 +108,23 @@ async def handle_chat_message(
     await message.answer(text, parse_mode="HTML")
 
 
+# ── Message libre pendant une proposition en attente ───────────────────────────
+#
+# Bug réel trouvé en conditions réelles (2026-08-28) : seuls les callbacks des
+# boutons ✅/❌ étaient enregistrés pour PENDING_MODIFICATION. Un message texte
+# envoyé dans cet état ne matchait aucun handler (handle_chat_message ci-dessus
+# est filtré sur ACTIVE/None) — aiogram l'ignorait silencieusement, sans réponse
+# ni erreur visible pour l'athlète.
+
+@router.message(StateFilter(PlanStates.PENDING_MODIFICATION), F.text)
+async def handle_message_during_pending_modification(message: Message, state: FSMContext) -> None:
+    await message.answer(
+        "⏳ Tu as une proposition de modification en attente.\n"
+        "Réponds avec ✅ <b>Appliquer</b> ou ❌ <b>Annuler</b> avant de continuer la conversation.",
+        parse_mode="HTML",
+    )
+
+
 # ── Callbacks confirmation modification ──────────────────────────────────────
 
 @router.callback_query(PlanStates.PENDING_MODIFICATION, F.data == "chat:apply")
