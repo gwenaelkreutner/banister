@@ -159,6 +159,31 @@ async def run_chat(
 
         system = f"{system}\n\n{GUARDRAIL_LOAD_REDUCTION_RULE}"
 
+    # Registre des métriques mises devant le modèle — définit ce qui est « retrouvé »
+    # pour la vérification de réponse (spec 006 US3, FR-018).
+    from app.services.response_verification import (
+        MetricRegistry,
+        apply_result,
+        verify_response,
+    )
+
+    registry = MetricRegistry()
+    if metrics is not None:
+        registry.register("ctl", metrics.ctl)
+        registry.register("atl", metrics.atl)
+        registry.register("tsb", metrics.tsb)
+    if profile is not None and profile.equipment.ftp:
+        registry.register("ftp", profile.equipment.ftp)
+    try:
+        from app.services.guardrail_service import collect_registry_metrics
+
+        for _name, _value in (
+            await collect_registry_metrics(session, user.id)
+        ).items():
+            registry.register(_name, _value)
+    except Exception:
+        logger.warning("Impossible de collecter les métriques garde-fous pour le registre")
+
     messages = build_context_messages(history)
     messages.append({"role": "user", "content": user_message})
 
@@ -173,6 +198,36 @@ async def run_chat(
         tools=TOOL_DEFINITIONS,
         tool_executor=tool_executor,
     )
+
+    # 4b. Vérification : chaque chiffre que la réponse avance sur une métrique doit
+    # correspondre à ce qui a été retrouvé ; sinon la phrase est retirée et l'échec
+    # enregistré (spec 006 US3, FR-017/FR-019/FR-021).
+    try:
+        verification = verify_response(response_text, registry)
+        if not verification.ok:
+            for claim, expected in verification.mismatches:
+                await repo.guardrail_repo.record_check_failure(
+                    session,
+                    user_id=user.id,
+                    failure_kind="mismatch",
+                    metric_name=claim.metric,
+                    stated_value=claim.stated_text,
+                    expected_value=f"{expected:g}",
+                    response_excerpt=claim.sentence,
+                )
+            for claim in verification.unretrieved:
+                await repo.guardrail_repo.record_check_failure(
+                    session,
+                    user_id=user.id,
+                    failure_kind="unretrieved",
+                    metric_name=claim.metric,
+                    stated_value=claim.stated_text,
+                    expected_value=None,
+                    response_excerpt=claim.sentence,
+                )
+            response_text = apply_result(response_text, verification)
+    except Exception:
+        logger.warning("Vérification de réponse impossible — réponse envoyée telle quelle")
 
     # 5. Déduire l'intent depuis l'outil appelé
     intent = _intent_from_tool(tool_used)

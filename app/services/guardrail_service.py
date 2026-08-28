@@ -156,3 +156,36 @@ def has_load_reduction_finding(findings: list[GuardrailFinding]) -> bool:
     """True when a finding present in the context requires load to come down — the coach
     must not recommend increasing load elsewhere in the same response (FR-003, SC-008)."""
     return any(f.kind in ("acwr_high", "ramp_rate_high") for f in findings)
+
+
+async def collect_registry_metrics(
+    session: AsyncSession, user_id: uuid.UUID, *, today: date | None = None
+) -> dict[str, float]:
+    """The guardrail-derived metric values that are put in front of the model, keyed by
+    the canonical names `response_verification` checks against (US3, FR-018). Ctl/atl/tsb
+    come from `FitnessMetrics` at the call site; these are the wellness- and
+    snapshot-derived ones.
+
+    Only values actually shown to the model belong here — the registry is the definition
+    of "retrieved".
+    """
+    today = today or date.today()
+    out: dict[str, float] = {}
+
+    latest = await repo.wellness_repo.get_latest(session, user_id, on_or_before=today)
+    if latest is not None:
+        if latest.ctl and latest.ctl > 0 and latest.atl is not None:
+            out["acwr"] = round(latest.atl / latest.ctl, 2)
+        if latest.ramp_rate is not None:
+            out["ramp_rate"] = round(latest.ramp_rate, 1)
+
+    logs = await repo.session_log_repo.get_all_for_user(session, user_id)
+    activities = await repo.activity_repo.get_for_user(session, user_id, days=90)
+    plan = await repo.plan_repo.get_active_plan(session, user_id)
+    plan_start = plan.start_date if plan is not None else today
+    pre_plan_acts = [a for a in activities if a.activity_date < plan_start]
+    snap = compute_weekly_snapshot(list(logs) + pre_plan_acts, today)
+    if snap.monotony_index is not None:
+        out["monotony"] = round(snap.monotony_index, 1)
+
+    return out
