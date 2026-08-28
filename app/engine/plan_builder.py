@@ -27,11 +27,19 @@ from app.engine.periodization import (
 )
 from app.engine.schemas import (
     AthleteProfileSchema,
+    RepeatGroup,
     SessionSpec,
+    Step,
     TrainingPlanSchema,
     WeekPlan,
+    derive_duration_minutes,
+    derive_target_time_in_zone_minutes,
 )
-from app.engine.tss import estimate_session_tss, tss_from_weekly_hours
+from app.engine.tss import (
+    estimate_session_tss,
+    estimate_structured_session_tss,
+    tss_from_weekly_hours,
+)
 from app.engine.zones import compute_hr_zones, compute_power_zones
 
 DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -103,9 +111,57 @@ def _week_monday(day: date) -> date:
     return day - timedelta(days=day.weekday())
 
 
+def _build_interval_steps(
+    sets: int, work_min: int, rest_min: int, zone: str, warmup_min: int = WARMUP_MIN,
+) -> list[Step | RepeatGroup]:
+    """[warmup, RepeatGroup(sets × [work, recovery]), cooldown] — spec 004 T012.
+
+    Includes a recovery after the final repetition: FR-003 asks for one repeated unit
+    with a repetition count, not a special-cased last repetition, and
+    contracts/session-library.md's canonical example already commits to this shape for
+    contributor-authored templates. Total duration/TSS therefore runs slightly higher
+    than the old `warmup + sets*work + (sets-1)*rest + cooldown` clamp did — validated
+    via the eval harness (Phase 4/7), not assumed harmless (research R2)."""
+    return [
+        Step(kind="warmup", duration_minutes=warmup_min, zone_code="Z1"),
+        RepeatGroup(repeat=sets, steps=[
+            Step(kind="work", duration_minutes=work_min, zone_code=zone),
+            Step(kind="recovery", duration_minutes=rest_min, zone_code="Z1"),
+        ]),
+        Step(kind="cooldown", duration_minutes=COOLDOWN_MIN, zone_code="Z1"),
+    ]
+
+
+def _build_steady_steps(zone: str, duration_minutes: int) -> list[Step]:
+    """A session with no internal structure is still expressed as steps — one
+    `steady` step — rather than a special case (FR-004)."""
+    return [Step(kind="steady", duration_minutes=duration_minutes, zone_code=zone)]
+
+
+def _build_activation_steps(zone: str) -> list[Step | RepeatGroup]:
+    """The taper phase's short "3×8min activation" session (spec 004 T012) — shorter
+    warmup/cooldown than the standard interval structure since it exists to open the
+    legs before an event, not accumulate training stress. Total duration moves from
+    the old fixed 40min to 50min under this structure; validated via the eval
+    harness like every other structural total in this feature."""
+    return [
+        Step(kind="warmup", duration_minutes=10, zone_code="Z1"),
+        RepeatGroup(repeat=3, steps=[
+            Step(kind="work", duration_minutes=8, zone_code=zone),
+            Step(kind="recovery", duration_minutes=2, zone_code="Z1"),
+        ]),
+        Step(kind="cooldown", duration_minutes=10, zone_code="Z1"),
+    ]
+
+
 def _structure_duration(sets: int, work: int, rest: int, warmup_min: int = WARMUP_MIN) -> int:
-    """Durée totale = échauffement + travail + récup inter-séries + retour calme."""
-    return max(40, min(120, warmup_min + sets * work + (sets - 1) * rest + COOLDOWN_MIN))
+    """Durée totale dérivée de la structure — remplace l'ancien clamp silencieux
+    `max(40, min(120, ...))` (spec 004 FR-005, T015) : la durée ne peut plus être en
+    désaccord avec ses propres composants. Aucune structure actuelle (voir
+    research.md R2) ne dépasse 120min même avec le rest final désormais inclus, donc
+    retirer le clamp ne change aucun comportement observable au-delà du total
+    lui-même."""
+    return warmup_min + sets * (work + rest) + COOLDOWN_MIN
 
 
 def _get_sweet_spot(week_in_block: int) -> tuple[int, str, int, int, int]:
@@ -123,51 +179,19 @@ def _get_vo2(week_in_block: int) -> tuple[int, str, int, int, int]:
     return _structure_duration(*s[:3], warmup_min=WARMUP_VO2_MIN), s[3], s[0], s[1], s[2]
 
 
-def _target_time_in_zone_minutes(workout_type: str, zone_code: str, detail: str, week_in_block: int) -> int:
-    """Retourne le temps ciblé dans la zone principale de la séance."""
-    if workout_type != "intervals":
-        return 0
-
-    # On se base sur le zone_code (Z3, Z4, Z5) qui est plus stable que le texte
-    if zone_code == "Z5":
-        _, _, sets, work, _ = _get_vo2(week_in_block)
-        return sets * work
-    
-    if zone_code == "Z3":
-        # On vérifie si c'est du Sweet Spot ou du Tempo simple
-        # Si ton Z3 est toujours du Sweet Spot, pas besoin du 'if'
-        _, _, sets, work, _ = _get_sweet_spot(week_in_block)
-        return sets * work
-        
-    if zone_code == "Z4":
-        # Cas particulier de l'activation en phase Taper
-        if "activation" in detail.lower():
-            return 24
-        _, _, sets, work, _ = _get_threshold(week_in_block)
-        return sets * work
-
-    return 0
-
-
 def _interval_tss(
     sets: int, work_min: int, rest_min: int,
     zone: str, coaching_mode: str, ftp,
     warmup_min: int = WARMUP_MIN,
 ) -> float:
-    """
-    TSS total d'une séance d'intervalles structurée :
-        Warmup (Z1, warmup_min) + Work (zone, sets x work_min)
-        + Rest inter-séries (Z1, (sets-1) x rest_min) + Cooldown (Z1, COOLDOWN_MIN)
+    """TSS total d'une séance d'intervalles structurée — calculé depuis les steps
+    réels (spec 004 T012, `estimate_structured_session_tss()`) plutôt que par une
+    somme ad hoc, pour garantir l'accord avec `_build_interval_steps()` (FR-006).
 
     warmup_min : 15 min par défaut (SS/threshold), 20 min pour VO2max.
-    Warmup et cooldown sont comptés séparément pour que la durée totale corresponde
-    exactement à _structure_duration() sans aucun segment perdu.
     """
-    warmup   = estimate_session_tss("Z1", warmup_min, coaching_mode, ftp)
-    work     = estimate_session_tss(zone, sets * work_min, coaching_mode, ftp)
-    rest     = estimate_session_tss("Z1", max(0, (sets - 1) * rest_min), coaching_mode, ftp)
-    cooldown = estimate_session_tss("Z1", COOLDOWN_MIN, coaching_mode, ftp)
-    return round(warmup + work + rest + cooldown, 1)
+    steps = _build_interval_steps(sets, work_min, rest_min, zone, warmup_min)
+    return estimate_structured_session_tss(steps, coaching_mode, ftp)
 
 
 # ── Race Week ────────────────────────────────────────────────────────────────
@@ -206,7 +230,8 @@ def _build_race_week(
     if len(pre_race_days) >= 1:
         d0 = pre_race_days[0]
         dur0 = 120
-        tss0 = estimate_session_tss("Z2", dur0, coaching_mode, ftp)
+        steps0 = _build_steady_steps("Z2", dur0)
+        tss0 = estimate_structured_session_tss(steps0, coaching_mode, ftp)
         sessions.append(SessionSpec(
             day_of_week=d0,
             workout_type="endurance",
@@ -219,30 +244,35 @@ def _build_race_week(
                 "Objectif : maintenir la sensation de jambes et le tonus musculaire "
                 "sans accumuler de fatigue avant la course."
             ),
+            steps=steps0,
         ))
 
     # ── Séance 2 : activation Z5 5×5min ──────────────────────────────────────
     if len(pre_race_days) >= 2:
         d1 = pre_race_days[-1]
-        # Structure : 20min Z2 échauffement + 5×(5min Z5 / 3min Z1) + 10min Z1 retour
-        warmup_min = 20
+        # Structure : 20min Z2 échauffement + 5×(5min Z5 / 3min Z1) + 10min Z1 retour.
+        # Includes a recovery after the final repetition (spec 004 T014, same
+        # uniform-RepeatGroup convention as _build_interval_steps) — total duration
+        # therefore runs slightly higher than the old formula's -rest_min shortcut.
         sets = 5
         work_min = 5
         rest_min = 3
-        cooldown_min = 10
-        total_min = warmup_min + sets * (work_min + rest_min) - rest_min + cooldown_min
-        tss1 = round(
-            estimate_session_tss("Z2", warmup_min, coaching_mode, ftp)
-            + estimate_session_tss("Z5", sets * work_min, coaching_mode, ftp)
-            + estimate_session_tss("Z1", (sets - 1) * rest_min + cooldown_min, coaching_mode, ftp),
-            1,
-        )
+        steps1: list[Step | RepeatGroup] = [
+            Step(kind="warmup", duration_minutes=20, zone_code="Z2"),
+            RepeatGroup(repeat=sets, steps=[
+                Step(kind="work", duration_minutes=work_min, zone_code="Z5"),
+                Step(kind="recovery", duration_minutes=rest_min, zone_code="Z1"),
+            ]),
+            Step(kind="cooldown", duration_minutes=10, zone_code="Z1"),
+        ]
+        total_min = derive_duration_minutes(steps1)
+        tss1 = estimate_structured_session_tss(steps1, coaching_mode, ftp)
         sessions.append(SessionSpec(
             day_of_week=d1,
             workout_type="intervals",
             zone_code="Z5",
             duration_minutes=total_min,
-            target_time_in_zone_minutes=sets * work_min,
+            target_time_in_zone_minutes=derive_target_time_in_zone_minutes(steps1),
             tss_target=tss1,
             description_fr=(
                 f"Activation pre-course — 20min Z2 échauffement, "
@@ -250,11 +280,13 @@ def _build_race_week(
                 f"10min Z1 retour au calme. "
                 "Rappels neuromusculaires pour ouvrir les jambes sans fatigue."
             ),
+            steps=steps1,
         ))
 
     # ── Marqueur course ────────────────────────────────────────────────────────
     # tss_target ≥ 1.0 et duration_minutes ≥ 20 (contraintes tests)
-    tss_marker = estimate_session_tss("Z2", 20, coaching_mode, ftp)
+    marker_steps = _build_steady_steps("Z2", 20)
+    tss_marker = estimate_structured_session_tss(marker_steps, coaching_mode, ftp)
     sessions.append(SessionSpec(
         day_of_week=race_dow,
         workout_type="long_ride",
@@ -267,6 +299,7 @@ def _build_race_week(
             "Échauffement 20min Z1-Z2 avant le départ. "
             "Ta sortie sera automatiquement importée depuis intervals.icu."
         ),
+        steps=marker_steps,
     ))
 
     return sessions
@@ -836,45 +869,64 @@ def _build_sessions(
 
         for i, day in enumerate(training_days):
             if insert_sprint and not sprint_inserted and i == 1:
+                # Steps use 1-minute granularity — the coarsest unit Step.duration_minutes
+                # supports — as the closest structural representation of a 30-second
+                # sprint (spec 004 T012). The description keeps the real prescribed
+                # duration; the structure is a deliberately approximate summary of it,
+                # not a claim of second-level precision.
+                sprint_steps: list[Step | RepeatGroup] = [
+                    Step(kind="warmup", duration_minutes=15, zone_code="Z2"),
+                    RepeatGroup(repeat=3, steps=[
+                        Step(kind="work", duration_minutes=1, zone_code="Z6"),
+                        Step(kind="recovery", duration_minutes=3, zone_code="Z1"),
+                    ]),
+                    Step(kind="cooldown", duration_minutes=10, zone_code="Z1"),
+                ]
                 sessions.append(SessionSpec(
                     day_of_week=day,
                     workout_type="intervals",
                     zone_code="Z6",
-                    duration_minutes=30,
-                    target_time_in_zone_minutes=2,
-                    tss_target=25.0,
+                    duration_minutes=derive_duration_minutes(sprint_steps),
+                    target_time_in_zone_minutes=derive_target_time_in_zone_minutes(sprint_steps),
+                    tss_target=estimate_structured_session_tss(sprint_steps, coaching_mode, ftp),
                     description_fr=(
                         "Activation neuromusculaire Z6 — 15min echauffement Z2, "
                         "3x30'' sprint max relance (recuperation 3min Z1 entre chaque), "
                         "10min retour calme. "
                         "Objectif : conserver le punch neuromusculaire sans stresser l'organisme."
                     ),
+                    steps=sprint_steps,
                 ))
                 sprint_inserted = True
             elif i == 0:
                 # Premier jour : Z1 actif (jambes légères)
+                z1_steps = _build_steady_steps("Z1", 45)
                 sessions.append(SessionSpec(
                     day_of_week=day,
                     workout_type="recovery",
                     zone_code="Z1",
                     duration_minutes=45,
                     target_time_in_zone_minutes=0,
-                    tss_target=15.0,
+                    tss_target=estimate_structured_session_tss(z1_steps, coaching_mode, ftp),
                     description_fr=_session_description("recovery", "Z1", coaching_mode=coaching_mode),
+                    steps=z1_steps,
                 ))
             else:
                 # Sessions Z2 endurance : durée dynamique depuis TSS résiduel, cap 150min
                 dur = _tss_to_duration(tss_per_end, "Z2", coaching_mode, ftp)
                 dur = min(dur, 150)
-                tss = estimate_session_tss("Z2", dur, coaching_mode, ftp)
+                final_dur = max(45, dur)
+                end_steps = _build_steady_steps("Z2", final_dur)
+                tss = estimate_structured_session_tss(end_steps, coaching_mode, ftp)
                 sessions.append(SessionSpec(
                     day_of_week=day,
                     workout_type="endurance",
                     zone_code="Z2",
-                    duration_minutes=max(45, dur),
+                    duration_minutes=final_dur,
                     target_time_in_zone_minutes=0,
                     tss_target=max(20.0, tss),
                     description_fr=_session_description("endurance", "Z2", "récupération active", coaching_mode=coaching_mode),
+                    steps=end_steps,
                 ))
         return sessions
 
@@ -900,21 +952,26 @@ def _build_sessions(
         elif wtype == "intervals":
             fixed_count += 1  # durée calculée en step 4, on comptera après
 
-    # Pré-calculer TSS des intervals (warmup/cooldown + travail + récup séparément)
+    # Pré-calculer steps + TSS des intervals — une seule fois, réutilisés tels quels
+    # dans la boucle de construction ci-dessous, pour garantir que le SessionSpec final
+    # et son tss_target proviennent exactement des mêmes steps (spec 004 T012, FR-006).
+    interval_steps_list: list[list[Step | RepeatGroup]] = []
     interval_tss_list: list[float] = []
     for _, wtype, zone, detail in assigned:
         if wtype == "intervals":
             if "VO2" in detail:
                 _, _, sets, work, rest = _get_vo2(week_in_block)
-                itss = _interval_tss(sets, work, rest, zone, coaching_mode, ftp, warmup_min=WARMUP_VO2_MIN)
+                isteps = _build_interval_steps(sets, work, rest, zone, warmup_min=WARMUP_VO2_MIN)
             elif "Sweet" in detail or "Spot" in detail:
                 _, _, sets, work, rest = _get_sweet_spot(week_in_block)
-                itss = _interval_tss(sets, work, rest, zone, coaching_mode, ftp)
+                isteps = _build_interval_steps(sets, work, rest, zone)
             elif "activation" in detail:
-                itss = estimate_session_tss(zone, 40, coaching_mode, ftp)
+                isteps = _build_activation_steps(zone)
             else:
                 _, _, sets, work, rest = _get_threshold(week_in_block)
-                itss = _interval_tss(sets, work, rest, zone, coaching_mode, ftp)
+                isteps = _build_interval_steps(sets, work, rest, zone)
+            itss = estimate_structured_session_tss(isteps, coaching_mode, ftp)
+            interval_steps_list.append(isteps)
             interval_tss_list.append(itss)
             fixed_tss += itss
 
@@ -953,20 +1010,16 @@ def _build_sessions(
     fill_idx = 0
 
     for day, wtype, zone, detail in assigned:
+        steps: list[Step | RepeatGroup] | None = None
+
         if wtype == "long_ride":
             duration = lr_duration
             tss = estimate_session_tss(zone, lr_duration, coaching_mode, ftp)
             tss = min(tss, tss_target * 0.55)
 
         elif wtype == "intervals":
-            if "VO2" in detail:
-                duration, *_ = _get_vo2(week_in_block)
-            elif "Sweet" in detail or "Spot" in detail:
-                duration, *_ = _get_sweet_spot(week_in_block)
-            elif "activation" in detail:
-                duration = 40
-            else:
-                duration, *_ = _get_threshold(week_in_block)
+            steps = interval_steps_list[int_idx]
+            duration = derive_duration_minutes(steps)
             tss = interval_tss_list[int_idx]
             int_idx += 1
 
@@ -986,14 +1039,24 @@ def _build_sessions(
                 tss = estimate_session_tss(eff_zone, duration, coaching_mode, ftp)
             zone = eff_zone  # propagate to SessionSpec
 
+        final_duration = max(20, duration)
+
+        # long_ride and endurance/recovery have no internal structure — one `steady`
+        # step, built here from the final (post-clamp) duration so it can never
+        # disagree with duration_minutes (FR-004, FR-005). Interval sessions already
+        # have their steps from the precompute pass above.
+        if steps is None:
+            steps = _build_steady_steps(zone, final_duration)
+
         sessions.append(SessionSpec(
             day_of_week=day,
             workout_type=wtype,
             zone_code=zone,
-            duration_minutes=max(20, duration),
-            target_time_in_zone_minutes=_target_time_in_zone_minutes(wtype, zone, detail, week_in_block),
+            duration_minutes=final_duration,
+            target_time_in_zone_minutes=derive_target_time_in_zone_minutes(steps),
             tss_target=max(1.0, tss),
             description_fr=_session_description(wtype, zone, detail, coaching_mode=coaching_mode),
+            steps=steps,
         ))
 
     # ── Garde-fou volume : total minutes ≤ hours_per_week × budget_factor ─────
@@ -1012,14 +1075,18 @@ def _build_sessions(
             for idx, s in flex:
                 new_dur = max(20, int(s.duration_minutes * scale))
                 new_tss = estimate_session_tss(s.zone_code, new_dur, coaching_mode, ftp)
+                # endurance/recovery are always steady (single-step) sessions — rebuild
+                # that step at the rescaled duration so it cannot disagree (FR-005).
+                new_steps = _build_steady_steps(s.zone_code, new_dur)
                 new_sessions[idx] = SessionSpec(
                     day_of_week=s.day_of_week,
                     workout_type=s.workout_type,
                     zone_code=s.zone_code,
                     duration_minutes=new_dur,
-                    target_time_in_zone_minutes=s.target_time_in_zone_minutes,
+                    target_time_in_zone_minutes=derive_target_time_in_zone_minutes(new_steps),
                     tss_target=max(1.0, new_tss),
                     description_fr=s.description_fr,
+                    steps=new_steps,
                 )
             sessions = new_sessions
 
