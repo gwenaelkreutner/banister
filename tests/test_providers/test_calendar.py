@@ -167,6 +167,66 @@ async def test_a_changed_session_is_updated_not_duplicated():
     assert len(client.by_prefix(EXTERNAL_ID_PREFIX)) == before  # no new events
 
 
+async def test_athlete_edited_entry_is_surfaced_not_overwritten():
+    """FR-023 — the remote content is neither what we wrote nor what we'd write now."""
+    schema = generate_plan(make_profile())
+    plan_id = uuid.uuid4()
+    client = FakeCalendarClient()
+    await publish_sessions(client, schema, plan_id, *_WIDE)
+    known = _known_for(schema, plan_id, client)
+
+    # Athlete edits one workout by hand at intervals.icu.
+    edited_ext = next(iter(known))
+    client.find(edited_ext)["description"] = "Warmup\n- 10m 40%\n\nMain set\n- 20m 99%"
+
+    outcomes = await publish_sessions(client, schema, plan_id, *_WIDE, known_entries=known)
+
+    conflict = [o for o in outcomes if o.status == "conflict"]
+    assert len(conflict) == 1 and conflict[0].external_id == edited_ext
+    assert client.update_calls == 0  # not overwritten
+    # Its content on the calendar is still the athlete's edit.
+    assert "99%" in client.find(edited_ext)["description"]
+
+
+async def test_athlete_deleted_entry_is_not_silently_recreated():
+    """FR-024 — we have a row, the remote event is gone."""
+    schema = generate_plan(make_profile())
+    plan_id = uuid.uuid4()
+    client = FakeCalendarClient()
+    await publish_sessions(client, schema, plan_id, *_WIDE)
+    known = _known_for(schema, plan_id, client)
+
+    gone_ext = next(iter(known))
+    await client.delete_event(client.find(gone_ext)["id"])
+    client.delete_calls = 0  # reset — we want to see publish_sessions not re-create
+
+    outcomes = await publish_sessions(client, schema, plan_id, *_WIDE, known_entries=known)
+
+    conflict = [o for o in outcomes if o.status == "conflict"]
+    assert len(conflict) == 1 and conflict[0].external_id == gone_ext
+    assert client.find(gone_ext) is None  # not recreated
+    assert gone_ext not in {e["external_id"] for e in client.by_prefix(EXTERNAL_ID_PREFIX)}
+
+
+async def test_a_completed_activity_is_never_modified():
+    """FR-025 — our external_id now points at a non-WORKOUT event (a done ride)."""
+    schema = generate_plan(make_profile())
+    plan_id = uuid.uuid4()
+    client = FakeCalendarClient()
+    await publish_sessions(client, schema, plan_id, *_WIDE)
+    known = _known_for(schema, plan_id, client)
+
+    done_ext = next(iter(known))
+    client.find(done_ext)["category"] = "RIDE"  # the athlete rode it; it's an activity now
+
+    outcomes = await publish_sessions(client, schema, plan_id, *_WIDE, known_entries=known)
+
+    refused = [o for o in outcomes if o.status == "refused" and o.external_id == done_ext]
+    assert len(refused) == 1
+    assert client.update_calls == 0 and client.delete_calls == 0
+    assert client.find(done_ext)["category"] == "RIDE"  # untouched
+
+
 async def test_one_failing_session_does_not_abandon_the_rest():
     schema = generate_plan(make_profile())
     first_name = None

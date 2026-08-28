@@ -343,6 +343,56 @@ async def test_describe_divergence_for_coach_is_none_when_in_sync(db_session):
     assert note is not None and "/publish" in note
 
 
+# ── US5: the athlete's own edits are respected ───────────────────────────────
+
+
+async def test_execute_publication_surfaces_an_athlete_edit_without_overwriting(db_session):
+    user = await _make_user(db_session)
+    plan = await _make_plan(db_session, user.id)
+    client = FakeCalendarClient()
+    r1 = await _approved_request(db_session, user, plan)
+    await publication.execute_publication(db_session, client, user, plan, r1.approval)
+
+    entries = await publication_repo.get_active_entries_for_plan(db_session, user.id, plan.id)
+    edited = entries[0]
+    client.find(edited.external_id)["description"] = "Warmup\n- 5m 40%\n\nMain set\n- 40m 105%"
+    stored_hash = edited.content_hash
+
+    r2 = await _approved_request(db_session, user, plan)
+    report = await publication.execute_publication(db_session, client, user, plan, r2.approval)
+
+    assert report.conflict == 1
+    assert "modifiée" in report.text or "modifié" in report.text
+    refreshed = await publication_repo.get_entry_by_external_id(
+        db_session, user.id, edited.external_id
+    )
+    assert refreshed.content_hash == stored_hash  # DB row untouched
+    assert refreshed.withdrawn_at is None
+    assert "105%" in client.find(edited.external_id)["description"]  # calendar untouched
+
+
+def test_detect_athlete_edit_is_false_for_a_clean_roundtrip():
+    from datetime import date
+    from types import SimpleNamespace
+
+    from app.providers.intervals.calendar import build_event_payload
+    from app.services.publication import hash_content
+
+    payload = build_event_payload(
+        date(2026, 9, 3),
+        "Endurance Z2",
+        "banister:x:2026-09-03:endurance-1-2",
+        "- 90m 55-75%",
+    )
+    remote = {"id": 1, **payload}
+    entry = SimpleNamespace(
+        content_hash=hash_content(date(2026, 9, 3), "Endurance Z2", "- 90m 55-75%")
+    )
+    assert publication.detect_athlete_edit(remote, entry) is False
+    remote["description"] = "- 90m 90-99%"
+    assert publication.detect_athlete_edit(remote, entry) is True
+
+
 async def test_declining_writes_nothing_and_records_the_no(db_session):
     user = await _make_user(db_session)
     plan = await _make_plan(db_session, user.id)

@@ -156,16 +156,16 @@ Existing single-project layout (`app/`, `tests/`) — see plan.md's Project Stru
 
 ### Tests for User Story 5
 
-- [ ] T043 [P] [US5] Test that an athlete-edited entry is not silently overwritten — the athlete is told and decides (FR-023, SC-008), in `tests/test_services/test_publication.py`
-- [ ] T044 [P] [US5] Test that an athlete-deleted entry is not silently recreated (FR-024), in `tests/test_services/test_publication.py`
-- [ ] T045 [P] [US5] Test that a completed activity is never altered by publication (FR-025), in `tests/test_services/test_publication.py`
+- [X] T043 [P] [US5] Test that an athlete-edited entry is not silently overwritten — the athlete is told and decides (FR-023, SC-008), in `tests/test_services/test_publication.py`
+- [X] T044 [P] [US5] Test that an athlete-deleted entry is not silently recreated (FR-024), in `tests/test_services/test_publication.py`
+- [X] T045 [P] [US5] Test that a completed activity is never altered by publication (FR-025), in `tests/test_services/test_publication.py`
 
 ### Implementation for User Story 5
 
-- [ ] T046 [US5] Resolve research.md's open question 3 (does the event's `updated` timestamp change only on athlete edits, or also on our own writes?) with one probe, then implement `detect_athlete_edit(remote_event, entry)` in `app/services/publication.py` accordingly (FR-023)
-- [ ] T047 [US5] On a detected athlete edit, surface the conflict instead of overwriting — extend the republish flow in `app/bot/routers/publish.py` to ask the athlete for a decision (FR-023)
-- [ ] T048 [US5] Implement athlete-deletion detection in `app/services/publication.py`: `external_id` absent from the remote window but a live (non-withdrawn) `PublishedEntry` exists → surface, never recreate (FR-024)
-- [ ] T049 [US5] Guard every write path against ever touching an event whose `category` is not `WORKOUT` (i.e. a completed activity) (FR-025)
+- [X] T046 [US5] Resolve research.md's open question 3 (does the event's `updated` timestamp change only on athlete edits, or also on our own writes?) with one probe, then implement `detect_athlete_edit(remote_event, entry)` in `app/services/publication.py` accordingly (FR-023)
+- [X] T047 [US5] On a detected athlete edit, surface the conflict instead of overwriting — extend the republish flow in `app/bot/routers/publish.py` to ask the athlete for a decision (FR-023)
+- [X] T048 [US5] Implement athlete-deletion detection in `app/services/publication.py`: `external_id` absent from the remote window but a live (non-withdrawn) `PublishedEntry` exists → surface, never recreate (FR-024)
+- [X] T049 [US5] Guard every write path against ever touching an event whose `category` is not `WORKOUT` (i.e. a completed activity) (FR-025)
 
 **Checkpoint**: All five user stories are independently testable.
 

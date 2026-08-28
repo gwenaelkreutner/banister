@@ -165,6 +165,14 @@ hypothetical here — every one of these verbs is a path that must be gated on a
    accepted. A `push_errors` field exists on the event model, which suggests the service reports
    per-event push problems — worth reading on a real published entry once sessions with unusual
    shapes (a 1-minute Z6 sprint step, spec 004's recovery-week session) are published for real.
-3. **Athlete-edit detection** (FR-023, US5). The event carries an `updated` timestamp. Whether it
-   changes only on athlete edits or also on our own writes decides how divergence is detected —
-   resolvable with one more probe during implementation, not blocking the plan.
+3. **Athlete-edit detection** (FR-023, US5). ~~The event carries an `updated` timestamp. Whether it
+   changes only on athlete edits or also on our own writes decides how divergence is detected.~~
+   **Resolved in Phase 7 by not depending on it.** `detect_athlete_edit()` /
+   `calendar.remote_event_hash()` compare the remote event's *content* (date | name | description)
+   against the stored `PublishedEntry.content_hash` — a mismatch means the remote event is neither
+   what we last wrote nor what we would write now, i.e. an out-of-band edit. This sidesteps the
+   `updated`-timestamp ambiguity entirely.
+   **One probe still owed on the live account**: confirm intervals.icu echoes the `description`
+   field back byte-for-byte (no server-side reformatting of the DSL text). If it rewrites
+   `description` on save, every entry would look "edited" on the next republish. The Phase 7 code
+   assumes a clean round-trip; T054's real-account quickstart run is where this gets verified.

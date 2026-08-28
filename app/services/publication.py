@@ -28,6 +28,7 @@ from app.providers.intervals.calendar import (
     KnownEntry,
     iter_horizon_sessions,
     publish_sessions,
+    remote_event_hash,
     withdraw_event,
 )
 from app.providers.intervals.client import IntervalsClient
@@ -264,6 +265,16 @@ def check_divergence(schema: TrainingPlanSchema, entries) -> list[Divergence]:
     return out
 
 
+def detect_athlete_edit(remote_event: dict, entry) -> bool:
+    """The remote event's current content differs from what we last wrote for this
+    entry (FR-023). Content-based (date | name | description) rather than relying on the
+    event's `updated` timestamp — see calendar.remote_event_hash and research open
+    question 3. A `None` (unparseable) remote hash is treated as "not an edit" so a
+    malformed event never triggers a false conflict."""
+    rh = remote_event_hash(remote_event)
+    return rh is not None and rh != entry.content_hash
+
+
 def describe_divergence_for_coach(schema: TrainingPlanSchema, entries) -> str | None:
     """A short note for the LLM system prompt so the coach tells the athlete the
     calendar is out of date rather than talking as if it were current (FR-020, T038).
@@ -289,6 +300,7 @@ class PublicationReport:
     updated: int
     unchanged: int
     withdrawn: int
+    conflict: int
     refused: int
     failed: int
 
@@ -329,7 +341,8 @@ async def execute_publication(
     )
 
     counts = {
-        "created": 0, "updated": 0, "unchanged": 0, "withdrawn": 0, "refused": 0, "failed": 0
+        "created": 0, "updated": 0, "unchanged": 0, "withdrawn": 0,
+        "conflict": 0, "refused": 0, "failed": 0,
     }
     lines: list[str] = []
     for o in outcomes:
@@ -366,6 +379,10 @@ async def execute_publication(
                     content_hash=o.content_hash,
                     approval_id=approval.id,
                 )
+        elif o.status == "conflict":
+            # Athlete edited or deleted our entry — surfaced, never overwritten or
+            # recreated (FR-023, FR-024). The DB row is left exactly as it was.
+            lines.append(f"  ✋ {label} — {o.detail}")
         else:  # refused | failed
             lines.append(f"  ❌ {label} — {o.detail}")
 
@@ -397,19 +414,32 @@ async def execute_publication(
     if counts["withdrawn"]:
         n = counts["withdrawn"]
         header_bits.append(f"{n} retirée{'s' if n != 1 else ''}")
+    if counts["conflict"]:
+        n = counts["conflict"]
+        header_bits.append(f"{n} touchée{'s' if n != 1 else ''} par toi (non modifiée)")
     if counts["refused"]:
         header_bits.append(f"{counts['refused']} refusée{'s' if counts['refused'] != 1 else ''}")
     if counts["failed"]:
         header_bits.append(f"{counts['failed']} échec{'s' if counts['failed'] != 1 else ''}")
-    ok = not (counts["refused"] or counts["failed"])
+    ok = not (counts["refused"] or counts["failed"] or counts["conflict"])
     header = ("✅ " if ok else "⚠️ ") + ", ".join(header_bits)
 
+    body = [header, "", *lines]
+    if counts["conflict"]:
+        body += [
+            "",
+            "✋ Les séances marquées ci-dessus, tu les as modifiées ou supprimées "
+            "toi-même dans intervals.icu — je n'y touche pas. Si tu veux que je "
+            "reprenne la main sur l'une d'elles, dis-le moi en chat.",
+        ]
+
     return PublicationReport(
-        text="\n".join([header, "", *lines]),
+        text="\n".join(body),
         created=counts["created"],
         updated=counts["updated"],
         unchanged=counts["unchanged"],
         withdrawn=counts["withdrawn"],
+        conflict=counts["conflict"],
         refused=counts["refused"],
         failed=counts["failed"],
     )

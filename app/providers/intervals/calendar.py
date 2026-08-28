@@ -70,11 +70,14 @@ class SessionOutcome:
     workout_type: str
     name: str
     external_id: str
-    status: str  # "created" | "updated" | "unchanged" | "refused" | "failed"
+    # "created" | "updated" | "unchanged" | "conflict" | "refused" | "failed"
+    # "conflict" = the athlete edited or deleted our entry — surfaced, never overwritten
+    #              or recreated (FR-023, FR-024).
+    status: str
     intervals_event_id: str | None = None
     content_hash: str | None = None
     rendered_dsl: str | None = None
-    detail: str | None = None  # why, for "refused" / "failed"
+    detail: str | None = None  # why, for "conflict" / "refused" / "failed"
 
 
 @dataclass
@@ -124,6 +127,26 @@ def iter_horizon_sessions(
                 )
     out.sort(key=lambda p: p.session_date)
     return out
+
+
+def remote_event_hash(remote_event: dict) -> str | None:
+    """The content fingerprint of a calendar event as it currently stands remotely,
+    computed from the same fields we write (date | name | description) so it is directly
+    comparable to a PublishedEntry.content_hash.
+
+    Content-based, deliberately: it sidesteps research open question 3 (whether the
+    event's `updated` timestamp changes on our own writes as well as athlete edits).
+    Assumes intervals.icu echoes `description` back unmodified — the one thing the T046
+    probe still needs to confirm on the live account before US5 is trusted in anger.
+    """
+    raw = str(remote_event.get("start_date_local") or "")[:10]
+    try:
+        session_date = date.fromisoformat(raw)
+    except ValueError:
+        return None
+    name = str(remote_event.get("name") or "")
+    description = str(remote_event.get("description") or "")
+    return hash_session_content(session_date, name, description)
 
 
 async def withdraw_event(client: IntervalsClient, intervals_event_id: str) -> None:
@@ -211,6 +234,45 @@ async def publish_sessions(
         content_hash = hash_session_content(planned.session_date, name, rendered)
         remote_event = remote_by_ext.get(external_id)
         known = known_entries.get(external_id)
+
+        # US5 — never overwrite or recreate what the athlete touched (FR-023/FR-024),
+        # never modify a completed activity (FR-025).
+        if remote_event is not None and remote_event.get("category") not in (None, "WORKOUT"):
+            outcomes.append(
+                _outcome(
+                    "refused",
+                    intervals_event_id=str(remote_event.get("id")),
+                    detail="l'entrée est devenue une activité réalisée — jamais modifiée (FR-025)",
+                )
+            )
+            continue
+        if known is not None and remote_event is None:
+            outcomes.append(
+                _outcome(
+                    "conflict",
+                    content_hash=content_hash,
+                    rendered_dsl=rendered,
+                    detail="supprimée manuellement dans intervals.icu — non recréée (FR-024)",
+                )
+            )
+            continue
+        if known is not None and remote_event is not None:
+            remote_hash = remote_event_hash(remote_event)
+            if (
+                remote_hash is not None
+                and remote_hash != known.content_hash
+                and remote_hash != content_hash
+            ):
+                outcomes.append(
+                    _outcome(
+                        "conflict",
+                        intervals_event_id=str(remote_event.get("id")),
+                        content_hash=content_hash,
+                        rendered_dsl=rendered,
+                        detail="modifiée à la main dans intervals.icu — non écrasée (FR-023)",
+                    )
+                )
+                continue
 
         if known is not None and known.content_hash == content_hash and remote_event is not None:
             outcomes.append(
