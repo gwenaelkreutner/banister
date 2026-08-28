@@ -35,13 +35,26 @@ class IntervalsClient:
         self._api_key = api_key
         self._athlete_id = athlete_id
 
-    async def _get(self, path: str, *, params: dict | None = None) -> dict | list:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict | None = None,
+        json: dict | list | None = None,
+    ) -> dict | list | None:
+        """One request, one shared error classification (research R6). Write verbs
+        (_post/_put/_delete) go through here exactly as _get does — the classification
+        that FR-005/FR-013 depend on above the client boundary must not fork per method.
+        """
         async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
             try:
-                response = await client.get(
+                response = await client.request(
+                    method,
                     f"{_BASE_URL}{path}",
                     auth=("API_KEY", self._api_key),
                     params=params,
+                    json=json,
                 )
             except httpx.TimeoutException as exc:
                 raise TransientError(f"Timed out calling {path}") from exc
@@ -64,7 +77,23 @@ class IntervalsClient:
                 f"intervals.icu server error ({response.status_code}) calling {path}"
             )
         response.raise_for_status()  # any other 4xx is a real bug, not a handled case
+        if response.status_code == 204 or not response.content:
+            return None
         return response.json()
+
+    async def _get(self, path: str, *, params: dict | None = None) -> dict | list:
+        result = await self._request("GET", path, params=params)
+        assert result is not None
+        return result
+
+    async def _post(self, path: str, *, json: dict | list) -> dict | list | None:
+        return await self._request("POST", path, json=json)
+
+    async def _put(self, path: str, *, json: dict | list) -> dict | list | None:
+        return await self._request("PUT", path, json=json)
+
+    async def _delete(self, path: str) -> None:
+        await self._request("DELETE", path)
 
     async def get_athlete(self) -> dict:
         """Verify the credential and identify the bound athlete (FR-002).
@@ -110,3 +139,38 @@ class IntervalsClient:
         )
         assert isinstance(result, list)
         return result
+
+    # ── Calendar events (spec 005 research R1/R2) ─────────────────────────────
+    #
+    # This is the moment the project stops being read-only. Every verb below is a
+    # write path that must be gated on a recorded approval one layer up
+    # (app/services/publication.py) — the client itself does not know about consent.
+
+    async def list_events(self, *, oldest: str, newest: str) -> list[dict]:
+        """List calendar events (planned workouts) in a date window. Dates are
+        yyyy-MM-dd. Used to diff before writing — the API does not upsert (R2)."""
+        result = await self._get(
+            f"/athlete/{self._athlete_id}/events",
+            params={"oldest": oldest, "newest": newest},
+        )
+        assert isinstance(result, list)
+        return result
+
+    async def create_event(self, payload: dict) -> dict:
+        """POST a new calendar event. Re-POSTing the same external_id creates a
+        duplicate (R2) — the caller is responsible for not doing that."""
+        result = await self._post(f"/athlete/{self._athlete_id}/events", json=payload)
+        assert isinstance(result, dict)
+        return result
+
+    async def update_event(self, event_id: str, payload: dict) -> dict:
+        """PUT an existing calendar event by its server-assigned id (R2)."""
+        result = await self._put(
+            f"/athlete/{self._athlete_id}/events/{event_id}", json=payload
+        )
+        assert isinstance(result, dict)
+        return result
+
+    async def delete_event(self, event_id: str) -> None:
+        """DELETE a calendar event by its server-assigned id."""
+        await self._delete(f"/athlete/{self._athlete_id}/events/{event_id}")

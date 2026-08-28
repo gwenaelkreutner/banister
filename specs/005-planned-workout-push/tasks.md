@@ -28,8 +28,8 @@ Existing single-project layout (`app/`, `tests/`) — see plan.md's Project Stru
 
 **Purpose**: Skeleton files so every later task has somewhere to land.
 
-- [ ] T001 [P] Create skeleton files with module docstrings for: `app/providers/intervals/workout_dsl.py`, `app/providers/intervals/calendar.py`, `app/services/publication.py`, `app/bot/routers/publish.py`, `app/bot/keyboards/publish.py`, `app/db/models/publication.py`, `app/db/repositories/publication_repo.py`
-- [ ] T002 [P] Ensure `tests/test_providers/`, `tests/test_services/`, `tests/test_db/` exist and follow the project's existing test-package convention
+- [X] T001 [P] Create skeleton files with module docstrings for: `app/providers/intervals/workout_dsl.py`, `app/providers/intervals/calendar.py`, `app/services/publication.py`, `app/bot/routers/publish.py`, `app/bot/keyboards/publish.py`, `app/db/models/publication.py`, `app/db/repositories/publication_repo.py`
+- [X] T002 [P] Ensure `tests/test_providers/`, `tests/test_services/`, `tests/test_db/` exist and follow the project's existing test-package convention
 
 ---
 
@@ -39,15 +39,15 @@ Existing single-project layout (`app/`, `tests/`) — see plan.md's Project Stru
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T003 [P] Define `PublicationApproval` ORM model in `app/db/models/publication.py` per data-model.md §PublicationApproval (`id`, `user_id`, `plan_id`, `content_hash`, `horizon_start`/`horizon_end`, `session_count`, `status`, `requested_at`, `decided_at`)
-- [ ] T004 Define `PublishedEntry` ORM model in `app/db/models/publication.py` per data-model.md §PublishedEntry (`id`, `user_id`, `plan_id`, `approval_id` FK, `external_id` unique-per-user, `intervals_event_id`, `session_date`, `week_number`/`day_of_week`, `content_hash`, `published_at`, `withdrawn_at`) (same file as T003, sequential)
-- [ ] T005 Generate the Alembic migration for `publication_approvals` and `published_entries` via `alembic revision --autogenerate` in `migrations/versions/` (depends on T003, T004)
-- [ ] T006 [P] Add `_post`/`_put`/`_delete` to `app/providers/intervals/client.py`, reusing existing error classification (401/403 → `CredentialRejectedError`, 429 → `RateLimitedError`, 5xx/network → `TransientError`) per research.md R6
-- [ ] T007 Add `list_events`/`create_event`/`update_event`/`delete_event` to `app/providers/intervals/client.py`, targeting `/athlete/{id}/events` (depends on T006, same file)
-- [ ] T008 [P] Implement `render_dsl(steps)` in `app/providers/intervals/workout_dsl.py` — `Step`/`RepeatGroup` → workout DSL text per contracts/calendar-publication.md §1 (whole-minute durations, `%ftp` bounds from `Zone.lower_pct`/`upper_pct`, a repeat group renders its full inner unit including the final recovery); raises rather than emitting anything for a session with no steps (FR-009)
-- [ ] T009 [P] Test `render_dsl()` against research.md R3's verified DSL shape and the reference `workout_doc` fixture in contracts/calendar-publication.md §1, in `tests/test_providers/test_workout_dsl.py`
-- [ ] T010 [P] Implement `hash_content(session_date, name, rendered_dsl)` — `SHA-256(session_date | name | rendered_DSL_text)` — in `app/services/publication.py` per data-model.md §Content hashing
-- [ ] T011 [P] Implement `publication_repo.py`: `create_approval`, `get_approval`, `mark_approved`, `mark_declined`, `create_published_entry`, `update_published_entry`, `get_active_entries_for_plan`, `get_entry_by_external_id`, `mark_withdrawn` in `app/db/repositories/publication_repo.py` (depends on T003, T004)
+- [X] T003 [P] Define `PublicationApproval` ORM model in `app/db/models/publication.py` per data-model.md §PublicationApproval (`id`, `user_id`, `plan_id`, `content_hash`, `horizon_start`/`horizon_end`, `session_count`, `status`, `requested_at`, `decided_at`)
+- [X] T004 Define `PublishedEntry` ORM model in `app/db/models/publication.py` per data-model.md §PublishedEntry (`id`, `user_id`, `plan_id`, `approval_id` FK, `external_id` unique-per-user, `intervals_event_id`, `session_date`, `week_number`/`day_of_week`, `content_hash`, `published_at`, `withdrawn_at`) (same file as T003, sequential)
+- [X] T005 Generate the Alembic migration for `publication_approvals` and `published_entries` via `alembic revision --autogenerate` in `migrations/versions/` (depends on T003, T004)
+- [X] T006 [P] Add `_post`/`_put`/`_delete` to `app/providers/intervals/client.py`, reusing existing error classification (401/403 → `CredentialRejectedError`, 429 → `RateLimitedError`, 5xx/network → `TransientError`) per research.md R6
+- [X] T007 Add `list_events`/`create_event`/`update_event`/`delete_event` to `app/providers/intervals/client.py`, targeting `/athlete/{id}/events` (depends on T006, same file)
+- [X] T008 [P] Implement `render_dsl(steps)` in `app/providers/intervals/workout_dsl.py` — `Step`/`RepeatGroup` → workout DSL text per contracts/calendar-publication.md §1 (whole-minute durations, `%ftp` bounds from `Zone.lower_pct`/`upper_pct`, a repeat group renders its full inner unit including the final recovery); raises rather than emitting anything for a session with no steps (FR-009)
+- [X] T009 [P] Test `render_dsl()` against research.md R3's verified DSL shape and the reference `workout_doc` fixture in contracts/calendar-publication.md §1, in `tests/test_providers/test_workout_dsl.py`
+- [X] T010 [P] Implement `hash_content(session_date, name, rendered_dsl)` — `SHA-256(session_date | name | rendered_DSL_text)` — in `app/services/publication.py` per data-model.md §Content hashing
+- [X] T011 [P] Implement `publication_repo.py`: `create_approval`, `get_approval`, `mark_approved`, `mark_declined`, `create_published_entry`, `update_published_entry`, `get_active_entries_for_plan`, `get_entry_by_external_id`, `mark_withdrawn` in `app/db/repositories/publication_repo.py` (depends on T003, T004)
 
 **Checkpoint**: Storage, write verbs, and the DSL contract are all in place and tested — user story work can begin.
 
