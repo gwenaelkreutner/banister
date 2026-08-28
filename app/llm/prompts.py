@@ -263,6 +263,27 @@ GUARDRAIL_LOAD_REDUCTION_RULE = (
     "charge, et tu expliques pourquoi en citant le chiffre du signal."
 )
 
+# spec 006 FR-028 / SC-009 — shown before the first coaching interaction (end of /setup)
+# and in the README. A single constant so spec 007's first-run flow relocates it rather
+# than rewriting it (research R7).
+DISCLAIMER_TEXT = (
+    "ℹ️ <b>Ce que je suis, ce que je ne suis pas</b>\n"
+    "Je suis un logiciel de coaching, pas un médecin ni un entraîneur certifié. "
+    "Les séances que je propose sont des suggestions — c'est toujours toi qui décides. "
+    "Les signaux de récupération que je surveille ne sont pas un avis médical : si quelque "
+    "chose t'inquiète pour ta santé, consulte un professionnel."
+)
+
+# spec 006 FR-029 / FR-030 — scope-of-advice rules, appended to every system prompt.
+SCOPE_OF_ADVICE_RULES = (
+    "Limites de ton rôle : tu n'es pas médecin. Si les signaux ressemblent plus à une "
+    "infection ou une maladie qu'à de la fatigue d'entraînement (FC de repos très haute, "
+    "état fébrile évoqué, fatigue inhabituelle), dis-le et invite à consulter un "
+    "professionnel — ne prescris pas d'entraînement « à travers ». Si l'athlète décrit "
+    "une douleur ou une blessure, ne pose jamais de diagnostic et n'en nomme pas la "
+    "cause : reconnais, conseille du repos ou un avis médical, rien de plus."
+)
+
 
 def build_ux_system_prompt(user_level: int) -> str:
     """Retourne le system prompt UXWriting avec vocabulaire adapté au niveau.
@@ -304,6 +325,7 @@ def build_ux_system_prompt(user_level: int) -> str:
         f"Vocabulaire : CTL={ctl_term}, ATL={atl_term}, TSB={tsb_term}, TSS={tss_term}. "
         f"{acronym_ban}"
         "Interprète les données, ne recalcule jamais. "
+        f"{SCOPE_OF_ADVICE_RULES} "
         "Format : texte brut, emojis sobres (🎯 📈 ⚠️ ✅ 🚴). "
         "Réponds à la dernière question en utilisant le contexte de l'échange si nécessaire, mais sans répéter ce qui a déjà été dit. "
         "Si la question ne concerne pas l'entraînement ou le vélo, réponds directement et brièvement sans utiliser les données sportives. "

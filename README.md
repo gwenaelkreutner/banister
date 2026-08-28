@@ -19,6 +19,17 @@ Self-hosted AI training coach in Telegram. Generates personalized training plans
 
 ---
 
+## What this is not
+
+Banister is coaching software, **not a physician and not a certified coach**. The
+sessions it proposes are suggestions — you always decide. Its training guardrails (load
+ramp, recovery signals) raise flags and offer adjustments; they do not diagnose illness
+or injury and must not be relied on as a medical opinion. If something concerns you about
+your health, see a qualified professional. This disclaimer is also shown in the app at the
+end of first-time setup.
+
+---
+
 ## Stack
 
 | Layer | Technology |

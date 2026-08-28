@@ -180,14 +180,14 @@ Existing single-project layout (`app/`, `tests/`, `scripts/`) — see plan.md's 
 
 ### Tests for User Story 6
 
-- [ ] T051 [P] [US6] Test that the disclaimer constant is emitted at the end of `/setup` onboarding, in `tests/test_bot/` (or the nearest existing setup-router test module) (FR-028, SC-009)
-- [ ] T052 [P] [US6] Test the prompt rules — a fixture context with illness-consistent signals produces a referral phrase; a message describing pain produces no diagnostic language (FR-029, FR-030), in `tests/test_llm/` against `build_system_prompt` output or a prompt-rule unit
+- [X] T051 [P] [US6] Test that the disclaimer constant is emitted at the end of `/setup` onboarding, in `tests/test_bot/` (or the nearest existing setup-router test module) (FR-028, SC-009)
+- [X] T052 [P] [US6] Test the prompt rules — a fixture context with illness-consistent signals produces a referral phrase; a message describing pain produces no diagnostic language (FR-029, FR-030), in `tests/test_llm/` against `build_system_prompt` output or a prompt-rule unit
 
 ### Implementation for User Story 6
 
-- [ ] T053 [US6] Add `DISCLAIMER_TEXT` as a single constant in `app/core/persona.py` (or `app/llm/prompts.py` if persona stays uncalled) — "neither a physician nor a certified coach; proposed sessions are suggestions"; spec 007 relocates it to the first-run flow, this feature places it where a first use passes today (research R7)
-- [ ] T054 [US6] Emit `DISCLAIMER_TEXT` at the end of `_finalize_setup()` in `app/bot/routers/setup.py` and add it to `README.md` (FR-028, SC-009) (depends on T053)
-- [ ] T055 [US6] Add FR-029 (illness-consistent signals → suggest qualified advice, do not prescribe through) and FR-030 (reported pain/injury → no diagnosis) as explicit rules in `app/llm/prompts.py`, alongside the existing response rules
+- [X] T053 [US6] Add `DISCLAIMER_TEXT` as a single constant in `app/core/persona.py` (or `app/llm/prompts.py` if persona stays uncalled) — "neither a physician nor a certified coach; proposed sessions are suggestions"; spec 007 relocates it to the first-run flow, this feature places it where a first use passes today (research R7)
+- [X] T054 [US6] Emit `DISCLAIMER_TEXT` at the end of `_finalize_setup()` in `app/bot/routers/setup.py` and add it to `README.md` (FR-028, SC-009) (depends on T053)
+- [X] T055 [US6] Add FR-029 (illness-consistent signals → suggest qualified advice, do not prescribe through) and FR-030 (reported pain/injury → no diagnosis) as explicit rules in `app/llm/prompts.py`, alongside the existing response rules
 
 **Checkpoint**: all six user stories independently testable.
 

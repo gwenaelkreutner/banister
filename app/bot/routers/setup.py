@@ -349,6 +349,11 @@ async def _finalize_setup(
         parse_mode="HTML",
     )
 
+    # Disclaimer avant la première interaction de coaching (spec 006 FR-028, SC-009).
+    from app.llm.prompts import DISCLAIMER_TEXT
+
+    await message.answer(DISCLAIMER_TEXT, parse_mode="HTML")
+
     # LLM narrative in background (non-blocking)
     import asyncio
     asyncio.create_task(_generate_narrative(
