@@ -9,7 +9,9 @@ from datetime import date, timedelta
 
 from app.db.models.user import User
 from app.db.repositories import wellness_repo
+from app.engine.guardrail_thresholds import BASELINE_MIN_SAMPLES
 from app.services.guardrail_service import (
+    assemble_recovery_findings,
     assemble_workload_findings,
     has_load_reduction_finding,
 )
@@ -65,3 +67,48 @@ async def test_uses_latest_wellness_row_not_a_stale_one(db_session):
     )
     findings = await assemble_workload_findings(db_session, u.id, today=TODAY)
     assert findings == []  # today's row is calm; the 10-day-old spike is not used
+
+
+# ── recovery assembly ────────────────────────────────────────────────────────
+
+
+async def _seed_rhr_baseline(session, user_id, *, value: float, n: int = BASELINE_MIN_SAMPLES):
+    for i in range(n):
+        await wellness_repo.upsert(
+            session, user_id, TODAY - timedelta(days=2 + i), resting_hr=int(value)
+        )
+
+
+async def test_recovery_no_history_fires_nothing(db_session):
+    u = await _user(db_session)
+    findings = await assemble_recovery_findings(db_session, u.id, today=TODAY)
+    assert findings == []  # FR-013
+
+
+async def test_recovery_baseline_present_but_today_absent_fires_nothing(db_session):
+    """research R1 — a complete baseline and no reading since. The stale baseline must
+    NOT be reused as today's value (FR-014)."""
+    u = await _user(db_session)
+    await _seed_rhr_baseline(db_session, u.id, value=50.0)
+    # No row for TODAY at all.
+    findings = await assemble_recovery_findings(db_session, u.id, today=TODAY)
+    assert findings == []
+
+
+async def test_recovery_rhr_elevated_today_against_baseline_fires(db_session):
+    u = await _user(db_session)
+    await _seed_rhr_baseline(db_session, u.id, value=50.0)
+    await wellness_repo.upsert(db_session, u.id, TODAY, resting_hr=57)  # +7
+    findings = await assemble_recovery_findings(db_session, u.id, today=TODAY)
+    assert [f.kind for f in findings] == ["rhr_high"]
+    assert findings[0].action
+
+
+async def test_recovery_conflict_with_a_hard_prescribed_session_is_stated(db_session):
+    u = await _user(db_session)
+    await _seed_rhr_baseline(db_session, u.id, value=50.0)
+    await wellness_repo.upsert(db_session, u.id, TODAY, resting_hr=58)
+    findings = await assemble_recovery_findings(
+        db_session, u.id, prescribed_workout_type="intervals", prescribed_zone="Z4", today=TODAY
+    )
+    assert findings and "plan prévoit" in findings[0].action  # FR-012

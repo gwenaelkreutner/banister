@@ -21,9 +21,11 @@ from app.engine.guardrail_thresholds import (
     ACWR_MIN_CTL,
     ACWR_SAFE_HIGH,
     ACWR_SAFE_LOW,
+    HRV_DROP_PCT,
     MONOTONY_HIGH,
     RAMP_RATE_CAUTION,
     RAMP_RATE_HIGH,
+    RHR_RISE_BPM,
 )
 
 # Severity is ordering only — so simultaneous findings can be ranked rather than dumped
@@ -166,4 +168,109 @@ def evaluate_monotony(
         ),
         severity=SEVERITY_MEDIUM,
         occurrence_key=_occurrence_key("monotony_high", finding_date),
+    )
+
+
+# ── Recovery signals (US2) ───────────────────────────────────────────────────
+#
+# Only HRV and resting HR have documented thresholds (FR-016). Sleep is captured but no
+# published, citable threshold applies to it, so no evaluator fires on it alone — adding
+# an unexplained one would fail FR-016. A `None` observation or a `None` baseline always
+# yields `None`: missing is unknown, never a default (FR-013, FR-014).
+
+RECOVERY_KINDS = frozenset({"hrv_low", "rhr_high", "recovery_multi"})
+
+
+def evaluate_hrv(
+    observed: float | None, baseline: float | None, *, finding_date: date
+) -> GuardrailFinding | None:
+    """HRV more than `HRV_DROP_PCT` below the athlete's own baseline directs an easy day
+    (FR-007). HRV falls when recovery is incomplete, so the trigger is `observed` well
+    *below* `baseline`."""
+    if observed is None or baseline is None or baseline <= 0:
+        return None
+    drop_pct = (observed - baseline) / baseline * 100
+    if drop_pct > HRV_DROP_PCT:
+        return None
+    return GuardrailFinding(
+        kind="hrv_low",
+        observed=f"VFC {observed:.0f} ({drop_pct:+.0f}% vs ta normale)",
+        reference=f"ta normale : {baseline:.0f}",
+        threshold=f"{HRV_DROP_PCT:.0f}%",
+        action=(
+            "ta variabilité cardiaque est nettement sous ta normale — fais une vraie "
+            "journée facile aujourd'hui (Z1-Z2 court ou repos), pas d'intensité"
+        ),
+        severity=SEVERITY_HIGH,
+        occurrence_key=_occurrence_key("hrv_low", finding_date),
+    )
+
+
+def evaluate_resting_hr(
+    observed: float | None, baseline: float | None, *, finding_date: date
+) -> GuardrailFinding | None:
+    """Resting HR `RHR_RISE_BPM` or more above the athlete's own baseline raises a
+    fatigue signal (FR-008)."""
+    if observed is None or baseline is None:
+        return None
+    rise = observed - baseline
+    if rise < RHR_RISE_BPM:
+        return None
+    return GuardrailFinding(
+        kind="rhr_high",
+        observed=f"FC repos {observed:.0f} bpm (+{rise:.0f} vs ta normale)",
+        reference=f"ta normale : {baseline:.0f} bpm",
+        threshold=f"+{RHR_RISE_BPM} bpm",
+        action=(
+            "ta fréquence cardiaque de repos est au-dessus de ta normale — signe de "
+            "fatigue ou de début d'infection : allège la journée et surveille demain"
+        ),
+        severity=SEVERITY_MEDIUM,
+        occurrence_key=_occurrence_key("rhr_high", finding_date),
+    )
+
+
+def combine_recovery_findings(findings: list[GuardrailFinding]) -> list[GuardrailFinding]:
+    """When two or more recovery signals are poor at once, replace them with a single
+    finding of higher severity — the combination is more significant than any one alone
+    (FR-009). Non-recovery findings pass through untouched."""
+    recovery = [f for f in findings if f.kind in RECOVERY_KINDS]
+    if len(recovery) < 2:
+        return findings
+    others = [f for f in findings if f.kind not in RECOVERY_KINDS]
+    day = recovery[0].occurrence_key.split(":", 1)[1]
+    combined = GuardrailFinding(
+        kind="recovery_multi",
+        observed=" ; ".join(f.observed for f in recovery),
+        reference=" ; ".join(f.reference for f in recovery),
+        threshold="plusieurs seuils franchis en même temps",
+        action=(
+            "plusieurs signaux de récupération sont bas simultanément — c'est plus "
+            "significatif que chacun pris isolément. Journée vraiment facile ou repos "
+            "complet aujourd'hui, et réévalue demain matin avant de reprendre"
+        ),
+        severity=SEVERITY_HIGH,
+        occurrence_key=f"recovery_multi:{day}",
+    )
+    return [*others, combined]
+
+
+def state_conflict_with_plan(
+    finding: GuardrailFinding, prescribed_workout_type: str, prescribed_zone: str
+) -> GuardrailFinding:
+    """When a recovery finding lands on a day the plan prescribes a hard session, the
+    finding's action must name the conflict openly rather than let it be resolved
+    silently (FR-012). Returns a new finding with the conflict appended to its action."""
+    return GuardrailFinding(
+        kind=finding.kind,
+        observed=finding.observed,
+        reference=finding.reference,
+        threshold=finding.threshold,
+        action=(
+            f"{finding.action}. ⚠️ Le plan prévoit une séance dure aujourd'hui "
+            f"({prescribed_workout_type} {prescribed_zone}) — dis-le clairement à "
+            f"l'athlète et propose l'échange, ne tranche pas à sa place"
+        ),
+        severity=finding.severity,
+        occurrence_key=finding.occurrence_key,
     )

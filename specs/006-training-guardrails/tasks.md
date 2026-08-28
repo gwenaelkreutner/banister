@@ -86,15 +86,15 @@ Existing single-project layout (`app/`, `tests/`, `scripts/`) — see plan.md's 
 
 ### Tests for User Story 2
 
-- [ ] T021 [P] [US2] Test recovery evaluators in `tests/test_engine/test_guardrails_recovery.py` with synthetic `wellness` rows — HRV >20% below baseline → easy-day finding (FR-007); RHR ≥5 bpm above baseline → fatigue finding (FR-008); both poor → combined finding ranked above either alone (FR-009); all normal → nothing (US2 acceptance 4); each finding states observed value, baseline, threshold (FR-010)
-- [ ] T022 [P] [US2] Test that a recovery finding against a hard prescribed session yields an explicit conflict statement, not a silent resolution (FR-012), in `tests/test_engine/test_guardrails_recovery.py`
+- [X] T021 [P] [US2] Test recovery evaluators in `tests/test_engine/test_guardrails_recovery.py` with synthetic `wellness` rows — HRV >20% below baseline → easy-day finding (FR-007); RHR ≥5 bpm above baseline → fatigue finding (FR-008); both poor → combined finding ranked above either alone (FR-009); all normal → nothing (US2 acceptance 4); each finding states observed value, baseline, threshold (FR-010)
+- [X] T022 [P] [US2] Test that a recovery finding against a hard prescribed session yields an explicit conflict statement, not a silent resolution (FR-012), in `tests/test_engine/test_guardrails_recovery.py`
 
 ### Implementation for User Story 2
 
-- [ ] T023 [US2] Implement `evaluate_hrv(observed, baseline) -> GuardrailFinding | None` and `evaluate_resting_hr(observed, baseline) -> GuardrailFinding | None` in `app/engine/guardrails.py` — against `HRV_DROP_PCT` and `RHR_RISE_BPM`; `None` when `observed is None` or `baseline is None` (FR-013, FR-014)
-- [ ] T024 [US2] Implement `combine_recovery_findings(findings: list[GuardrailFinding]) -> list[GuardrailFinding]` in `app/engine/guardrails.py` — when ≥2 recovery findings are present, emit a single higher-severity combined finding in their place (FR-009)
-- [ ] T025 [US2] Implement `assemble_recovery_findings(session, user_id, *, prescribed_session=None) -> list[GuardrailFinding]` in `app/services/guardrail_service.py` — builds baselines via `baselines.rolling_baseline` from `wellness` history, reads today's row, calls the evaluators, applies `combine_recovery_findings`; when a finding coincides with a hard `prescribed_session` the finding's `action` names the conflict openly (FR-012) (depends on T023, T024)
-- [ ] T026 [US2] Extend the `guardrail_findings` context block (T019) to include recovery findings, and pass the day's prescribed `SessionSpec` into `assemble_recovery_findings` from `app/llm/chat.py` (depends on T025)
+- [X] T023 [US2] Implement `evaluate_hrv(observed, baseline) -> GuardrailFinding | None` and `evaluate_resting_hr(observed, baseline) -> GuardrailFinding | None` in `app/engine/guardrails.py` — against `HRV_DROP_PCT` and `RHR_RISE_BPM`; `None` when `observed is None` or `baseline is None` (FR-013, FR-014)
+- [X] T024 [US2] Implement `combine_recovery_findings(findings: list[GuardrailFinding]) -> list[GuardrailFinding]` in `app/engine/guardrails.py` — when ≥2 recovery findings are present, emit a single higher-severity combined finding in their place (FR-009)
+- [X] T025 [US2] Implement `assemble_recovery_findings(session, user_id, *, prescribed_session=None) -> list[GuardrailFinding]` in `app/services/guardrail_service.py` — builds baselines via `baselines.rolling_baseline` from `wellness` history, reads today's row, calls the evaluators, applies `combine_recovery_findings`; when a finding coincides with a hard `prescribed_session` the finding's `action` names the conflict openly (FR-012) (depends on T023, T024)
+- [X] T026 [US2] Extend the `guardrail_findings` context block (T019) to include recovery findings, and pass the day's prescribed `SessionSpec` into `assemble_recovery_findings` from `app/llm/chat.py` (depends on T025)
 
 **Checkpoint**: US1 + US2 — both workload and recovery signals raised with their numbers; combined recovery signals compound; conflicts with the plan stated openly.
 

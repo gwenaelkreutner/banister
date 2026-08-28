@@ -105,13 +105,38 @@ async def run_chat(
 
     # Garde-fous d'entraînement (spec 006) : signaux calculés par le moteur déterministe.
     from app.services.guardrail_service import (
+        assemble_recovery_findings,
         assemble_workload_findings,
         has_load_reduction_finding,
     )
 
     guardrail_findings: list = []
     try:
-        guardrail_findings = await assemble_workload_findings(session, user.id)
+        _today = date.today()
+        # Séance dure prévue aujourd'hui ? (pour l'énoncé de conflit FR-012)
+        prescribed_type: str | None = None
+        prescribed_zone: str | None = None
+        if plan_schema and plan_schema.start_date:
+            _wk = (_today - plan_schema.start_date).days // 7 + 1
+            _week = next((w for w in plan_schema.weeks if w.week_number == _wk), None)
+            if _week:
+                _sess = next(
+                    (s for s in _week.sessions if s.day_of_week == _today.weekday()), None
+                )
+                if _sess:
+                    prescribed_type, prescribed_zone = _sess.workout_type, _sess.zone_code
+
+        workload = await assemble_workload_findings(session, user.id, today=_today)
+        recovery = await assemble_recovery_findings(
+            session,
+            user.id,
+            prescribed_workout_type=prescribed_type,
+            prescribed_zone=prescribed_zone,
+            today=_today,
+        )
+        guardrail_findings = sorted(
+            workload + recovery, key=lambda f: f.severity, reverse=True
+        )
     except Exception:
         logger.warning("Impossible de calculer les signaux garde-fous")
 
