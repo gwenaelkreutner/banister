@@ -181,7 +181,17 @@ async def publish_sessions(
       4. Else -> `create_event()` ("created").
 
     A session without steps is a refusal (FR-009); a per-session API failure is "failed"
-    and does not abandon the rest (FR-028).
+    and does not abandon the rest (FR-028). A mid-batch connection failure therefore
+    leaves the calendar coherent — every session already written is in `outcomes` as
+    "created"/"updated" and gets a PublishedEntry row from the caller, so a retry
+    resumes rather than duplicating (FR-026, FR-016).
+
+    Quota (FR-027, SC-010): a full horizon is 1 `list_events` + one write per session ≈
+    up to ~13 requests (current + following week, ~6 sessions each). Documented quotas
+    are ~5000/day and ~2500/15min (spec 002 research R4) — three orders of magnitude of
+    headroom. Confirmed by arithmetic, deliberately not stress-tested: exhausting the
+    athlete's real quota to observe the failure is not worth doing (same call spec 002
+    made about its own rate-limit question).
     """
     known_entries = known_entries or {}
     # A list_events failure propagates — the caller surfaces staleness to the athlete
@@ -304,10 +314,34 @@ async def publish_sessions(
             )
             continue
 
+        event_id = str(event.get("id") if event else remote_event.get("id"))
+
+        # A structure intervals.icu cannot represent is reported on the event's
+        # `push_errors` field rather than as an HTTP error (research open question 2) —
+        # the write "succeeded" but the workout will not reach the device. Surface it
+        # specifically as a refusal, and (for a fresh create) delete the useless event
+        # so a retry is clean. The rest of the batch is unaffected (FR-028).
+        push_errors = (event or {}).get("push_errors")
+        if push_errors:
+            if status == "created":
+                try:
+                    await client.delete_event(event_id)
+                except Exception:  # noqa: BLE001
+                    pass
+            outcomes.append(
+                _outcome(
+                    "refused",
+                    content_hash=content_hash,
+                    rendered_dsl=rendered,
+                    detail=f"structure refusée par le calendrier : {push_errors}",
+                )
+            )
+            continue
+
         outcomes.append(
             _outcome(
                 status,
-                intervals_event_id=str(event.get("id") if event else remote_event.get("id")),
+                intervals_event_id=event_id,
                 content_hash=content_hash,
                 rendered_dsl=rendered,
             )

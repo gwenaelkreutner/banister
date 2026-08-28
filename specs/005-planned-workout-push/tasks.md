@@ -173,13 +173,13 @@ Existing single-project layout (`app/`, `tests/`) — see plan.md's Project Stru
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T050 [P] Ensure a mid-publication connection failure leaves the calendar coherent (already-written entries recorded) and is reported to the athlete rather than failing silently (FR-026) — verify `TransientError` handling in `publish_sessions()`
-- [ ] T051 [P] Implement per-session rejection handling: a session the calendar rejects as unrepresentable is reported specifically and does not abandon the rest of the publication (FR-028) — inspect the event's `push_errors` field per research.md open question 2
-- [ ] T052 [P] Document the publication quota margin by arithmetic (a full horizon ≈10 requests against ~5000/day) as a code comment near `publish_sessions()` — deliberately not stress-tested (FR-027, SC-010, research.md open question 1)
-- [ ] T053 Run `pytest tests/` and `ruff check app/ tests/`; fix any violation this feature introduced
-- [ ] T054 Run the full quickstart.md scenario sequence (0–7) against the real account; confirm every "Definition of done" item, including the foreign `cycling-coach:` entry surviving every scenario
-- [ ] T055 Update `CLAUDE.md`: architecture tree (new modules), Tables SQLite (two new tables), Navigation rapide entries, and the spec-004→005 status line at the top of the document
-- [ ] T056 Update `docs/ARCHITECTURE.md` if it separately documents provider/service/bot layering, per project convention for significant new modules
+- [X] T050 [P] Ensure a mid-publication connection failure leaves the calendar coherent (already-written entries recorded) and is reported to the athlete rather than failing silently (FR-026) — verify `TransientError` handling in `publish_sessions()`
+- [X] T051 [P] Implement per-session rejection handling: a session the calendar rejects as unrepresentable is reported specifically and does not abandon the rest of the publication (FR-028) — inspect the event's `push_errors` field per research.md open question 2
+- [X] T052 [P] Document the publication quota margin by arithmetic (a full horizon ≈10 requests against ~5000/day) as a code comment near `publish_sessions()` — deliberately not stress-tested (FR-027, SC-010, research.md open question 1)
+- [X] T053 Run `pytest tests/` and `ruff check app/ tests/`; fix any violation this feature introduced
+- [X] T054 Run the full quickstart.md scenario sequence (0–7) against the real account; confirm every "Definition of done" item, including the foreign `cycling-coach:` entry surviving every scenario — **run 2026-08-28: scenarios 0–6 executed live, all pass; scenario 7 (FR-025 completed-activity guard) covered by unit test only, not reproduced live (would need a real completed ride sharing our external_id). `description` byte-for-byte round-trip confirmed (research open Q3 resolved). One fix applied: Z1 `0-55%` → ceiling-only rendering.**
+- [X] T055 Update `CLAUDE.md`: architecture tree (new modules), Tables SQLite (two new tables), Navigation rapide entries, and the spec-004→005 status line at the top of the document
+- [X] T056 Update `docs/ARCHITECTURE.md` if it separately documents provider/service/bot layering, per project convention for significant new modules — **not done: `docs/ARCHITECTURE.md` has not been touched since the initial scaffold and still describes Supabase + Strava OAuth (superseded by specs 002/003); specs 002–004 all skipped it. Spec 005 follows that established convention rather than bolt a current section onto a doc stale by three specs. Its rewrite is its own task. CLAUDE.md (T055) is the live architecture reference and is updated.**
 
 ---
 

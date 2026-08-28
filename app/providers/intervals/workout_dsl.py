@@ -41,7 +41,14 @@ class EmptySessionError(ValueError):
 
 def _intensity(zone_code: str, zones: dict[str, Zone]) -> str:
     """`{lower}-{upper}%` from Zone.lower_pct/upper_pct (fractions, ×100), or a single
-    `{value}%` when the bounds coincide — matching R3's verified server parse."""
+    `{value}%` when the bounds coincide — matching R3's verified server parse.
+
+    Z1's lower bound is 0.00 (app/engine/zones.py). Emitting `- 15m 0-55%` for a
+    recovery step is technically accepted by intervals.icu but reads as a nonsensical
+    "0% FTP" target on the athlete's device (found in the T054 live run). When the lower
+    bound rounds to 0, render the ceiling alone (`- 15m 55%`) — an honest "ride at or
+    below this", with no invented floor.
+    """
     try:
         zone = zones[zone_code]
     except KeyError as exc:
@@ -51,7 +58,9 @@ def _intensity(zone_code: str, zones: dict[str, Zone]) -> str:
         ) from exc
     lower = round(zone.lower_pct * 100)
     upper = round(zone.upper_pct * 100)
-    return f"{lower}%" if lower == upper else f"{lower}-{upper}%"
+    if lower <= 0 or lower == upper:
+        return f"{upper}%"
+    return f"{lower}-{upper}%"
 
 
 def _step_line(step: Step, zones: dict[str, Zone]) -> str:

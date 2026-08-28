@@ -227,6 +227,52 @@ async def test_a_completed_activity_is_never_modified():
     assert client.find(done_ext)["category"] == "RIDE"  # untouched
 
 
+async def test_push_errors_on_a_written_event_is_a_specific_refusal():
+    """FR-028 / research open question 2 — the write 'succeeds' but the calendar reports
+    the structure is unrepresentable on `push_errors`. Surfaced, event cleaned up, rest
+    of the batch untouched."""
+    schema = generate_plan(make_profile())
+    client = FakeCalendarClient()
+    real_create = client.create_event
+    n = {"i": 0}
+
+    async def _create_with_push_error(payload):
+        n["i"] += 1
+        ev = await real_create(payload)
+        if n["i"] == 2:  # exactly one session comes back rejected
+            ev["push_errors"] = ["step 2: power target out of range"]
+        return ev
+
+    client.create_event = _create_with_push_error
+    outcomes = await publish_sessions(client, schema, uuid.uuid4(), *_WIDE)
+
+    refused = [o for o in outcomes if o.status == "refused"]
+    assert any("structure refusée" in (o.detail or "") for o in refused)
+    assert any(o.status == "created" for o in outcomes)  # batch continued
+    # The unusable event was deleted so a retry is clean.
+    assert client.delete_calls == 1
+
+
+async def test_mid_batch_failure_leaves_written_sessions_in_outcomes():
+    """FR-026 — a connection drop partway through does not lose what was written."""
+    schema = generate_plan(make_profile())
+    client = FakeCalendarClient()
+    real_create = client.create_event
+    n = {"i": 0}
+
+    async def _drop_after_three(payload):
+        n["i"] += 1
+        if n["i"] > 3:
+            raise ConnectionError("network gone")
+        return await real_create(payload)
+
+    client.create_event = _drop_after_three
+    outcomes = await publish_sessions(client, schema, uuid.uuid4(), *_WIDE)
+
+    assert sum(1 for o in outcomes if o.status == "created") == 3
+    assert any(o.status == "failed" for o in outcomes)
+
+
 async def test_one_failing_session_does_not_abandon_the_rest():
     schema = generate_plan(make_profile())
     first_name = None

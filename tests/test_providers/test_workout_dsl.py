@@ -87,6 +87,13 @@ def test_empty_session_is_refused_not_rendered_empty():
         render_dsl([], _R3_ZONES)
 
 
+def test_zone_with_zero_lower_bound_renders_ceiling_only():
+    """Z1's lower bound is 0.00 — `0-55%` is a nonsensical target on a device (T054)."""
+    zones = {"Z1": _zone("Z1", 0.00, 0.55)}
+    steps = [Step(kind="cooldown", duration_minutes=15, zone_code="Z1")]
+    assert render_dsl(steps, zones) == "Cooldown\n- 15m 55%"
+
+
 def test_unknown_zone_raises_rather_than_guessing():
     steps = [Step(kind="steady", duration_minutes=60, zone_code="Z9")]
     with pytest.raises(ValueError, match="Z9"):

@@ -13,19 +13,18 @@ Ce document décrit **l'état actuel du code**, pas la cible. Une refonte vers u
 source est spécifiée dans `specs/001` à `007`, et gouvernée par `.specify/memory/constitution.md`.
 
 **✅ Fait** : spec 003 (SQLite local remplace Supabase), spec 002 (intervals.icu remplace Strava, log manuel
-supprimé), spec 004 (séances structurées, bibliothèque de templates, fitting) — voir sections ci-dessous,
-à jour.
+supprimé), spec 004 (séances structurées, bibliothèque de templates, fitting), spec 005 (push des séances
+vers le calendrier intervals.icu — `/publish`, `/unpublish`) — voir sections ci-dessous, à jour.
 
 Ce qui reste à faire, et qui rendra d'autres sections de ce fichier obsolètes :
 
 | Décision | Effet sur ce document |
 |---|---|
-| Push des séances vers le calendrier intervals.icu | Nouvelle section à créer |
 | Câblage de `load_persona()` (voix du coach configurable) | Sections chat/prompts |
 
 **Ordre de construction** (les numéros de spec sont des identifiants, pas une séquence) :
 ~~`003` base locale~~ (fait) → ~~`002` intervals.icu~~ (fait) → ~~`004` séances structurées~~ (fait) →
-`005` push calendrier → `006` guardrails → `007` premier lancement.
+~~`005` push calendrier~~ (fait) → `006` guardrails → `007` premier lancement.
 
 Mettre ce fichier à jour **au fil de** chaque migration, pas après coup.
 
@@ -78,19 +77,23 @@ app/
 │   ├── middlewares/
 │   │   ├── db_session.py    # Ouvre AsyncSession (doit précéder single_user)
 │   │   └── single_user.py   # Garde TELEGRAM_OWNER_ID + injection User (pas d'upsert)
-│   ├── keyboards/           # Prefixes callbacks : setup: / plan: / log: / chat: / rem:
+│   ├── keyboards/           # Prefixes callbacks : setup: / plan: / log: / chat: / rem: / pub:
 │   ├── routers/             # Ordre réel dans setup.py : common → setup → plan
-│   │                        # → session_log → forme → recap → reminders → chat (DERNIER)
+│   │                        # → session_log → forme → recap → reminders → publish → chat (DERNIER)
+│   │   └── publish.py       # /publish (approbation + écriture calendrier), /unpublish (spec 005)
 │   └── (chat doit rester en dernier — catch-all)
 ├── db/
 │   ├── client.py            # AsyncSessionFactory (expire_on_commit=False)
 │   ├── models/              # ORM SQLAlchemy
 │   └── repositories/        # Accès DB — jamais de SQL dans les handlers
-│       └── weekly_adherence_repo.py  # upsert + get_recent — persistance taux d'adhérence /recap
+│       ├── weekly_adherence_repo.py  # upsert + get_recent — persistance taux d'adhérence /recap
+│       └── publication_repo.py       # PublicationApproval + PublishedEntry (spec 005)
 ├── services/                # Orchestration : repos + LLM, sans dépendance aiogram
 │   ├── weekly_recap.py      # compute_weekly_recap() → WeeklyRecapResult
 │   ├── activity_feedback.py # assemble_activity_feedback() — contexte post-séance, sans dépendance bot
-│   └── fitness.py           # get_current_fitness() — CTL/ATL/TSB courants depuis la table wellness
+│   ├── fitness.py           # get_current_fitness() — CTL/ATL/TSB courants depuis la table wellness
+│   └── publication.py       # spec 005 : cycle de vie approbation, barrière authorize_publication(),
+│                            # diff plan↔calendrier, check_divergence(), retrait — sans dépendance aiogram
 ├── engine/                  # Moteur déterministe — zéro LLM ici
 │   ├── schemas.py           # Pydantic : AthleteProfileSchema, TrainingPlanSchema, SessionSpec, Step, RepeatGroup
 │   ├── periodization.py     # Blocs Base/Build/Peak/Taper
@@ -113,13 +116,17 @@ app/
 │   └── narrator.py          # Résumé narratif semaine (texte pur)
 └── providers/
     ├── intervals/           # Source de données unique — intervals.icu
-    │   ├── client.py        # Auth basic (clé API), quotas, get_activity/list_activities/get_wellness
+    │   ├── client.py        # Auth basic (clé API) ; lecture (get/list) + écriture calendrier
+    │   │                    # (_post/_put/_delete, list/create/update/delete_event — spec 005)
     │   ├── errors.py        # Erreurs typées (clé invalide, indisponibilité, quota)
     │   ├── mapper.py        # Payload intervals.icu (183 champs) → AnalyzedSession
     │   ├── history.py       # Import historique à la première connexion (idempotent)
     │   ├── poller.py        # Interrogation périodique — détecte les nouvelles activités
     │   ├── notifier.py      # Notification étagée post-sortie + clavier RPE
-    │   └── wellness.py      # HRV / FC repos / sommeil (spec 006 guardrails consomme, pas encore branché)
+    │   ├── wellness.py      # HRV / FC repos / sommeil (spec 006 guardrails consomme, pas encore branché)
+    │   ├── workout_dsl.py   # spec 005 : Step/RepeatGroup → texte DSL intervals.icu + hash_session_content()
+    │   └── calendar.py      # spec 005 : publish_sessions() (diff idempotent), withdraw_event(),
+    │                        # remote_event_hash() ; ne touche jamais la DB (couche provider pure)
     └── analysis/            # Logique métier que la source ne fournit pas
         ├── analysis_models.py  # AnalyzedSession (DTO commun, provider-agnostic)
         ├── matching.py          # Matching activité ↔ séance planifiée (score 0-100)
@@ -189,6 +196,52 @@ affiche message "Sortie bonus" au lieu de "hors plan" (`app/providers/intervals/
 2. `candidate is None, all_slots_taken=True` → 🔄 "Sortie bonus enregistrée"
 3. `candidate found, score < 50` → détail du score avec raisons
 
+## Publication vers le calendrier intervals.icu (spec 005)
+
+**Première mutation sortante du projet.** Tout ce que l'athlète possède était en lecture seule jusqu'ici.
+
+**Principe** : rien n'est écrit sans un `PublicationApproval` `approved` dont le `content_hash` correspond
+**exactement** à ce que l'athlète a vu. `services/publication.py::authorize_publication()` est la barrière
+unique — appelée en première instruction de `execute_publication()`, donc tout chemin d'écriture est gardé
+par construction (vérifié par grep, pas au feeling — quickstart Scénario 2).
+
+**Flux** :
+```
+/publish → request_publication() : calcule l'horizon (semaine courante + suivante, FR-010),
+           liste chaque séance + date + caveat « active le transfert vers ta montre » (1ère fois),
+           enregistre un PublicationApproval pending lié au content_hash du plan
+  ↓ [✅ Publier]
+authorize_publication() → refuse si hash ≠ (plan changé → StaleApprovalError, FR-004)
+  ↓
+calendar.publish_sessions() : diff idempotent (l'API n'a PAS d'upsert — research R2) :
+    list_events() la fenêtre → garde uniquement external_id `banister:` (FR-015)
+    hash connu == hash courant + événement présent → "unchanged" (rend la reprise possible, FR-016)
+    présent, contenu différent → update_event()   |   absent → create_event()
+    séance sans steps → refusée (FR-009)  |  push_errors sur l'événement écrit → refusée + delete
+  ↓
+US5 : événement modifié/supprimé à la main par l'athlète → "conflict", jamais écrasé/recréé (FR-023/024)
+      catégorie ≠ WORKOUT (activité réalisée) → jamais touchée (FR-025)
+US4 : séance retirée du plan → withdraw_event() + mark_withdrawn (FR-019)
+      séances passées (`session_date < today`) exclues de TOUS les chemins (FR-011/022)
+```
+
+**`/unpublish`** → `withdraw_all_publications()` : n'itère que nos propres lignes `PublishedEntry`
+→ « 100 % des nôtres, 0 % du reste » vrai par construction (SC-006).
+
+**Divergence** (`check_divergence()` / `describe_divergence_for_coach()`) : dérivée à la demande, jamais
+stockée. Si le plan a évolué depuis la publication, le contexte LLM (`build_system_prompt(calendar_divergence=…)`,
+câblé dans `chat.py`) le dit au coach au lieu de laisser croire que le calendrier est à jour (FR-020).
+
+**Hash de contenu** : `workout_dsl.hash_session_content(date, name, rendered_dsl)` — SHA-256, partagé
+entre la couche provider (I/O) et l'orchestration. Exclut l'id serveur et la charge/durée (dérivées par
+intervals.icu du DSL — R4). Vérifié en conditions réelles : intervals.icu renvoie `description` au byte près.
+
+**Layering** : `calendar.py` = I/O calendrier pur, **ne touche jamais la DB** ; `services/publication.py` =
+consentement + diff + persistance, **sans dépendance aiogram** ; `bot/routers/publish.py` = interaction.
+
+**Scripts** : `scripts/calendar_state.py --describe` (lecture seule) / `--withdraw-all --confirm` ;
+`scripts/publish_horizon.py --approve-for-test` (request→approve→publish, pour les scénarios quickstart).
+
 ## Tables SQLite
 
 | Table | Description |
@@ -201,6 +254,8 @@ affiche message "Sortie bonus" au lieu de "hors plan" (`app/providers/intervals/
 | `activities` | Import historique (`source="intervals_icu"`, `source_activity_id`, `tss`, `tss_method`, `device_watts`) |
 | `weekly_adherence` | Taux d'adhérence hebdomadaire — upsert à chaque `/recap` ; clé `(user_id, week_start_date)` ; colonnes : `sessions_done`, `sessions_planned`, `compliance_pct`, `tss_7d`, `week_number`, `plan_id` |
 | `wellness` | HRV / FC repos / sommeil / CTL / ATL quotidiens — ingérée à chaque tick du poller (`ingest_wellness`), source de `get_current_fitness()` |
+| `publication_approvals` | spec 005 — consentement enregistré et lié au contenu (`content_hash` SHA-256 sur ce qui a été montré) ; `status` pending/approved/declined (terminal, jamais supprimé — FR-003) ; `horizon_start`/`horizon_end`, `session_count` |
+| `published_entries` | spec 005 — une ligne par séance écrite au calendrier ; `external_id` unique/user (`banister:<plan>:<date>:<slug>`), `intervals_event_id`, `approval_id` (FR-005), `content_hash`, `withdrawn_at` (gardée en historique — distingue « retirée par nous » de « supprimée par l'athlète ») |
 
 `oauth_connections` a été supprimée (spec 002 T059) — l'authentification intervals.icu est une clé API
 personnelle, pas un flux OAuth, donc aucune table de tokens n'est nécessaire.
@@ -433,5 +488,11 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier fenêtre de matching / candidats | `app/providers/analysis/matching.py` — `find_plan_candidate()` |
 | Modifier vue plan+réalisé pour le LLM (system prompt) | `app/llm/tools.py` — `build_activity_session_pairs()` + `_format_week_pairs()` |
 | Ajouter outil LLM | `app/llm/tools.py` (définition JSON Schema) + `_execute_tool()` dans `app/llm/chat.py` |
+| Modifier le rendu DSL d'une séance (texte envoyé à intervals.icu) | `app/providers/intervals/workout_dsl.py` — `render_dsl()` |
+| Modifier le diff idempotent de publication (create/update/conflict) | `app/providers/intervals/calendar.py` — `publish_sessions()` |
+| Modifier la barrière de consentement / le hash de plan | `app/services/publication.py` — `authorize_publication()`, `plan_content_hash()` |
+| Modifier le texte de la demande d'approbation `/publish` | `app/services/publication.py` — `build_approval_request_text()` |
+| Modifier la détection de divergence plan↔calendrier | `app/services/publication.py` — `check_divergence()` |
+| Modifier le flux `/publish` / `/unpublish` (clavier, callbacks) | `app/bot/routers/publish.py` + `app/bot/keyboards/publish.py` |
 | Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `alembic revision --autogenerate` |
 | Architecture complète | `docs/ARCHITECTURE.md` |
