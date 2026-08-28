@@ -9,8 +9,16 @@ Indicateurs fournis :
   - load_trend_pct     : tendance de charge vs moyenne 6 semaines (%)
   - sessions_done_7d   : nombre de séances réalisées sur 7 jours
   - monotony_index     : formule Foster = mean(TSS journaliers) / std(TSS journaliers)
+                         sur les 7 jours de la fenêtre, jours de repos comptés à 0.
                          Un indice élevé (>2.0) = charge monotone = risque de surmenage silencieux.
-                         None si <2 jours d'activité (std non calculable).
+                         None uniquement si aucun jour d'entraînement dans la fenêtre, ou si
+                         les 7 valeurs journalières sont identiques (std = 0).
+
+⚠️ spec 006 R2 : la version précédente calculait mean/std sur les seuls jours
+d'entraînement, en jetant les zéros des jours de repos — or ce sont eux qui créent la
+variance. Résultat : indice ~2.6 (au-dessus du seuil danger) sur une semaine en réalité
+très variée, et l'athlète recevait « ⚠️ Charge monotone » à tort. Corrigé ici :
+les 7 jours de la fenêtre sont pris, jours de repos inclus, conformément à Foster (1998).
 """
 
 from __future__ import annotations
@@ -70,21 +78,29 @@ def compute_weekly_snapshot(logs: list, today: date) -> WeeklySnapshot:
     # sessions_done_7d : uniquement les SessionLog (status explicite) — pas les Activity
     sessions_done_7d = sum(1 for it in recent if getattr(it, "status", None) == "done")
 
-    # TSS par jour (plusieurs séances/jour cumulées)
-    daily_map: dict[date, float] = {}
+    # TSS par jour sur les 7 jours de la fenêtre — jours de repos initialisés à 0.
+    # Les zéros font partie de la formule Foster (spec 006 R2) : une semaine avec des
+    # jours de repos est, par définition, une semaine variée.
+    daily_map: dict[date, float] = {
+        cutoff_7d + timedelta(days=i): 0.0 for i in range(7)
+    }
     for it in recent:
         d = _item_date(it)
-        daily_map[d] = daily_map.get(d, 0.0) + _item_tss(it)
+        if d in daily_map:
+            daily_map[d] += _item_tss(it)
 
-    daily_values = list(daily_map.values())
+    daily_values = list(daily_map.values())  # toujours 7 valeurs
+    training_days = sum(1 for v in daily_values if v > 0)
 
-    # Monotonie Foster : mean / std (score élevé = charge uniforme = danger)
-    if len(daily_values) >= 2:
+    # Monotonie Foster : mean / std sur les 7 jours (score élevé = charge uniforme = danger).
+    # None si aucun entraînement dans la fenêtre (rien à évaluer) ou si std = 0 (les 7
+    # jours identiques — en pratique une semaine entièrement au repos).
+    if training_days == 0:
+        monotony_index = None
+    else:
         d_mean = mean(daily_values)
         d_std = stdev(daily_values)
         monotony_index = round(d_mean / d_std, 2) if d_std > 0 else None
-    else:
-        monotony_index = None
 
     # ── Fenêtre 6 semaines précédentes (sans chevauchement avec les 7 derniers jours) ─
     weekly_tss: list[float] = []

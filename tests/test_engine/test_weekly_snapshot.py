@@ -122,48 +122,51 @@ def test_load_trend_zero_when_no_past_history():
     assert snap.load_trend_pct == 0.0
 
 
-# ── Monotonie Foster ───────────────────────────────────────────────────────────
+# ── Monotonie Foster (corrigée spec 006 R2 : 7 jours, repos = 0) ───────────────
 
-def test_monotony_none_with_single_training_day():
-    """Pas de std calculable avec un seul jour → None."""
+def test_monotony_none_when_no_training_in_window():
+    """Aucun entraînement dans la fenêtre → rien à évaluer → None."""
+    snap = compute_weekly_snapshot([], TODAY)
+    assert snap.monotony_index is None
+
+
+def test_monotony_none_when_all_seven_days_identical():
+    """Les 7 jours à charge identique → std = 0 → None (garde division par zéro).
+    En pratique : une semaine entièrement au repos, ou un entraînement identique
+    chaque jour (cas dégénéré)."""
+    logs = [_log(TODAY - timedelta(days=i), 100.0) for i in range(7)]  # les 7 jours
+    snap = compute_weekly_snapshot(logs, TODAY)
+    assert snap.monotony_index is None
+
+
+def test_monotony_counts_rest_days_as_zero():
+    """Une seule séance dans la semaine → 6 jours à 0 → semaine TRÈS variée →
+    indice Foster bas, bien en dessous du seuil danger (2.0)."""
     logs = [_log(TODAY, 100.0)]
-    snap = compute_weekly_snapshot(logs, TODAY)
-    assert snap.monotony_index is None
-
-
-def test_monotony_none_when_std_is_zero():
-    """Charge parfaitement uniforme → std = 0 → None (garde division par zéro)."""
-    logs = [_log(TODAY - timedelta(days=i), 100.0) for i in range(6)]
-    snap = compute_weekly_snapshot(logs, TODAY)
-    # std=0 → guard retourne None
-    assert snap.monotony_index is None
-
-
-def test_monotony_computed_with_varied_daily_load():
-    """Charge variée → monotonie calculable (mean/std > 0)."""
-    # [90, 110, 90, 110, 90, 110] → std ≈ 10, monotony = 100/10 = 10 (élevée)
-    loads = [90, 110, 90, 110, 90, 110]
-    logs = [_log(TODAY - timedelta(days=i), float(loads[i])) for i in range(6)]
-    snap = compute_weekly_snapshot(logs, TODAY)
-    assert snap.monotony_index is not None
-    assert snap.monotony_index > 0
-
-
-def test_monotony_high_for_nearly_uniform_load():
-    """Charge très uniforme (faible std) → indice Foster très élevé → danger."""
-    # [99, 101, 99, 101] → mean=100, std≈1.15, Foster=100/1.15≈87
-    loads = [99.0, 101.0, 99.0, 101.0]
-    logs = [_log(TODAY - timedelta(days=i), loads[i]) for i in range(4)]
-    snap = compute_weekly_snapshot(logs, TODAY)
-    assert snap.monotony_index is not None
-    assert snap.monotony_index > 2.0  # nettement au-dessus du seuil danger
-
-
-def test_monotony_low_for_highly_varied_load():
-    """Charge très variée (grand std) → indice Foster faible → bonne variété."""
-    # [10, 190, 10, 190] → mean=100, std≈104, Foster≈0.96 < 2.0
-    loads = [10.0, 190.0, 10.0, 190.0]
-    logs = [_log(TODAY - timedelta(days=i), loads[i]) for i in range(4)]
     snap = compute_weekly_snapshot(logs, TODAY)
     assert snap.monotony_index is not None
     assert snap.monotony_index < 2.0
+
+
+def test_monotony_low_for_a_genuinely_varied_week():
+    """La vraie semaine de l'athlète (spec 006 R2) : [0, 0, 108, 63, 0, 310, 338]
+    → Foster ≈ 0.79, une semaine variée, PAS de fausse alerte « Charge monotone »."""
+    loads = [0.0, 0.0, 108.0, 63.0, 0.0, 310.0, 338.0]  # jour -6 .. jour 0
+    logs = [
+        _log(TODAY - timedelta(days=6 - i), loads[i])
+        for i in range(7)
+        if loads[i] > 0
+    ]
+    snap = compute_weekly_snapshot(logs, TODAY)
+    assert snap.monotony_index is not None
+    assert snap.monotony_index < 2.0  # la correction : plus de fausse alerte
+
+
+def test_monotony_high_when_load_is_spread_evenly_across_all_seven_days():
+    """Vraie monotonie : charge modérée et similaire chaque jour, aucun repos
+    → faible std → indice Foster élevé → danger correctement signalé."""
+    loads = [95.0, 100.0, 98.0, 102.0, 97.0, 101.0, 99.0]  # 7j entraînés, peu de variation
+    logs = [_log(TODAY - timedelta(days=i), loads[i]) for i in range(7)]
+    snap = compute_weekly_snapshot(logs, TODAY)
+    assert snap.monotony_index is not None
+    assert snap.monotony_index > 2.0

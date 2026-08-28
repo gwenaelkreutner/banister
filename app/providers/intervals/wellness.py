@@ -44,6 +44,7 @@ async def ingest_wellness(
             weight_kg=record.get("weight"),
             ctl=record.get("ctl"),
             atl=record.get("atl"),
+            ramp_rate=record.get("rampRate"),
         )
 
     return len(records)

@@ -13,7 +13,12 @@ class Wellness(Base, TimestampMixin):
     Every signal is nullable, deliberately: a missing HRV reading stored as `0` would
     later read as a catastrophic drop once spec 006 evaluates readiness thresholds
     against it — the exact failure FR-024 exists to prevent. Capture only; no
-    interpretation happens here or anywhere in this feature (FR-025).
+    interpretation happens here.
+
+    `ramp_rate` (spec 006 T003, research R4): the source's own CTL gain per week,
+    consumed as-is, never recomputed (Constitution Principle IV). Nullable for the same
+    reason as every other column here — absent must stay distinguishable from zero.
+    Spec 006's guardrail evaluators interpret these numbers; this model still does not.
     """
 
     __tablename__ = "wellness"
@@ -33,3 +38,5 @@ class Wellness(Base, TimestampMixin):
     weight_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
     ctl: Mapped[float | None] = mapped_column(Float, nullable=True)
     atl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # source's own CTL gain per week, consumed as-is (spec 006 R4)
+    ramp_rate: Mapped[float | None] = mapped_column(Float, nullable=True)

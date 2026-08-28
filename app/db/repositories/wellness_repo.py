@@ -19,9 +19,11 @@ async def upsert(
     weight_kg: float | None = None,
     ctl: float | None = None,
     atl: float | None = None,
+    ramp_rate: float | None = None,
 ) -> None:
     """Insert ou met à jour le bien-être pour (user_id, date_). Chaque signal absent de la
-    source reste `None` ici — jamais réécrit en `0` (FR-024)."""
+    source reste `None` ici — jamais réécrit en `0` (FR-024). `ramp_rate` : gain de CTL
+    par semaine calculé par la source, consommé tel quel (spec 006 R4)."""
     stmt = (
         dialect_insert(session)(Wellness)
         .values(
@@ -34,6 +36,7 @@ async def upsert(
             weight_kg=weight_kg,
             ctl=ctl,
             atl=atl,
+            ramp_rate=ramp_rate,
         )
         .on_conflict_do_update(
             index_elements=["user_id", "date"],
@@ -44,6 +47,7 @@ async def upsert(
                 "weight_kg": weight_kg,
                 "ctl": ctl,
                 "atl": atl,
+                "ramp_rate": ramp_rate,
             },
         )
     )

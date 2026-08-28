@@ -28,8 +28,8 @@ Existing single-project layout (`app/`, `tests/`, `scripts/`) — see plan.md's 
 
 **Purpose**: Skeleton files and the threshold registry, which everything downstream reads from.
 
-- [ ] T001 [P] Create skeleton files with module docstrings for: `app/engine/guardrails.py`, `app/engine/baselines.py`, `app/services/guardrail_service.py`, `app/services/response_verification.py`, `app/db/models/guardrail.py`, `app/db/repositories/guardrail_repo.py`, `scripts/guardrail_state.py`, `scripts/verify_corpus.py`
-- [ ] T002 Create `app/engine/guardrail_thresholds.py` — every threshold from contracts/guardrails.md §1 as a module-level constant, each with its published source in a comment on the same line or the line above (FR-016, SC-007); resolve `ACWR_MIN_CTL` per research open question 2 and record the reasoning in the file; include the EWMA-vs-Gabbett caveat as a module docstring paragraph, not a footnote
+- [X] T001 [P] Create skeleton files with module docstrings for: `app/engine/guardrails.py`, `app/engine/baselines.py`, `app/services/guardrail_service.py`, `app/services/response_verification.py`, `app/db/models/guardrail.py`, `app/db/repositories/guardrail_repo.py`, `scripts/guardrail_state.py`, `scripts/verify_corpus.py`
+- [X] T002 Create `app/engine/guardrail_thresholds.py` — every threshold from contracts/guardrails.md §1 as a module-level constant, each with its published source in a comment on the same line or the line above (FR-016, SC-007); resolve `ACWR_MIN_CTL` per research open question 2 and record the reasoning in the file; include the EWMA-vs-Gabbett caveat as a module docstring paragraph, not a footnote
 
 ---
 
@@ -39,15 +39,15 @@ Existing single-project layout (`app/`, `tests/`, `scripts/`) — see plan.md's 
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T003 [P] Add `ramp_rate` (`Float`, nullable) to `Wellness` in `app/db/models/wellness.py` per data-model.md §`wellness.ramp_rate`; extend the model docstring to note it is the source's own CTL-gain-per-week, consumed as-is (research R4)
-- [ ] T004 [P] Define `ResponseCheckFailure` and `GuardrailAcknowledgement` ORM models in `app/db/models/guardrail.py` per data-model.md §Persisted (`ResponseCheckFailure`: `failure_kind`, `metric_name`, `stated_value`, `expected_value`, `response_excerpt`, `occurred_at`; `GuardrailAcknowledgement`: `finding_kind`, `occurrence_key`, `decision`, `decided_at`)
-- [ ] T005 Register the three models in `app/db/models/__init__.py` and generate the Alembic migration via `alembic revision --autogenerate` in `migrations/versions/` (depends on T003, T004)
-- [ ] T006 Ingest `rampRate` in `app/providers/intervals/wellness.py::ingest_wellness()` — add `ramp_rate=record.get("rampRate")` to the `wellness_repo.upsert()` call and the corresponding parameter in `app/db/repositories/wellness_repo.py::upsert()` (depends on T003)
-- [ ] T007 **[REGRESSION]** Correct Foster monotony in `app/engine/weekly_snapshot.py` — compute `mean/std` over all seven days of the window with rest days as zero load, not over training days only (research R2); `monotony_index` is `None` only when the window has fewer than 2 days of *any* data, not fewer than 2 training days
-- [ ] T008 [P] Extend `tests/test_engine/test_weekly_snapshot.py` — assert monotony includes rest days as zero; assert a real varied week (loads like `[0,0,108,63,0,310,338]`) comes out below `MONOTONY_HIGH`; assert the old training-days-only path is gone (depends on T007)
-- [ ] T009 Update the two monotony call sites in `app/services/weekly_recap.py` (lines ~112 and ~215) and the one in `app/llm/activity_analysis.py` (~289) to read the corrected value — confirm by grep that no call site still assumes the pre-correction scale; the "⚠️ Charge monotone" string must now be absent on a genuinely varied week (depends on T007)
-- [ ] T010 [P] Implement `app/engine/baselines.py`: `rolling_baseline(values: list[tuple[date, float]], *, today, window_days, min_samples) -> float | None` — the athlete's own rolling mean over the window; returns `None` below `min_samples` (FR-013); a pure function, no DB (depends on T002)
-- [ ] T011 [P] Test `baselines.py` in `tests/test_engine/test_guardrails_sufficiency.py` — baseline is `None` below `BASELINE_MIN_SAMPLES`; baseline reflects only the supplied history; adding rows across the minimum makes it non-`None` with no other change (FR-015, US5 acceptance 4)
+- [X] T003 [P] Add `ramp_rate` (`Float`, nullable) to `Wellness` in `app/db/models/wellness.py` per data-model.md §`wellness.ramp_rate`; extend the model docstring to note it is the source's own CTL-gain-per-week, consumed as-is (research R4)
+- [X] T004 [P] Define `ResponseCheckFailure` and `GuardrailAcknowledgement` ORM models in `app/db/models/guardrail.py` per data-model.md §Persisted (`ResponseCheckFailure`: `failure_kind`, `metric_name`, `stated_value`, `expected_value`, `response_excerpt`, `occurred_at`; `GuardrailAcknowledgement`: `finding_kind`, `occurrence_key`, `decision`, `decided_at`)
+- [X] T005 Register the three models in `app/db/models/__init__.py` and generate the Alembic migration via `alembic revision --autogenerate` in `migrations/versions/` (depends on T003, T004)
+- [X] T006 Ingest `rampRate` in `app/providers/intervals/wellness.py::ingest_wellness()` — add `ramp_rate=record.get("rampRate")` to the `wellness_repo.upsert()` call and the corresponding parameter in `app/db/repositories/wellness_repo.py::upsert()` (depends on T003)
+- [X] T007 **[REGRESSION]** Correct Foster monotony in `app/engine/weekly_snapshot.py` — compute `mean/std` over all seven days of the window with rest days as zero load, not over training days only (research R2); `monotony_index` is `None` only when the window has fewer than 2 days of *any* data, not fewer than 2 training days
+- [X] T008 [P] Extend `tests/test_engine/test_weekly_snapshot.py` — assert monotony includes rest days as zero; assert a real varied week (loads like `[0,0,108,63,0,310,338]`) comes out below `MONOTONY_HIGH`; assert the old training-days-only path is gone (depends on T007)
+- [X] T009 Update the two monotony call sites in `app/services/weekly_recap.py` (lines ~112 and ~215) and the one in `app/llm/activity_analysis.py` (~289) to read the corrected value — confirm by grep that no call site still assumes the pre-correction scale; the "⚠️ Charge monotone" string must now be absent on a genuinely varied week (depends on T007)
+- [X] T010 [P] Implement `app/engine/baselines.py`: `rolling_baseline(values: list[tuple[date, float]], *, today, window_days, min_samples) -> float | None` — the athlete's own rolling mean over the window; returns `None` below `min_samples` (FR-013); a pure function, no DB (depends on T002)
+- [X] T011 [P] Test `baselines.py` in `tests/test_engine/test_guardrails_sufficiency.py` — baseline is `None` below `BASELINE_MIN_SAMPLES`; baseline reflects only the supplied history; adding rows across the minimum makes it non-`None` with no other change (FR-015, US5 acceptance 4)
 
 **Checkpoint**: schema migrated, monotony fixed at every call site, baseline machinery in place and tested.
 

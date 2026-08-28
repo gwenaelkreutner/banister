@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.atl_ctl import compute_fitness_from_any, estimate_initial_ctl, tsb_label
+from app.engine.guardrail_thresholds import MONOTONY_HIGH
 from app.engine.schemas import TrainingPlanSchema
 from app.engine.tss import tss_from_weekly_hours
 from app.engine.weekly_snapshot import WeeklySnapshot, compute_weekly_snapshot
@@ -109,7 +110,7 @@ def _format_stats_section(
         sessions_line = f"Séances réalisées : <b>{sessions_done}</b>"
 
     monotony_line = ""
-    if snapshot.monotony_index is not None and snapshot.monotony_index > 2.0:
+    if snapshot.monotony_index is not None and snapshot.monotony_index > MONOTONY_HIGH:
         monotony_line = f"\n⚠️ Charge monotone (indice : {snapshot.monotony_index:.1f}) — varie les intensités"
 
     return (
@@ -214,7 +215,7 @@ async def compute_weekly_recap(
     compliance_display = compliance_pct if compliance_pct is not None else 0.0
     monotony_line = (
         f"\n- Monotonie : {snapshot.monotony_index:.1f} (⚠️ élevée — varie les intensités)"
-        if snapshot.monotony_index is not None and snapshot.monotony_index > 2.0
+        if snapshot.monotony_index is not None and snapshot.monotony_index > MONOTONY_HIGH
         else ""
     )
 

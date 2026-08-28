@@ -287,12 +287,17 @@ async def generate_activity_analysis(
         if next_session_info:
             pmc_lines.append(f"- Prochaine séance : {next_session_info}")
         if snap.monotony_index is not None:
+            from app.engine.guardrail_thresholds import MONOTONY_HIGH
+
             mono_note = (
                 "charge monotone → varier les intensités"
-                if snap.monotony_index > 2.0
+                if snap.monotony_index > MONOTONY_HIGH
                 else "bonne variété des charges"
             )
-            pmc_lines.append(f"- Monotonie (Foster) : {snap.monotony_index:.1f} ({mono_note} ; >2.0 = danger)")
+            pmc_lines.append(
+                f"- Monotonie (Foster) : {snap.monotony_index:.1f} "
+                f"({mono_note} ; >{MONOTONY_HIGH:.1f} = danger)"
+            )
 
     if pmc_lines:
         lines.append("\n[FORME & CHARGE]")
