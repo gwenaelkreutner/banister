@@ -108,16 +108,16 @@ Existing single-project layout (`app/`, `tests/`) — see plan.md's Project Stru
 
 ### Tests for User Story 3
 
-- [ ] T027 [P] [US3] Test that five consecutive publications of the same period produce exactly one entry per session (SC-003), in `tests/test_providers/test_calendar.py`
-- [ ] T028 [P] [US3] Test that a foreign (`cycling-coach:`-prefixed) entry survives every republication untouched (FR-015, SC-004), in `tests/test_providers/test_calendar.py`
-- [ ] T029 [P] [US3] Test that an interrupted publication, retried, reaches the same calendar state as an uninterrupted one (FR-016, SC-007), in `tests/test_services/test_publication.py`
+- [X] T027 [P] [US3] Test that five consecutive publications of the same period produce exactly one entry per session (SC-003), in `tests/test_providers/test_calendar.py`
+- [X] T028 [P] [US3] Test that a foreign (`cycling-coach:`-prefixed) entry survives every republication untouched (FR-015, SC-004), in `tests/test_providers/test_calendar.py`
+- [X] T029 [P] [US3] Test that an interrupted publication, retried, reaches the same calendar state as an uninterrupted one (FR-016, SC-007), in `tests/test_services/test_publication.py`
 
 ### Implementation for User Story 3
 
-- [ ] T030 [US3] Implement idempotent diffing in `publish_sessions()`: `list_events()` the target window, filter to `external_id.startswith("banister:")`, index by `external_id`, `update_event()` what already exists (matched via `publication_repo.get_entry_by_external_id`), `create_event()` only what does not (research.md R2) (depends on T007, T015)
-- [ ] T031 [US3] Make publication resumable: before writing, skip sessions whose `PublishedEntry` already exists with a matching `content_hash` for this approval; write only what's missing or changed (FR-016, FR-017) (depends on T011, T030)
-- [ ] T032 [P] [US3] Implement `scripts/calendar_state.py --describe` — lists calendar events grouped by `external_id` prefix (`banister:` / `cycling-coach:` / other), per quickstart.md Scenario 0
-- [ ] T033 [P] [US3] Implement `scripts/publish_horizon.py --approve-for-test` — dev/test utility running request→auto-approve→publish in one call, per quickstart.md Scenario 3
+- [X] T030 [US3] Implement idempotent diffing in `publish_sessions()`: `list_events()` the target window, filter to `external_id.startswith("banister:")`, index by `external_id`, `update_event()` what already exists (matched via `publication_repo.get_entry_by_external_id`), `create_event()` only what does not (research.md R2) (depends on T007, T015)
+- [X] T031 [US3] Make publication resumable: before writing, skip sessions whose `PublishedEntry` already exists with a matching `content_hash` for this approval; write only what's missing or changed (FR-016, FR-017) (depends on T011, T030)
+- [X] T032 [P] [US3] Implement `scripts/calendar_state.py --describe` — lists calendar events grouped by `external_id` prefix (`banister:` / `cycling-coach:` / other), per quickstart.md Scenario 0
+- [X] T033 [P] [US3] Implement `scripts/publish_horizon.py --approve-for-test` — dev/test utility running request→auto-approve→publish in one call, per quickstart.md Scenario 3
 
 **Checkpoint**: US1–US3 independently testable — republication is safe and observably converges.
 

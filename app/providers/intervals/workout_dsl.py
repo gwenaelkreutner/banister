@@ -12,11 +12,26 @@ threshold change retargets published sessions the same way it retargets displaye
 """
 from __future__ import annotations
 
+import hashlib
+from datetime import date
+
 from app.engine.schemas import RepeatGroup, Step, Zone
 
 _WARMUP = "Warmup"
 _MAIN = "Main set"
 _COOLDOWN = "Cooldown"
+
+
+def hash_session_content(session_date: date, name: str, rendered_dsl: str) -> str:
+    """SHA-256( session_date | name | rendered_DSL_text ) — data-model.md §Content hashing.
+
+    The canonical content fingerprint, shared by the approval binding (FR-004) and the
+    republish diff (FR-017, FR-020). Lives here, in the pure format module, so provider
+    I/O (calendar.py) and orchestration (services/publication.py) hash identically.
+    Deliberately excludes the server-assigned event id and the load/duration intervals.icu
+    derives from the DSL itself (R4)."""
+    payload = f"{session_date.isoformat()}|{name}|{rendered_dsl}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class EmptySessionError(ValueError):

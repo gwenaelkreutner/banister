@@ -18,7 +18,11 @@ from datetime import date, timedelta
 
 from app.engine.schemas import SessionSpec, TrainingPlanSchema
 from app.providers.intervals.client import IntervalsClient
-from app.providers.intervals.workout_dsl import EmptySessionError, render_dsl
+from app.providers.intervals.workout_dsl import (
+    EmptySessionError,
+    hash_session_content,
+    render_dsl,
+)
 
 EXTERNAL_ID_PREFIX = "banister:"
 
@@ -66,10 +70,20 @@ class SessionOutcome:
     workout_type: str
     name: str
     external_id: str
-    status: str  # "created" | "refused" | "failed"
+    status: str  # "created" | "updated" | "unchanged" | "refused" | "failed"
     intervals_event_id: str | None = None
+    content_hash: str | None = None
     rendered_dsl: str | None = None
     detail: str | None = None  # why, for "refused" / "failed"
+
+
+@dataclass
+class KnownEntry:
+    """What the service layer already knows about a previously published slot — enough
+    for publish_sessions to decide skip vs update without importing the DB (layering)."""
+
+    intervals_event_id: str
+    content_hash: str
 
 
 @dataclass
@@ -105,17 +119,38 @@ async def publish_sessions(
     plan_id: uuid.UUID,
     horizon_start: date,
     horizon_end: date,
+    *,
+    known_entries: dict[str, KnownEntry] | None = None,
 ) -> list[SessionOutcome]:
-    """Render each in-horizon session's DSL, build its event, and `create_event()` it.
+    """Converge the athlete's calendar to the in-horizon plan, idempotently (FR-014,
+    FR-017, SC-003) — the API has no upsert, so re-POSTing would duplicate (research R2).
 
-    A session without steps is collected as a refusal (FR-009), never raised past the
-    batch. A per-session API failure is collected as "failed" and does not abandon the
-    rest (FR-028) — full transient-failure coherence is Phase 8's T050.
+    The diff (research R2's prescribed shape):
+      1. `list_events()` the window and keep only `external_id`-prefixed entries — FR-015
+         makes "never touch what we didn't create" true by construction: anything without
+         our prefix is invisible here.
+      2. For each planned session: if a `known_entries` row already records this exact
+         `content_hash` *and* the event is present remotely -> skip ("unchanged"). This is
+         also what makes an interrupted run resumable (FR-016): the sessions written
+         before the interruption are recognised and not rewritten.
+      3. Else if the event exists remotely -> `update_event()` ("updated").
+      4. Else -> `create_event()` ("created").
 
-    Create-only for now: idempotent diffing (read the window, PUT what exists) lands in
-    US3 (T030). Publishing twice here would duplicate — that is the naive implementation
-    SC-003 is written to catch.
+    A session without steps is a refusal (FR-009); a per-session API failure is "failed"
+    and does not abandon the rest (FR-028).
     """
+    known_entries = known_entries or {}
+    # A list_events failure propagates — the caller surfaces staleness to the athlete
+    # rather than letting a half-known window look current (FR-026).
+    remote = await client.list_events(
+        oldest=horizon_start.isoformat(), newest=horizon_end.isoformat()
+    )
+    remote_by_ext: dict[str, dict] = {
+        e["external_id"]: e
+        for e in remote
+        if str(e.get("external_id") or "").startswith(EXTERNAL_ID_PREFIX)
+    }
+
     outcomes: list[SessionOutcome] = []
     for planned in iter_horizon_sessions(plan, horizon_start, horizon_end):
         spec = planned.spec
@@ -128,52 +163,58 @@ async def publish_sessions(
         )
         name = spec.description_fr or spec.workout_type
 
+        def _outcome(status: str, *, _p=planned, _n=name, _x=external_id, **kw) -> SessionOutcome:
+            return SessionOutcome(
+                session_date=_p.session_date,
+                week_number=_p.week_number,
+                day_of_week=_p.day_of_week,
+                workout_type=_p.spec.workout_type,
+                name=_n,
+                external_id=_x,
+                status=status,
+                **kw,
+            )
+
         if spec.steps is None:
             outcomes.append(
-                SessionOutcome(
-                    session_date=planned.session_date,
-                    week_number=planned.week_number,
-                    day_of_week=planned.day_of_week,
-                    workout_type=spec.workout_type,
-                    name=name,
-                    external_id=external_id,
-                    status="refused",
-                    detail="séance sans structure (plan pré-004) — non publiable",
-                )
+                _outcome("refused", detail="séance sans structure (plan pré-004) — non publiable")
             )
             continue
 
         try:
             rendered = render_dsl(spec.steps, plan.zones)
         except EmptySessionError as exc:
+            outcomes.append(_outcome("refused", detail=str(exc)))
+            continue
+
+        content_hash = hash_session_content(planned.session_date, name, rendered)
+        remote_event = remote_by_ext.get(external_id)
+        known = known_entries.get(external_id)
+
+        if known is not None and known.content_hash == content_hash and remote_event is not None:
             outcomes.append(
-                SessionOutcome(
-                    session_date=planned.session_date,
-                    week_number=planned.week_number,
-                    day_of_week=planned.day_of_week,
-                    workout_type=spec.workout_type,
-                    name=name,
-                    external_id=external_id,
-                    status="refused",
-                    detail=str(exc),
+                _outcome(
+                    "unchanged",
+                    intervals_event_id=known.intervals_event_id,
+                    content_hash=content_hash,
+                    rendered_dsl=rendered,
                 )
             )
             continue
 
         payload = build_event_payload(planned.session_date, name, external_id, rendered)
-
         try:
-            event = await client.create_event(payload)
+            if remote_event is not None:
+                event = await client.update_event(str(remote_event.get("id")), payload)
+                status = "updated"
+            else:
+                event = await client.create_event(payload)
+                status = "created"
         except Exception as exc:  # noqa: BLE001 — one bad session must not sink the batch (FR-028)
             outcomes.append(
-                SessionOutcome(
-                    session_date=planned.session_date,
-                    week_number=planned.week_number,
-                    day_of_week=planned.day_of_week,
-                    workout_type=spec.workout_type,
-                    name=name,
-                    external_id=external_id,
-                    status="failed",
+                _outcome(
+                    "failed",
+                    content_hash=content_hash,
                     rendered_dsl=rendered,
                     detail=f"{type(exc).__name__}: {exc}",
                 )
@@ -181,15 +222,10 @@ async def publish_sessions(
             continue
 
         outcomes.append(
-            SessionOutcome(
-                session_date=planned.session_date,
-                week_number=planned.week_number,
-                day_of_week=planned.day_of_week,
-                workout_type=spec.workout_type,
-                name=name,
-                external_id=external_id,
-                status="created",
-                intervals_event_id=str(event.get("id")),
+            _outcome(
+                status,
+                intervals_event_id=str(event.get("id") if event else remote_event.get("id")),
+                content_hash=content_hash,
                 rendered_dsl=rendered,
             )
         )

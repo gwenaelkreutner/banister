@@ -12,18 +12,10 @@ from app.db.models.user import User
 from app.db.repositories import plan_repo, publication_repo
 from app.engine.plan_builder import generate_plan
 from app.engine.schemas import TrainingPlanSchema
-from app.providers.intervals.calendar import iter_horizon_sessions
+from app.providers.intervals.calendar import EXTERNAL_ID_PREFIX, iter_horizon_sessions
 from app.services import publication
+from tests.fake_intervals import FakeCalendarClient
 from tests.test_engine.test_plan_builder import make_profile
-
-
-class _StubClient:
-    def __init__(self):
-        self.payloads: list[dict] = []
-
-    async def create_event(self, payload: dict) -> dict:
-        self.payloads.append(payload)
-        return {"id": 700000 + len(self.payloads)}
 
 
 async def _make_user(session) -> User:
@@ -92,12 +84,12 @@ async def test_execute_publication_writes_one_entry_per_created_session(db_sessi
     request = await publication.request_publication(db_session, user, plan)
     await publication_repo.mark_approved(db_session, request.approval.id)
 
-    client = _StubClient()
+    client = FakeCalendarClient()
     report = await publication.execute_publication(
         db_session, client, user, plan, request.approval
     )
 
-    assert report.created == len(client.payloads) > 0
+    assert report.created == client.create_calls > 0
     assert report.failed == 0
     entries = await publication_repo.get_active_entries_for_plan(db_session, user.id, plan.id)
     assert len(entries) == report.created
@@ -131,10 +123,10 @@ async def test_pending_approval_is_not_a_green_light(db_session):
     plan = await _make_plan(db_session, user.id)
     request = await publication.request_publication(db_session, user, plan)  # stays pending
 
-    client = _StubClient()
+    client = FakeCalendarClient()
     with pytest.raises(publication.PublicationNotAuthorized):
         await publication.execute_publication(db_session, client, user, plan, request.approval)
-    assert client.payloads == []  # nothing written (FR-001)
+    assert client.create_calls == 0  # nothing written (FR-001)
 
 
 async def test_plan_change_after_approval_refuses_and_writes_nothing(db_session):
@@ -156,12 +148,76 @@ async def test_plan_change_after_approval_refuses_and_writes_nothing(db_session)
     flag_modified(plan, "plan_technical")
     await db_session.flush()
 
-    client = _StubClient()
+    client = FakeCalendarClient()
     with pytest.raises(publication.StaleApprovalError):
         await publication.execute_publication(db_session, client, user, plan, request.approval)
-    assert client.payloads == []
+    assert client.create_calls == 0
     entries = await publication_repo.get_active_entries_for_plan(db_session, user.id, plan.id)
     assert entries == []
+
+
+# ── US3: republication converges instead of accumulating ─────────────────────
+
+
+async def test_five_executions_of_one_approval_stay_at_one_entry_per_session(db_session):
+    user = await _make_user(db_session)
+    plan = await _make_plan(db_session, user.id)
+    request = await _approved_request(db_session, user, plan)
+    client = FakeCalendarClient(
+        seed=[{"id": 9, "external_id": "cycling-coach:x:y", "name": "foreign"}]
+    )
+
+    first = await publication.execute_publication(db_session, client, user, plan, request.approval)
+    for _ in range(4):
+        rep = await publication.execute_publication(
+            db_session, client, user, plan, request.approval
+        )
+        assert rep.created == 0 and rep.updated == 0
+        assert rep.unchanged == first.created
+
+    ours = client.by_prefix(EXTERNAL_ID_PREFIX)
+    assert len(ours) == first.created
+    assert client.create_calls == first.created  # created once, never again
+    entries = await publication_repo.get_active_entries_for_plan(db_session, user.id, plan.id)
+    assert len(entries) == first.created
+    assert client.find("cycling-coach:x:y") is not None  # foreign entry untouched
+
+
+async def test_interrupted_publication_retried_reaches_the_same_state(db_session):
+    user = await _make_user(db_session)
+    plan = await _make_plan(db_session, user.id)
+    request = await _approved_request(db_session, user, plan)
+
+    # First run: fail after the 2nd create, simulating a mid-publication crash.
+    client = FakeCalendarClient()
+    real_create = client.create_event
+    calls = {"n": 0}
+
+    async def _crash_after_two(payload):
+        calls["n"] += 1
+        if calls["n"] > 2:
+            raise RuntimeError("connection dropped")
+        return await real_create(payload)
+
+    client.create_event = _crash_after_two
+    partial = await publication.execute_publication(
+        db_session, client, user, plan, request.approval
+    )
+    assert partial.created == 2 and partial.failed >= 1
+
+    # Retry against the same calendar + same approval — no crash this time.
+    client.create_event = real_create
+    resumed = await publication.execute_publication(
+        db_session, client, user, plan, request.approval
+    )
+
+    assert resumed.unchanged == 2  # the two already written are recognised
+    assert resumed.failed == 0
+    ours = client.by_prefix(EXTERNAL_ID_PREFIX)
+    externals = [e["external_id"] for e in ours]
+    assert len(externals) == len(set(externals))  # no duplicates from the retry
+    entries = await publication_repo.get_active_entries_for_plan(db_session, user.id, plan.id)
+    assert len(entries) == len(ours)
 
 
 async def test_declining_writes_nothing_and_records_the_no(db_session):

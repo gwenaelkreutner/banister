@@ -25,11 +25,16 @@ from app.db.models.user import User
 from app.db.repositories import publication_repo
 from app.engine.schemas import TrainingPlanSchema
 from app.providers.intervals.calendar import (
+    KnownEntry,
     iter_horizon_sessions,
     publish_sessions,
 )
 from app.providers.intervals.client import IntervalsClient
-from app.providers.intervals.workout_dsl import EmptySessionError, render_dsl
+from app.providers.intervals.workout_dsl import (
+    EmptySessionError,
+    hash_session_content,
+    render_dsl,
+)
 
 _WEEKDAY_FR = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"]
 
@@ -40,20 +45,10 @@ _DEVICE_CAVEAT = (
 )
 
 
-def hash_content(session_date: date, name: str, rendered_dsl: str) -> str:
-    """SHA-256( session_date | name | rendered_DSL_text ) — data-model.md §Content hashing.
-
-    The rendered DSL is what actually reaches the calendar and what the athlete is shown
-    in the approval request, so hashing it binds the approval to precisely the content it
-    was shown for (FR-004) and lets a published entry be compared against the current
-    plan to detect drift (FR-020) with no ambiguity about which fields count.
-
-    Deliberately excluded: intervals_event_id (server-assigned, not content), approval_id
-    (provenance), load/duration (derived by intervals.icu from the DSL itself — R4 — so
-    including them would double-count the same information).
-    """
-    payload = f"{session_date.isoformat()}|{name}|{rendered_dsl}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+# The canonical per-session content hash lives in the pure format module so provider
+# I/O and this orchestrator hash identically (data-model.md §Content hashing). Kept
+# re-exported here under its original name for callers within the service layer.
+hash_content = hash_session_content
 
 
 def _current_week_number(schema: TrainingPlanSchema, plan_start: date) -> int:
@@ -222,6 +217,8 @@ async def authorize_publication(
 class PublicationReport:
     text: str
     created: int
+    updated: int
+    unchanged: int
     refused: int
     failed: int
 
@@ -233,57 +230,89 @@ async def execute_publication(
     plan: TrainingPlan,
     approval: PublicationApproval,
 ) -> PublicationReport:
-    """Run the approved publication: write the events, persist a PublishedEntry per
-    written session carrying the authorising approval_id (FR-005), and build the
-    per-session report — never a blanket "done" (FR-006).
+    """Run the approved publication: converge the calendar to the plan (idempotent —
+    US3), persist/update a PublishedEntry per written session carrying the authorising
+    approval_id (FR-005), and build the per-session report — never a blanket "done"
+    (FR-006).
 
     Gated: authorize_publication() runs before a single event is written, so a stale or
-    missing approval refuses here rather than deep in the batch (FR-001, FR-004)."""
+    missing approval refuses here rather than deep in the batch (FR-001, FR-004).
+    Resumable: existing PublishedEntry rows tell publish_sessions what was already
+    written, so a retried interrupted run converges to the same state (FR-016)."""
     approval = await authorize_publication(session, approval.id, plan)
     schema = TrainingPlanSchema.model_validate(plan.plan_technical)
+
+    active = await publication_repo.get_active_entries_for_plan(session, user.id, plan.id)
+    entries_by_ext = {e.external_id: e for e in active}
+    known = {
+        ext: KnownEntry(intervals_event_id=e.intervals_event_id, content_hash=e.content_hash)
+        for ext, e in entries_by_ext.items()
+    }
+
     outcomes = await publish_sessions(
-        client, schema, plan.id, approval.horizon_start, approval.horizon_end
+        client,
+        schema,
+        plan.id,
+        approval.horizon_start,
+        approval.horizon_end,
+        known_entries=known,
     )
 
-    created = refused = failed = 0
+    counts = {"created": 0, "updated": 0, "unchanged": 0, "refused": 0, "failed": 0}
     lines: list[str] = []
     for o in outcomes:
+        counts[o.status] += 1
         label = (
             f"{_WEEKDAY_FR[o.session_date.weekday()]} "
             f"{o.session_date.strftime('%d/%m')}  {o.name}"
         )
-        if o.status == "created":
-            created += 1
-            lines.append(f"  ✅ {label}")
-            await publication_repo.create_published_entry(
-                session,
-                user_id=user.id,
-                plan_id=plan.id,
-                approval_id=approval.id,
-                external_id=o.external_id,
-                intervals_event_id=o.intervals_event_id or "",
-                session_date=o.session_date,
-                week_number=o.week_number,
-                day_of_week=o.day_of_week,
-                content_hash=hash_content(o.session_date, o.name, o.rendered_dsl or ""),
-            )
-        elif o.status == "refused":
-            refused += 1
-            lines.append(f"  ❌ {label} — {o.detail}")
-        else:
-            failed += 1
+        if o.status in ("created", "updated", "unchanged"):
+            mark = {"created": "✅", "updated": "✅", "unchanged": "✓"}[o.status]
+            suffix = {"created": "", "updated": " (mise à jour)", "unchanged": " (déjà à jour)"}[
+                o.status
+            ]
+            lines.append(f"  {mark} {label}{suffix}")
+            existing = entries_by_ext.get(o.external_id)
+            if existing is None:
+                await publication_repo.create_published_entry(
+                    session,
+                    user_id=user.id,
+                    plan_id=plan.id,
+                    approval_id=approval.id,
+                    external_id=o.external_id,
+                    intervals_event_id=o.intervals_event_id or "",
+                    session_date=o.session_date,
+                    week_number=o.week_number,
+                    day_of_week=o.day_of_week,
+                    content_hash=o.content_hash or "",
+                )
+            elif o.status != "unchanged":
+                await publication_repo.update_published_entry(
+                    session,
+                    existing.id,
+                    intervals_event_id=o.intervals_event_id,
+                    content_hash=o.content_hash,
+                    approval_id=approval.id,
+                )
+        else:  # refused | failed
             lines.append(f"  ❌ {label} — {o.detail}")
 
-    header_bits = [f"{created} publiée{'s' if created != 1 else ''}"]
-    if refused:
-        header_bits.append(f"{refused} refusée{'s' if refused != 1 else ''}")
-    if failed:
-        header_bits.append(f"{failed} échec{'s' if failed != 1 else ''}")
-    header = ("✅ " if not (refused or failed) else "⚠️ ") + ", ".join(header_bits)
+    written = counts["created"] + counts["updated"]
+    header_bits = [f"{written} publiée{'s' if written != 1 else ''}"]
+    if counts["unchanged"]:
+        header_bits.append(f"{counts['unchanged']} déjà à jour")
+    if counts["refused"]:
+        header_bits.append(f"{counts['refused']} refusée{'s' if counts['refused'] != 1 else ''}")
+    if counts["failed"]:
+        header_bits.append(f"{counts['failed']} échec{'s' if counts['failed'] != 1 else ''}")
+    ok = not (counts["refused"] or counts["failed"])
+    header = ("✅ " if ok else "⚠️ ") + ", ".join(header_bits)
 
     return PublicationReport(
         text="\n".join([header, "", *lines]),
-        created=created,
-        refused=refused,
-        failed=failed,
+        created=counts["created"],
+        updated=counts["updated"],
+        unchanged=counts["unchanged"],
+        refused=counts["refused"],
+        failed=counts["failed"],
     )
