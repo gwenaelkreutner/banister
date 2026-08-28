@@ -61,18 +61,18 @@ Existing single-project layout (`app/`, `tests/`, `scripts/`) — see plan.md's 
 
 ### Tests for User Story 1
 
-- [ ] T012 [P] [US1] Test the workload signal evaluators in `tests/test_engine/test_guardrails_workload.py` — ratio inside range → no finding (FR-005); ratio above range → finding whose `action` reduces load (FR-003); ramp above `RAMP_RATE_CAUTION` → independent finding; a falling ratio + falling ramp (taper shape) is distinguishable from a rising ratio + flat ramp (build shape); monotony above `MONOTONY_HIGH` → finding
-- [ ] T013 [P] [US1] Test that every `GuardrailFinding` carries a non-empty `observed`, `reference`, and `action`, and that constructing one without an action fails (FR-027, SC-003), in `tests/test_engine/test_guardrails_workload.py`
+- [X] T012 [P] [US1] Test the workload signal evaluators in `tests/test_engine/test_guardrails_workload.py` — ratio inside range → no finding (FR-005); ratio above range → finding whose `action` reduces load (FR-003); ramp above `RAMP_RATE_CAUTION` → independent finding; a falling ratio + falling ramp (taper shape) is distinguishable from a rising ratio + flat ramp (build shape); monotony above `MONOTONY_HIGH` → finding
+- [X] T013 [P] [US1] Test that every `GuardrailFinding` carries a non-empty `observed`, `reference`, and `action`, and that constructing one without an action fails (FR-027, SC-003), in `tests/test_engine/test_guardrails_workload.py`
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Define `GuardrailFinding` dataclass in `app/engine/guardrails.py` per data-model.md §Guardrail finding (`kind`, `observed`, `reference`, `threshold`, `action`, `severity`, `occurrence_key`) — `action` is a required field, an actionless finding is unconstructible
-- [ ] T015 [US1] Implement `evaluate_acwr(atl, ctl) -> GuardrailFinding | None` in `app/engine/guardrails.py` — ratio from `ATL/CTL` (research R3), evaluated against `ACWR_SAFE_LOW`/`ACWR_SAFE_HIGH`; `None` (not meaningful yet) when `ctl < ACWR_MIN_CTL`; above range → `action` reduces load (FR-003)
-- [ ] T016 [US1] Implement `evaluate_ramp_rate(ramp_rate) -> GuardrailFinding | None` in `app/engine/guardrails.py` — against `RAMP_RATE_CAUTION`/`RAMP_RATE_HIGH`, consumed as-is (research R4)
-- [ ] T017 [US1] Implement `evaluate_monotony(monotony_index) -> GuardrailFinding | None` in `app/engine/guardrails.py` — against `MONOTONY_HIGH`, using the corrected value from T007; `None` when `monotony_index is None`
-- [ ] T018 [US1] Implement `assemble_workload_findings(session, user_id) -> list[GuardrailFinding]` in `app/services/guardrail_service.py` — reads latest `wellness` row (ATL/CTL/ramp_rate) + `compute_weekly_snapshot` for monotony, calls the three evaluators, returns the non-`None` findings sorted by `severity` (depends on T015, T016, T017)
-- [ ] T019 [US1] Surface workload findings in the coach's context — extend `app/llm/tools.py::build_system_prompt()` with a `guardrail_findings` parameter rendered as a "SIGNAUX" block (observed value, reference, action per finding, contracts §2), wired from `app/llm/chat.py` calling `assemble_workload_findings` (depends on T018)
-- [ ] T020 [US1] Add the load-reduction constraint to `app/llm/prompts.py` — when a workload finding is present with ratio above range, the system prompt states that any load recommendation must reduce, not increase, load (FR-003, SC-008)
+- [X] T014 [US1] Define `GuardrailFinding` dataclass in `app/engine/guardrails.py` per data-model.md §Guardrail finding (`kind`, `observed`, `reference`, `threshold`, `action`, `severity`, `occurrence_key`) — `action` is a required field, an actionless finding is unconstructible
+- [X] T015 [US1] Implement `evaluate_acwr(atl, ctl) -> GuardrailFinding | None` in `app/engine/guardrails.py` — ratio from `ATL/CTL` (research R3), evaluated against `ACWR_SAFE_LOW`/`ACWR_SAFE_HIGH`; `None` (not meaningful yet) when `ctl < ACWR_MIN_CTL`; above range → `action` reduces load (FR-003)
+- [X] T016 [US1] Implement `evaluate_ramp_rate(ramp_rate) -> GuardrailFinding | None` in `app/engine/guardrails.py` — against `RAMP_RATE_CAUTION`/`RAMP_RATE_HIGH`, consumed as-is (research R4)
+- [X] T017 [US1] Implement `evaluate_monotony(monotony_index) -> GuardrailFinding | None` in `app/engine/guardrails.py` — against `MONOTONY_HIGH`, using the corrected value from T007; `None` when `monotony_index is None`
+- [X] T018 [US1] Implement `assemble_workload_findings(session, user_id) -> list[GuardrailFinding]` in `app/services/guardrail_service.py` — reads latest `wellness` row (ATL/CTL/ramp_rate) + `compute_weekly_snapshot` for monotony, calls the three evaluators, returns the non-`None` findings sorted by `severity` (depends on T015, T016, T017)
+- [X] T019 [US1] Surface workload findings in the coach's context — extend `app/llm/tools.py::build_system_prompt()` with a `guardrail_findings` parameter rendered as a "SIGNAUX" block (observed value, reference, action per finding, contracts §2), wired from `app/llm/chat.py` calling `assemble_workload_findings` (depends on T018)
+- [X] T020 [US1] Add the load-reduction constraint to `app/llm/prompts.py` — when a workload finding is present with ratio above range, the system prompt states that any load recommendation must reduce, not increase, load (FR-003, SC-008)
 
 **Checkpoint**: US1 independently functional — a ramping load history produces a stated, actionable warning; a normal one produces silence.
 

@@ -1,19 +1,25 @@
 from app.db.repositories import (
     activity_repo,
     chat_repo,
+    guardrail_repo,
     plan_repo,
     profile_repo,
     session_log_repo,
+    sync_state_repo,
     user_repo,
     weekly_adherence_repo,
+    wellness_repo,
 )
 
 __all__ = [
     "activity_repo",
     "chat_repo",
+    "guardrail_repo",
     "plan_repo",
     "profile_repo",
     "session_log_repo",
+    "sync_state_repo",
     "user_repo",
     "weekly_adherence_repo",
+    "wellness_repo",
 ]

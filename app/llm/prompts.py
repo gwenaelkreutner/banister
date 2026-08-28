@@ -252,6 +252,18 @@ Exemple de bon angle : arriver frais ou fatigué change tout sur la séance clé
 Utilise "tu". Aucun titre, aucun label."""
 
 
+# spec 006 T020 / FR-003 / SC-008 — appended to the system prompt only when a workload
+# guardrail with an above-range acute:chronic ratio (or a high ramp rate) is present.
+# The finding's own action already says "reduce load"; this is the meta-rule that the
+# rest of the response must not contradict it.
+GUARDRAIL_LOAD_REDUCTION_RULE = (
+    "CONTRAINTE STRICTE : un signal de surcharge est actif. Dans toute cette réponse, "
+    "ne recommande jamais d'augmenter la charge, le volume ou l'intensité — même si "
+    "l'athlète le demande. Ta recommandation doit réduire ou, au mieux, maintenir la "
+    "charge, et tu expliques pourquoi en citant le chiffre du signal."
+)
+
+
 def build_ux_system_prompt(user_level: int) -> str:
     """Retourne le system prompt UXWriting avec vocabulaire adapté au niveau.
 

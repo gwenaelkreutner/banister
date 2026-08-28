@@ -103,6 +103,18 @@ async def run_chat(
         except Exception:
             logger.warning("Impossible de calculer la divergence calendrier")
 
+    # Garde-fous d'entraînement (spec 006) : signaux calculés par le moteur déterministe.
+    from app.services.guardrail_service import (
+        assemble_workload_findings,
+        has_load_reduction_finding,
+    )
+
+    guardrail_findings: list = []
+    try:
+        guardrail_findings = await assemble_workload_findings(session, user.id)
+    except Exception:
+        logger.warning("Impossible de calculer les signaux garde-fous")
+
     coaching_ctx = build_system_prompt(
         first_name=user.first_name or "l'athlète",
         profile=profile,
@@ -114,8 +126,13 @@ async def run_chat(
         coach_memory=list(profile_row.coach_memory or []) if profile_row else None,
         athlete_notes=dict(profile_row.athlete_notes or {}) if profile_row else None,
         calendar_divergence=calendar_divergence,
+        guardrail_findings=guardrail_findings,
     )
     system = f"{ux_rules}\n\n---\n\n{coaching_ctx}"
+    if has_load_reduction_finding(guardrail_findings):
+        from app.llm.prompts import GUARDRAIL_LOAD_REDUCTION_RULE
+
+        system = f"{system}\n\n{GUARDRAIL_LOAD_REDUCTION_RULE}"
 
     messages = build_context_messages(history)
     messages.append({"role": "user", "content": user_message})

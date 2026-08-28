@@ -309,6 +309,7 @@ def build_system_prompt(
     coach_memory: list | None = None,
     athlete_notes: dict | None = None,
     calendar_divergence: str | None = None,
+    guardrail_findings: list | None = None,
 ) -> str:
     p = profile
 
@@ -422,6 +423,21 @@ def build_system_prompt(
 
     if calendar_divergence:
         lines += ["", calendar_divergence]
+
+    # Signaux des garde-fous (spec 006) — calculés par le moteur déterministe, le LLM
+    # ne fait que les restituer (FR-022). Chaque signal porte sa valeur observée, sa
+    # référence, et une action concrète (SC-003).
+    if guardrail_findings:
+        lines += ["", "⚠️ SIGNAUX D'ENTRAÎNEMENT (à transmettre tels quels, ne recalcule rien) :"]
+        for f in guardrail_findings:
+            lines.append(
+                f"  • {f.observed} (référence {f.reference} ; seuil {f.threshold})\n"
+                f"    → {f.action}"
+            )
+        lines.append(
+            "Si l'athlète discute d'entraînement, mentionne le ou les signaux ci-dessus "
+            "avec leur chiffre et l'action associée — c'est le cœur du métier de coach ici."
+        )
 
     lines.append("")
     lines.append(COACH_SOUL.format(first_name=first_name))
