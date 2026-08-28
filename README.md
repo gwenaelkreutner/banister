@@ -152,11 +152,14 @@ app/
 │   ├── models/          # SQLAlchemy ORM models
 │   └── repositories/    # Data access layer — no SQL in handlers
 ├── engine/              # Deterministic engine — zero LLM
-│   ├── plan_builder.py  # Main plan generator
+│   ├── plan_builder.py  # Main plan generator — selects from session_library.py
 │   ├── periodization.py # Phase sequencing (Base/Build/Peak/Taper)
+│   ├── session_library.py  # Loads/validates sessions/*.yaml, deterministic selection
+│   ├── fitting.py       # Adapts a template to a load target (not yet wired into generation)
+│   ├── session_render.py   # Session description, derived from structure, language-aware
 │   ├── atl_ctl.py       # ATL/CTL/TSB (Banister impulse-response model)
 │   ├── adherence_kpi.py # Session KPI scoring (0–2.0 pts)
-│   └── schemas.py       # Pydantic: AthleteProfileSchema, TrainingPlanSchema
+│   └── schemas.py       # Pydantic: AthleteProfileSchema, TrainingPlanSchema, Step, RepeatGroup
 ├── llm/
 │   ├── providers/       # Anthropic + OpenRouter (common interface)
 │   ├── chat.py          # Conversation orchestration
@@ -169,6 +172,7 @@ app/
 └── providers/
     ├── intervals/       # intervals.icu client, mapper, poller, notifier, wellness
     └── analysis/        # Activity ↔ plan matching, highlight/personal-record selection
+sessions/                # Session template library (YAML, contributor-editable, no code change needed)
 migrations/
 ├── env.py               # Alembic environment
 └── versions/            # Schema revisions — applied automatically at startup

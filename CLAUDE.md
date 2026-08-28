@@ -13,18 +13,19 @@ Ce document décrit **l'état actuel du code**, pas la cible. Une refonte vers u
 source est spécifiée dans `specs/001` à `007`, et gouvernée par `.specify/memory/constitution.md`.
 
 **✅ Fait** : spec 003 (SQLite local remplace Supabase), spec 002 (intervals.icu remplace Strava, log manuel
-supprimé) — voir sections ci-dessous, à jour.
+supprimé), spec 004 (séances structurées, bibliothèque de templates, fitting) — voir sections ci-dessous,
+à jour.
 
 Ce qui reste à faire, et qui rendra d'autres sections de ce fichier obsolètes :
 
 | Décision | Effet sur ce document |
 |---|---|
-| `SessionSpec` gagne des étapes structurées | Schémas Pydantic + génération de plan |
 | Push des séances vers le calendrier intervals.icu | Nouvelle section à créer |
+| Câblage de `load_persona()` (voix du coach configurable) | Sections chat/prompts |
 
 **Ordre de construction** (les numéros de spec sont des identifiants, pas une séquence) :
-~~`003` base locale~~ (fait) → ~~`002` intervals.icu~~ (fait) → `004` séances structurées → `005` push
-calendrier → `006` guardrails → `007` premier lancement.
+~~`003` base locale~~ (fait) → ~~`002` intervals.icu~~ (fait) → ~~`004` séances structurées~~ (fait) →
+`005` push calendrier → `006` guardrails → `007` premier lancement.
 
 Mettre ce fichier à jour **au fil de** chaque migration, pas après coup.
 
@@ -91,10 +92,13 @@ app/
 │   ├── activity_feedback.py # assemble_activity_feedback() — contexte post-séance, sans dépendance bot
 │   └── fitness.py           # get_current_fitness() — CTL/ATL/TSB courants depuis la table wellness
 ├── engine/                  # Moteur déterministe — zéro LLM ici
-│   ├── schemas.py           # Pydantic : AthleteProfileSchema, TrainingPlanSchema, SessionSpec
+│   ├── schemas.py           # Pydantic : AthleteProfileSchema, TrainingPlanSchema, SessionSpec, Step, RepeatGroup
 │   ├── periodization.py     # Blocs Base/Build/Peak/Taper
-│   ├── plan_builder.py      # Génération plan complet
-│   ├── plan_modifier.py     # Modification plan (outil LLM)
+│   ├── plan_builder.py      # Génération plan complet — sélectionne depuis session_library.py
+│   ├── plan_modifier.py     # Modification plan (outil LLM) — préserve/adapte les steps
+│   ├── session_library.py   # Charge/valide sessions/*.yaml, sélection déterministe (spec 004)
+│   ├── fitting.py           # Adapte un template à une cible de charge (spec 004, pas encore branché à generate_plan())
+│   ├── session_render.py    # Description dérivée des steps, paramétrée par langue (spec 004)
 │   ├── atl_ctl.py           # ATL/CTL/TSB (EMA τ=7j/42j) — calculé localement, la source ne le fournit pas
 │   ├── adherence_kpi.py     # Score KPI par séance (0–2.0 pts) + bloc KPI hebdo
 │   └── weekly_snapshot.py   # WeeklySnapshot : tendance charge, monotonie Foster
@@ -221,7 +225,26 @@ zone_code: str            # "Z2", "Z4"...
 duration_minutes: int
 target_time_in_zone_minutes: int  # temps cible dans zone principale
 tss_target: float
+description_fr: str       # généré par app/engine/session_render.py, pas la seule description possible
+steps: list[Step | RepeatGroup] | None = None  # spec 004 — None = séance "legacy" (plan pré-004)
 ```
+
+**`Step`** / **`RepeatGroup`** (spec 004, `app/engine/schemas.py`) — structure d'une séance :
+```python
+Step: kind ("warmup"|"work"|"recovery"|"cooldown"|"steady"), duration_minutes, zone_code
+RepeatGroup: repeat (≥2), steps: list[Step]  # une seule unité répétée, jamais imbriquée
+```
+Jamais de watts/bpm sur un `Step` — uniquement `zone_code`, relatif. `duration_minutes`/`zone_code`/
+`target_time_in_zone_minutes` sont dérivés des steps (`derive_*()` dans `schemas.py`) et vérifiés par un
+`model_validator` **uniquement quand `steps` est présent** — une séance sans steps garde son résumé stocké
+tel quel (compat plans pré-004). `tss_target` n'est **pas** vérifié par ce validator (dérivation dépendante
+de `coaching_mode`, une préoccupation de plan, pas de session) : voir `app/engine/tss.py::estimate_structured_session_tss()`.
+
+**Bibliothèque de séances** (spec 004, `sessions/*.yaml`, chargée par `app/engine/session_library.py`) :
+mirror du pattern `personas/*.yaml` — contenu éditable sans toucher au code. Chaque template porte
+`purpose`/`intent`/`suits` obligatoires (FR-017) et une `structure` (steps). `scaling:` optionnel déclare
+les bornes de `app/engine/fitting.py::fit_template()` — absent = template fixe, sélectionné tel quel.
+Voir `sessions/README.md` et `specs/004-structured-workouts/contracts/session-library.md`.
 
 **Convertir avant `build_system_prompt()`** :
 ```python
@@ -384,6 +407,10 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Ajouter commande bot | `app/bot/routers/` + enregistrer dans `setup.py` avant `chat_router` |
 | Modifier génération plan | `app/engine/plan_builder.py` |
 | Modifier périodisation | `app/engine/periodization.py` |
+| Ajouter/modifier une séance de la bibliothèque | `sessions/*.yaml` — voir `sessions/README.md`, aucun changement `.py` requis |
+| Modifier le chargement/sélection de la bibliothèque | `app/engine/session_library.py` |
+| Modifier le fitting (adapter un template à une charge cible) | `app/engine/fitting.py` — pas encore appelé par `generate_plan()` |
+| Modifier la description d'une séance (texte, langue) | `app/engine/session_render.py` |
 | Modifier la figure CTL/ATL/TSB courante (source) | `app/services/fitness.py` — `get_current_fitness()` |
 | Modifier le calcul local ATL/CTL/TSB (repli, projection théorique) | `app/engine/atl_ctl.py` |
 | Projection CTL théorique (suivi plan) | `app/engine/atl_ctl.py` — `project_fitness_from_plan()` |

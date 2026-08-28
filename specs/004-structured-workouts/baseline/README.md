@@ -1,7 +1,18 @@
 # Behaviour baseline — captured before spec 004 touches `app/engine/`
 
 Captured 2026-08-28, before any change to `SessionSpec` or `plan_builder.py`. This is the "before" that
-`behaviour.json` and later `after.json` are diffed against for SC-004 (spec 004 T002, T022).
+`behaviour.json` and every later re-run diffed against for SC-004 (spec 004 T002, T022, T038, T046, T051)
+— confirmed byte-identical after every phase through Phase 8.
+
+**T056: kept deliberately, not deleted, once SC-004 was demonstrated.** This is a **historical artifact**,
+frozen at 2026-08-28 — not a live comparison target. The real database has since changed (a new plan was
+generated live during T026's Telegram testing; `scripts/snapshot_session_behaviour.py` was itself patched
+mid-feature to resolve each log against its own `plan_id` rather than assuming "active plan owns every
+log" — see the Phase 6 commit). Re-running the script today still produces byte-identical output to this
+file, but that is because the script was made robust to the underlying data changing, not because the
+data itself is unchanged. Kept for the audit trail this feature's whole methodology depends on — the value
+is in being able to point at a concrete "here is what before looked like," not in staying rerunnable
+forever unmodified.
 
 ## Counts
 

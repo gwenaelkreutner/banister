@@ -203,14 +203,13 @@ This scenario verifies the renderer's contract, not the persona wiring.
 
 ## Definition of done
 
-- [ ] Baseline captured **before** any change to `SessionSpec` — otherwise SC-004 is unverifiable
-- [ ] All scenarios pass
-- [ ] `diff baseline.json after.json` is empty (SC-004), not merely "close"
-- [ ] The library coverage test demonstrably **fails** when a template is removed
-- [ ] Duration-equals-sum asserted against independently stated totals, not against its own derivation
-- [ ] A legacy plan fixture taken from the real database, not hand-written
-- [ ] Full suite green; no new lint violations beyond the 226 baseline
-- [ ] `eval/` runs and shows no quality regression (SC-005a)
-- [ ] Plan modification through the coach exercised by hand, not only by test (FR-012)
-- [ ] If any Section 11 material was copied, a `NOTICE` with its MIT licence ships in the same change
-      (spec 001 FR-028) — see plan.md §Phase boundaries
+- [x] Baseline captured **before** any change to `SessionSpec` — `scripts/snapshot_session_behaviour.py`, Phase 1
+- [x] All scenarios pass — re-run in full at Phase 9 (T051)
+- [x] `diff baseline.json after.json` is empty (SC-004) — confirmed after every phase through Phase 8, not merely once
+- [x] The library coverage test demonstrably **fails** when a template is removed — `test_session_library.py::TestCoverageAssertionCanActuallyFail` (caught and fixed its own first, too-permissive draft — see T036)
+- [x] Duration-equals-sum asserted against independently stated totals, not against its own derivation — `test_structured_sessions.py`
+- [x] A legacy plan fixture taken from the real database, not hand-written — `tests/fixtures/plans/legacy_plan.json`
+- [x] Full suite green; no new lint violations beyond the 226 baseline — 329 passed (1 pre-existing, documented, unrelated failure), lint at 222
+- [x] `eval/` runs and shows no quality regression (SC-005a) — same single pre-existing warning at every phase
+- [x] Plan modification through the coach exercised by hand, not only by test (FR-012) — T026, real Telegram; found and fixed 3 unrelated live bugs along the way
+- [x] If any Section 11 material was copied, a `NOTICE` with its MIT licence ships in the same change — **precondition checked, not triggered**: nothing from Section 11 was ever copied (T055); the library was built from the project's own existing structures instead (research R3)

@@ -203,12 +203,23 @@ plan-level rather than session-level, and touching it pulls in the persona wirin
 
 ## Phase 9: Polish & Cross-Cutting Concerns
 
-- [ ] T051 Run every scenario in [quickstart.md](./quickstart.md) and record the outcome, including the scenarios that must fail when sabotaged (T036) rather than only the happy paths
-- [ ] T052 [P] Update `CLAUDE.md` — the `SessionSpec` schema block, the architecture tree (`sessions/`, three new engine modules), and the navigation table, per the project's documentation policy
-- [ ] T053 [P] Update `README.md` project structure to include `sessions/`
-- [ ] T054 Confirm the full suite is green and no new lint violations beyond the 226 baseline recorded in T002
-- [ ] T055 If any Section 11 material was copied verbatim at any point, ship a `NOTICE` carrying its MIT licence and attribution in the same change (spec 001 FR-028) — the plan avoids this by building from the project's own structures, so this task is a **precondition check**, not an assumed deliverable
-- [ ] T056 Delete `specs/004-structured-workouts/baseline/` once SC-004 has been demonstrated, or keep it deliberately and say why — a stale baseline that silently stops being the real "before" is worse than none
+- [X] T051 Re-ran all 8 quickstart scenarios explicitly (not just relied on earlier per-phase runs): structured-session schema (16 passed), behaviour snapshot (byte-identical), library + coverage-can-fail (26), fitting + refusals (13), legacy compatibility (4+5), eval harness (same single pre-existing warning), weekly recap (4), session rendering (13). Every scenario's sabotage/failure-mode check re-verified, not just its happy path
+- [X] T052 [P] Updated `CLAUDE.md` — refonte-progress table (spec 004 marked done), architecture tree (`session_library.py`/`fitting.py`/`session_render.py` in `engine/`), `SessionSpec`/`Step`/`RepeatGroup` schema block with the tss_target-not-validated design note, a new session-library summary paragraph, and 4 new navigation-table rows
+- [X] T053 [P] Updated `README.md`'s project structure tree — `session_library.py`/`fitting.py`/`session_render.py`, `Step`/`RepeatGroup` on the schemas line, and a new top-level `sessions/` entry
+- [X] T054 Full suite: 329 passed, 1 pre-existing unrelated failure (documented in `baseline/README.md` since Phase 1), 13 skipped. Lint: 222 — under the 226 baseline, not just at it
+- [X] T055 **Precondition checked, not triggered**: `grep -rli "section 11|crankaddict" sessions/ app/engine/session_library.py app/engine/fitting.py app/engine/session_render.py` returns nothing — confirmed at the end of the feature, not just assumed from the plan. No `NOTICE` needed
+- [X] T056 **Kept `specs/004-structured-workouts/baseline/`, deliberately, not deleted** — marked explicitly in its own `README.md` as a historical artifact frozen at 2026-08-28, not a live comparison target (the real database has since changed; the snapshot script was itself patched mid-feature — Phase 6 — to stay robust to that). The audit trail this feature's whole methodology depends on is the reason to keep it, not an oversight in forgetting to clean up
+
+## Spec 004 — complete
+
+All 56 tasks done across 9 phases. Structured sessions ship real steps, everything that read the old flat
+`SessionSpec` still works unchanged (verified against a real corpus, not just tests), the session library
+is genuinely contributor-editable, fitting exists as tested infrastructure not yet wired into initial
+generation, and descriptions are derived from structure rather than hardcoded French. Three real,
+pre-existing bugs were found and fixed along the way by actually exercising the feature against a real
+Telegram session rather than trusting a green test suite (T026) — see project memory
+`feedback_live_testing_finds_real_bugs.md` for why that pattern keeps paying off. 13 commits, full history
+in `git log`.
 
 ---
 
