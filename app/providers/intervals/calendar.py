@@ -95,22 +95,42 @@ class PlannedSession:
 
 
 def iter_horizon_sessions(
-    plan: TrainingPlanSchema, horizon_start: date, horizon_end: date
+    plan: TrainingPlanSchema,
+    horizon_start: date,
+    horizon_end: date,
+    *,
+    today: date | None = None,
 ) -> list[PlannedSession]:
     """Every session whose planned date falls in [horizon_start, horizon_end], ordered
-    by date. A week with no `start_date` is skipped rather than guessed."""
+    by date. A week with no `start_date` is skipped rather than guessed.
+
+    Past-dated sessions (`session_date < today`) are excluded from every path that reads
+    this — publish, republish diff, withdrawal, and the approval content hash — so a
+    plan change never writes or rewrites a session in the past (FR-011, FR-022). `today`
+    defaults to `date.today()`; pass it explicitly only in tests.
+    """
+    cutoff = today or date.today()
     out: list[PlannedSession] = []
     for week in plan.weeks:
         if week.start_date is None:
             continue
         for spec in week.sessions:
             session_date = week.start_date + timedelta(days=spec.day_of_week)
+            if session_date < cutoff:
+                continue
             if horizon_start <= session_date <= horizon_end:
                 out.append(
                     PlannedSession(session_date, week.week_number, spec.day_of_week, spec)
                 )
     out.sort(key=lambda p: p.session_date)
     return out
+
+
+async def withdraw_event(client: IntervalsClient, intervals_event_id: str) -> None:
+    """Remove one calendar event we published (FR-019, FR-021). Only ever called with a
+    PublishedEntry's own event id — the prefix scoping that protects foreign entries
+    lives one layer up, in the service that decides *which* entries to withdraw."""
+    await client.delete_event(intervals_event_id)
 
 
 async def publish_sessions(
@@ -121,6 +141,7 @@ async def publish_sessions(
     horizon_end: date,
     *,
     known_entries: dict[str, KnownEntry] | None = None,
+    today: date | None = None,
 ) -> list[SessionOutcome]:
     """Converge the athlete's calendar to the in-horizon plan, idempotently (FR-014,
     FR-017, SC-003) — the API has no upsert, so re-POSTing would duplicate (research R2).
@@ -152,7 +173,7 @@ async def publish_sessions(
     }
 
     outcomes: list[SessionOutcome] = []
-    for planned in iter_horizon_sessions(plan, horizon_start, horizon_end):
+    for planned in iter_horizon_sessions(plan, horizon_start, horizon_end, today=today):
         spec = planned.spec
         external_id = build_external_id(
             plan_id,

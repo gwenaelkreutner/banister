@@ -13,7 +13,12 @@ import uuid
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.publish import approval_keyboard
@@ -58,6 +63,68 @@ async def cmd_publish(message: Message, session: AsyncSession, user: User):
         reply_markup=approval_keyboard(request.approval.id),
         parse_mode="HTML",
     )
+
+
+@router.message(Command("unpublish"))
+async def cmd_unpublish(message: Message, session: AsyncSession, user: User):
+    if not user.onboarding_completed:
+        await message.answer("Complète d'abord ton onboarding avec /start.")
+        return
+    plan = await plan_repo.get_active_plan(session, user.id)
+    if plan is None:
+        await message.answer("Aucun plan actif.")
+        return
+    active = await publication_repo.get_active_entries_for_plan(session, user.id, plan.id)
+    if not active:
+        await message.answer("Rien n'est actuellement publié dans ton calendrier.")
+        return
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"🗑 Tout retirer ({len(active)})", callback_data="pub:withdrawall"
+                ),
+                InlineKeyboardButton(text="Annuler", callback_data="pub:withdrawcancel"),
+            ]
+        ]
+    )
+    await message.answer(
+        f"Retirer les <b>{len(active)}</b> séances que j'ai publiées dans ton calendrier "
+        "intervals.icu ? Tes propres entrées et celles d'autres outils ne sont pas touchées.",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "pub:withdrawcancel")
+async def cb_withdraw_cancel(callback: CallbackQuery):
+    await callback.answer("Annulé.")
+    await callback.message.edit_text("Rien retiré.", parse_mode="HTML")
+
+
+@router.callback_query(F.data == "pub:withdrawall")
+async def cb_withdraw_all(callback: CallbackQuery, session: AsyncSession, user: User):
+    plan = await plan_repo.get_active_plan(session, user.id)
+    if plan is None:
+        await callback.answer("Aucun plan actif.", show_alert=True)
+        return
+    await callback.answer("Retrait en cours…")
+    await callback.message.edit_text("⏳ Retrait des séances…", parse_mode="HTML")
+    withdrawn, failed = await publication.withdraw_all_publications(
+        session, _client(), user, plan
+    )
+    if failed:
+        await callback.message.edit_text(
+            f"⚠️ {withdrawn} retirées, {failed} échec(s). Relance /unpublish pour réessayer.",
+            parse_mode="HTML",
+        )
+    else:
+        await callback.message.edit_text(
+            f"✅ {withdrawn} séance(s) retirée(s). Ton calendrier ne contient "
+            "plus rien de ma part.",
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(F.data.startswith("pub:decline:"))

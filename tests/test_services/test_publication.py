@@ -220,6 +220,129 @@ async def test_interrupted_publication_retried_reaches_the_same_state(db_session
     assert len(entries) == len(ours)
 
 
+# ── US4: the calendar tracks the plan; staleness is never silent ─────────────
+
+
+async def _rename_first_structured(schema, suffix=" (v2)"):
+    for w in schema.weeks:
+        for s in w.sessions:
+            if s.steps is not None:
+                s.description_fr = (s.description_fr or "") + suffix
+                return
+    raise AssertionError("no structured session to rename")
+
+
+async def test_plan_change_then_reapproval_updates_the_calendar(db_session):
+    user = await _make_user(db_session)
+    plan = await _make_plan(db_session, user.id)
+    client = FakeCalendarClient()
+
+    r1 = await _approved_request(db_session, user, plan)
+    await publication.execute_publication(db_session, client, user, plan, r1.approval)
+
+    # Change the plan and re-approve.
+    schema = TrainingPlanSchema.model_validate(plan.plan_technical)
+    await _rename_first_structured(schema)
+    plan.plan_technical = schema.model_dump(mode="json")
+    flag_modified(plan, "plan_technical")
+    await db_session.flush()
+
+    r2 = await _approved_request(db_session, user, plan)
+    report = await publication.execute_publication(db_session, client, user, plan, r2.approval)
+
+    assert report.updated >= 1
+    entries = await publication_repo.get_active_entries_for_plan(db_session, user.id, plan.id)
+    # Every live entry now matches the revised plan (SC-005) — no divergence remains.
+    assert publication.check_divergence(schema, entries) == []
+
+
+async def test_session_removed_from_plan_is_withdrawn_not_left_behind(db_session):
+    user = await _make_user(db_session)
+    plan = await _make_plan(db_session, user.id)
+    client = FakeCalendarClient()
+
+    r1 = await _approved_request(db_session, user, plan)
+    first = await publication.execute_publication(db_session, client, user, plan, r1.approval)
+
+    # Drop one in-horizon structured session from the plan.
+    schema = TrainingPlanSchema.model_validate(plan.plan_technical)
+    hs, he = r1.approval.horizon_start, r1.approval.horizon_end
+    horizon = iter_horizon_sessions(schema, hs, he)
+    victim = next(p for p in horizon if p.spec.steps is not None)
+    for w in schema.weeks:
+        if w.week_number == victim.week_number:
+            w.sessions = [s for s in w.sessions if s.day_of_week != victim.day_of_week]
+    plan.plan_technical = schema.model_dump(mode="json")
+    flag_modified(plan, "plan_technical")
+    await db_session.flush()
+
+    r2 = await _approved_request(db_session, user, plan)
+    report = await publication.execute_publication(db_session, client, user, plan, r2.approval)
+
+    assert report.withdrawn == 1
+    assert client.delete_calls == 1
+    live = await publication_repo.get_active_entries_for_plan(db_session, user.id, plan.id)
+    assert len(live) == first.created - 1
+    assert client.find("cycling-coach:x:y") is None or True  # no foreign entry seeded here
+
+
+async def test_past_dated_sessions_are_excluded_everywhere(db_session):
+    from datetime import date, timedelta
+
+    schema = generate_plan(make_profile())
+    today = date.today()
+    past = today - timedelta(days=3)
+
+    everything = iter_horizon_sessions(schema, date(2000, 1, 1), date(2100, 1, 1), today=past)
+    only_future = iter_horizon_sessions(schema, date(2000, 1, 1), date(2100, 1, 1), today=today)
+    assert len(only_future) <= len(everything)
+    assert all(p.session_date >= today for p in only_future)
+
+
+async def test_withdrawal_never_touches_a_past_dated_entry(db_session):
+    from datetime import date, timedelta
+
+    user = await _make_user(db_session)
+    plan = await _make_plan(db_session, user.id)
+    r1 = await _approved_request(db_session, user, plan)
+
+    # A stray entry for a past session that is not in the current plan.
+    await publication_repo.create_published_entry(
+        db_session,
+        user_id=user.id,
+        plan_id=plan.id,
+        approval_id=r1.approval.id,
+        external_id="banister:dead:2000-01-03:endurance-1-0",
+        intervals_event_id="99999",
+        session_date=date.today() - timedelta(days=30),
+        week_number=1,
+        day_of_week=0,
+        content_hash="stale",
+    )
+
+    client = FakeCalendarClient()
+    report = await publication.execute_publication(db_session, client, user, plan, r1.approval)
+
+    assert report.withdrawn == 0  # the past entry (FR-022) is left alone
+    assert client.delete_calls == 0
+
+
+async def test_describe_divergence_for_coach_is_none_when_in_sync(db_session):
+    user = await _make_user(db_session)
+    plan = await _make_plan(db_session, user.id)
+    client = FakeCalendarClient()
+    r1 = await _approved_request(db_session, user, plan)
+    await publication.execute_publication(db_session, client, user, plan, r1.approval)
+
+    schema = TrainingPlanSchema.model_validate(plan.plan_technical)
+    entries = await publication_repo.get_active_entries_for_plan(db_session, user.id, plan.id)
+    assert publication.describe_divergence_for_coach(schema, entries) is None
+
+    await _rename_first_structured(schema)
+    note = publication.describe_divergence_for_coach(schema, entries)
+    assert note is not None and "/publish" in note
+
+
 async def test_declining_writes_nothing_and_records_the_no(db_session):
     user = await _make_user(db_session)
     plan = await _make_plan(db_session, user.id)

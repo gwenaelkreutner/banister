@@ -87,6 +87,22 @@ async def run_chat(
         return item.logged_date if hasattr(item, "logged_date") else item.activity_date
 
     recent_items = sorted(list(pre_plan_acts) + list(logs or []), key=_item_date)[-7:]
+    # Calendrier intervals.icu publié : si le plan a évolué depuis, le dire au coach
+    # plutôt que de laisser croire que le calendrier est à jour (spec 005 FR-020).
+    calendar_divergence: str | None = None
+    if plan is not None and plan_schema is not None:
+        try:
+            from app.db.repositories import publication_repo
+            from app.services.publication import describe_divergence_for_coach
+
+            live_entries = await publication_repo.get_active_entries_for_plan(
+                session, user.id, plan.id
+            )
+            if live_entries:
+                calendar_divergence = describe_divergence_for_coach(plan_schema, live_entries)
+        except Exception:
+            logger.warning("Impossible de calculer la divergence calendrier")
+
     coaching_ctx = build_system_prompt(
         first_name=user.first_name or "l'athlète",
         profile=profile,
@@ -97,6 +113,7 @@ async def run_chat(
         session_logs=logs,  # permet d'afficher plan + réalisé pour la semaine en cours
         coach_memory=list(profile_row.coach_memory or []) if profile_row else None,
         athlete_notes=dict(profile_row.athlete_notes or {}) if profile_row else None,
+        calendar_divergence=calendar_divergence,
     )
     system = f"{ux_rules}\n\n---\n\n{coaching_ctx}"
 

@@ -28,6 +28,7 @@ from app.providers.intervals.calendar import (
     KnownEntry,
     iter_horizon_sessions,
     publish_sessions,
+    withdraw_event,
 )
 from app.providers.intervals.client import IntervalsClient
 from app.providers.intervals.workout_dsl import (
@@ -213,12 +214,81 @@ async def authorize_publication(
     return approval
 
 
+# ── US4: the calendar tracks the plan, and staleness is never silent ─────────
+
+
+@dataclass
+class Divergence:
+    session_date: date
+    name: str
+    kind: str  # "changed" | "removed"
+
+
+def _current_session_hash(
+    schema: TrainingPlanSchema, week_number: int, day_of_week: int
+) -> tuple[date | None, str, str | None]:
+    """(current planned date, display name, content hash) for the session now sitting at
+    (week, day-of-week), or (None, "", None) if the plan no longer has one there."""
+    week = next((w for w in schema.weeks if w.week_number == week_number), None)
+    if week is None or week.start_date is None:
+        return None, "", None
+    spec = next((s for s in week.sessions if s.day_of_week == day_of_week), None)
+    if spec is None:
+        return None, "", None
+    session_date = week.start_date + timedelta(days=day_of_week)
+    name = spec.description_fr or spec.workout_type
+    if spec.steps is None:
+        return session_date, name, None
+    try:
+        rendered = render_dsl(spec.steps, schema.zones)
+    except EmptySessionError:
+        return session_date, name, None
+    return session_date, name, hash_content(session_date, name, rendered)
+
+
+def check_divergence(schema: TrainingPlanSchema, entries) -> list[Divergence]:
+    """"Plan moved ahead of calendar" (data-model.md §Divergence, FR-020): a live
+    PublishedEntry whose slot in the current plan either changed content or vanished.
+    Derived on demand — a stored flag would go stale exactly when it matters."""
+    out: list[Divergence] = []
+    for e in entries:
+        if e.withdrawn_at is not None:
+            continue
+        cur_date, name, cur_hash = _current_session_hash(
+            schema, e.week_number, e.day_of_week
+        )
+        if cur_date is None:
+            out.append(Divergence(e.session_date, "(séance retirée du plan)", "removed"))
+        elif cur_hash != e.content_hash:
+            out.append(Divergence(cur_date, name, "changed"))
+    return out
+
+
+def describe_divergence_for_coach(schema: TrainingPlanSchema, entries) -> str | None:
+    """A short note for the LLM system prompt so the coach tells the athlete the
+    calendar is out of date rather than talking as if it were current (FR-020, T038).
+    None when calendar and plan agree."""
+    divs = check_divergence(schema, entries)
+    if not divs:
+        return None
+    lines = ["⚠️ Le calendrier intervals.icu publié n'est plus aligné sur le plan :"]
+    for d in divs:
+        verb = "a changé" if d.kind == "changed" else "n'est plus dans le plan"
+        lines.append(f"  • {d.session_date:%d/%m} {d.name} — {verb}")
+    lines.append(
+        "Dis à l'athlète de relancer /publish pour re-synchroniser. Ne parle pas du "
+        "calendrier comme s'il était à jour."
+    )
+    return "\n".join(lines)
+
+
 @dataclass
 class PublicationReport:
     text: str
     created: int
     updated: int
     unchanged: int
+    withdrawn: int
     refused: int
     failed: int
 
@@ -258,7 +328,9 @@ async def execute_publication(
         known_entries=known,
     )
 
-    counts = {"created": 0, "updated": 0, "unchanged": 0, "refused": 0, "failed": 0}
+    counts = {
+        "created": 0, "updated": 0, "unchanged": 0, "withdrawn": 0, "refused": 0, "failed": 0
+    }
     lines: list[str] = []
     for o in outcomes:
         counts[o.status] += 1
@@ -297,10 +369,34 @@ async def execute_publication(
         else:  # refused | failed
             lines.append(f"  ❌ {label} — {o.detail}")
 
+    # Withdraw entries whose session is no longer in the plan for this horizon (FR-019).
+    # Never a past-dated one (FR-022), never a foreign entry (these are our own rows).
+    today = date.today()
+    planned_ext = {o.external_id for o in outcomes}
+    for entry in active:
+        if entry.withdrawn_at is not None or entry.external_id in planned_ext:
+            continue
+        if entry.session_date < today:
+            continue
+        if not (approval.horizon_start <= entry.session_date <= approval.horizon_end):
+            continue
+        wlabel = f"{_WEEKDAY_FR[entry.session_date.weekday()]} {entry.session_date:%d/%m}"
+        try:
+            await withdraw_event(client, entry.intervals_event_id)
+        except Exception as exc:  # noqa: BLE001
+            lines.append(f"  ⚠️ {wlabel} — retrait échoué : {exc}")
+            continue
+        await publication_repo.mark_withdrawn(session, entry.id)
+        counts["withdrawn"] += 1
+        lines.append(f"  🗑 {wlabel} — retirée (absente du plan)")
+
     written = counts["created"] + counts["updated"]
     header_bits = [f"{written} publiée{'s' if written != 1 else ''}"]
     if counts["unchanged"]:
         header_bits.append(f"{counts['unchanged']} déjà à jour")
+    if counts["withdrawn"]:
+        n = counts["withdrawn"]
+        header_bits.append(f"{n} retirée{'s' if n != 1 else ''}")
     if counts["refused"]:
         header_bits.append(f"{counts['refused']} refusée{'s' if counts['refused'] != 1 else ''}")
     if counts["failed"]:
@@ -313,6 +409,35 @@ async def execute_publication(
         created=counts["created"],
         updated=counts["updated"],
         unchanged=counts["unchanged"],
+        withdrawn=counts["withdrawn"],
         refused=counts["refused"],
         failed=counts["failed"],
     )
+
+
+async def withdraw_all_publications(
+    session: AsyncSession,
+    client: IntervalsClient,
+    user: User,
+    plan: TrainingPlan,
+) -> tuple[int, int]:
+    """Remove every live entry this system published for the plan (FR-021, SC-006).
+
+    Iterates our own PublishedEntry rows only — a foreign `cycling-coach:` entry is
+    never in that set, so "100% of ours, 0% of anything else" is true by construction,
+    not by filtering. Returns (withdrawn, failed).
+
+    No approval gate: withdrawing content the athlete asked to remove *is* the explicit
+    request (the /unpublish confirmation step), unlike a write which needs prior consent.
+    """
+    active = await publication_repo.get_active_entries_for_plan(session, user.id, plan.id)
+    withdrawn = failed = 0
+    for entry in active:
+        try:
+            await withdraw_event(client, entry.intervals_event_id)
+        except Exception:  # noqa: BLE001
+            failed += 1
+            continue
+        await publication_repo.mark_withdrawn(session, entry.id)
+        withdrawn += 1
+    return withdrawn, failed

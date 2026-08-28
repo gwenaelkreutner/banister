@@ -308,6 +308,7 @@ def build_system_prompt(
     session_logs: list | None = None,
     coach_memory: list | None = None,
     athlete_notes: dict | None = None,
+    calendar_divergence: str | None = None,
 ) -> str:
     p = profile
 
@@ -418,6 +419,9 @@ def build_system_prompt(
                     session_date = week_start + timedelta(days=sess.day_of_week)
                     wtype = WORKOUT_FR.get(sess.workout_type, sess.workout_type)
                     lines.append(f"  {day_name} {session_date.strftime('%d/%m')} : {wtype} {sess.zone_code} — {sess.duration_minutes}min (TSS cible {sess.tss_target:.0f})")
+
+    if calendar_divergence:
+        lines += ["", calendar_divergence]
 
     lines.append("")
     lines.append(COACH_SOUL.format(first_name=first_name))

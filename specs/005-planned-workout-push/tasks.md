@@ -131,18 +131,18 @@ Existing single-project layout (`app/`, `tests/`) — see plan.md's Project Stru
 
 ### Tests for User Story 4
 
-- [ ] T034 [P] [US4] Test that after a plan change and re-approval, every future published entry matches the revised plan (SC-005), in `tests/test_services/test_publication.py`
-- [ ] T035 [P] [US4] Test that a session removed from the plan has its entry withdrawn, not left behind (FR-019), in `tests/test_services/test_publication.py`
-- [ ] T036 [P] [US4] Test that past-dated sessions are never rewritten when the plan changes (FR-011, FR-022), in `tests/test_services/test_publication.py`
+- [X] T034 [P] [US4] Test that after a plan change and re-approval, every future published entry matches the revised plan (SC-005), in `tests/test_services/test_publication.py`
+- [X] T035 [P] [US4] Test that a session removed from the plan has its entry withdrawn, not left behind (FR-019), in `tests/test_services/test_publication.py`
+- [X] T036 [P] [US4] Test that past-dated sessions are never rewritten when the plan changes (FR-011, FR-022), in `tests/test_services/test_publication.py`
 
 ### Implementation for User Story 4
 
-- [ ] T037 [US4] Implement `check_divergence(plan, published_entries)` in `app/services/publication.py` — "plan moved ahead of calendar" kind: current session's content hash ≠ `PublishedEntry.content_hash` (FR-020) per data-model.md §Divergence
-- [ ] T038 [US4] Surface plan/calendar divergence in the coach's conversational context so the athlete is told the calendar is out of date rather than it looking current (FR-020) — wherever plan-state context is already assembled for the LLM (`app/llm/tools.py` / `app/llm/prompts.py`)
-- [ ] T039 [US4] Implement `withdraw_entry(entry)` in `app/providers/intervals/calendar.py` — calls `delete_event()`, marks `withdrawn_at`; call it for every session no longer present in the plan (FR-019)
-- [ ] T040 [US4] Exclude past-dated sessions from both the publish and republish/diff paths (FR-011, FR-022) (depends on T030)
-- [ ] T041 [US4] Implement withdraw-all — `/publish` withdrawal command with confirmation step in `app/bot/routers/publish.py` — calls `withdraw_entry` for every live `PublishedEntry`, reports 100%/0% (FR-021, SC-006)
-- [ ] T042 [P] [US4] Extend `scripts/calendar_state.py` with `--withdraw-all --confirm`, per quickstart.md Scenario 6 (depends on T032, T041)
+- [X] T037 [US4] Implement `check_divergence(plan, published_entries)` in `app/services/publication.py` — "plan moved ahead of calendar" kind: current session's content hash ≠ `PublishedEntry.content_hash` (FR-020) per data-model.md §Divergence
+- [X] T038 [US4] Surface plan/calendar divergence in the coach's conversational context so the athlete is told the calendar is out of date rather than it looking current (FR-020) — wherever plan-state context is already assembled for the LLM (`app/llm/tools.py` / `app/llm/prompts.py`)
+- [X] T039 [US4] Implement `withdraw_entry(entry)` in `app/providers/intervals/calendar.py` — calls `delete_event()`, marks `withdrawn_at`; call it for every session no longer present in the plan (FR-019)
+- [X] T040 [US4] Exclude past-dated sessions from both the publish and republish/diff paths (FR-011, FR-022) (depends on T030)
+- [X] T041 [US4] Implement withdraw-all — `/publish` withdrawal command with confirmation step in `app/bot/routers/publish.py` — calls `withdraw_entry` for every live `PublishedEntry`, reports 100%/0% (FR-021, SC-006)
+- [X] T042 [P] [US4] Extend `scripts/calendar_state.py` with `--withdraw-all --confirm`, per quickstart.md Scenario 6 (depends on T032, T041)
 
 **Checkpoint**: US1–US4 independently testable — the calendar tracks the plan, and staleness is always announced.
 

@@ -37,11 +37,15 @@ def _prefix_of(external_id: str | None) -> str:
     return f"{head}:" if ":" in external_id else external_id
 
 
-async def describe(oldest: date, newest: date) -> None:
-    client = IntervalsClient(
+def _client() -> IntervalsClient:
+    return IntervalsClient(
         settings.intervals_api_key.get_secret_value(),
         athlete_id=settings.intervals_athlete_id,
     )
+
+
+async def describe(oldest: date, newest: date) -> None:
+    client = _client()
     events = await client.list_events(oldest=oldest.isoformat(), newest=newest.isoformat())
 
     grouped: dict[str, list[dict]] = defaultdict(list)
@@ -63,16 +67,48 @@ async def describe(oldest: date, newest: date) -> None:
         print()
 
 
+async def withdraw_all(oldest: date, newest: date) -> None:
+    """Delete every `banister:`-prefixed event in the window — nothing else (SC-006).
+    Prefix scoping done here on the live calendar, not via the DB, so this proves the
+    scoping is real rather than intended (quickstart Scenario 6)."""
+    client = _client()
+    events = await client.list_events(oldest=oldest.isoformat(), newest=newest.isoformat())
+    ours = [
+        e for e in events if str(e.get("external_id") or "").startswith(EXTERNAL_ID_PREFIX)
+    ]
+    others = len(events) - len(ours)
+    print(
+        f"{len(ours)} '{EXTERNAL_ID_PREFIX}' event(s) to delete; "
+        f"{others} other event(s) left alone."
+    )
+    for e in ours:
+        await client.delete_event(str(e["id"]))
+        print(f"  deleted id={e['id']}  {e.get('name', '')}")
+    print("Done. Run --describe to confirm 100% of ours gone, 0% of anything else.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--describe", action="store_true", help="List the calendar (default).")
+    parser.add_argument(
+        "--withdraw-all", action="store_true", help="Delete every banister: event in the window."
+    )
+    parser.add_argument(
+        "--confirm", action="store_true", help="Required with --withdraw-all (it deletes)."
+    )
     parser.add_argument("--from", dest="oldest", type=date.fromisoformat, default=None)
     parser.add_argument("--to", dest="newest", type=date.fromisoformat, default=None)
     args = parser.parse_args()
 
     oldest = args.oldest or date.today() - timedelta(days=7)
     newest = args.newest or date.today() + timedelta(days=60)
-    asyncio.run(describe(oldest, newest))
+
+    if args.withdraw_all:
+        if not args.confirm:
+            raise SystemExit("--withdraw-all deletes events — pass --confirm to proceed.")
+        asyncio.run(withdraw_all(oldest, newest))
+    else:
+        asyncio.run(describe(oldest, newest))
 
 
 if __name__ == "__main__":
