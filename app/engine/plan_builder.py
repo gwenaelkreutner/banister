@@ -17,7 +17,6 @@ Principes :
 - VO2max : échauffement 20 min (WARMUP_VO2_MIN) vs 15 min pour SS/threshold
 """
 
-import math
 from datetime import date, timedelta
 
 from app.engine.periodization import (
@@ -34,7 +33,9 @@ from app.engine.schemas import (
     WeekPlan,
     derive_duration_minutes,
     derive_target_time_in_zone_minutes,
+    derive_zone_code,
 )
+from app.engine.session_library import select_template
 from app.engine.tss import (
     estimate_session_tss,
     estimate_structured_session_tss,
@@ -72,24 +73,10 @@ def is_intensity_allowed(prev_tss: float, prev_workout_type: str, target_zone: s
     return True
 
 
-# ── Structures d'intervalles progressives (sets, work_min, rest_min, label) ──
-
-SWEET_SPOT_STRUCTURES = [
-    (2, 15, 5, "2×15min Sweet Spot"),
-    (2, 20, 5, "2×20min Sweet Spot"),
-    (3, 15, 5, "3×15min Sweet Spot"),
-]
-THRESHOLD_STRUCTURES = [
-    (3, 12, 4, "3×12min"),
-    (2, 20, 5, "2×20min"),
-    (3, 15, 5, "3×15min"),
-    (4, 10, 3, "4×10min"),
-]
-VO2_STRUCTURES = [
-    (5, 5, 3, "5×5min VO2"),
-    (6, 5, 3, "6×5min VO2"),
-    (4, 6, 3, "4×6min VO2"),
-]
+# ── Structures d'intervalles : sourcées de sessions/*.yaml (spec 004 T034) ────
+# SWEET_SPOT_STRUCTURES/THRESHOLD_STRUCTURES/VO2_STRUCTURES supprimées — leur
+# contenu vit maintenant dans sessions/sweet-spot.yaml, sessions/threshold.yaml,
+# sessions/vo2.yaml, éditables sans toucher ce fichier (FR-016, FR-018).
 
 ZONE_NAMES = {
     "Z1": "Récupération active",
@@ -112,7 +99,8 @@ def _week_monday(day: date) -> date:
 
 
 def _build_interval_steps(
-    sets: int, work_min: int, rest_min: int, zone: str, warmup_min: int = WARMUP_MIN,
+    sets: int, work_min: int, rest_min: int, zone: str,
+    warmup_min: int = WARMUP_MIN, cooldown_min: int = COOLDOWN_MIN,
 ) -> list[Step | RepeatGroup]:
     """[warmup, RepeatGroup(sets × [work, recovery]), cooldown] — spec 004 T012.
 
@@ -121,14 +109,20 @@ def _build_interval_steps(
     contracts/session-library.md's canonical example already commits to this shape for
     contributor-authored templates. Total duration/TSS therefore runs slightly higher
     than the old `warmup + sets*work + (sets-1)*rest + cooldown` clamp did — validated
-    via the eval harness (Phase 4/7), not assumed harmless (research R2)."""
+    via the eval harness (Phase 4/7), not assumed harmless (research R2).
+
+    `cooldown_min` defaults to the standard `COOLDOWN_MIN` but is overridable —
+    found live while wiring the taper "activation" template (T034): its library
+    entry declares a 10-minute cooldown, shorter than the standard 15, and a
+    hardcoded cooldown here would have silently disagreed with the template it
+    claims to materialize."""
     return [
         Step(kind="warmup", duration_minutes=warmup_min, zone_code="Z1"),
         RepeatGroup(repeat=sets, steps=[
             Step(kind="work", duration_minutes=work_min, zone_code=zone),
             Step(kind="recovery", duration_minutes=rest_min, zone_code="Z1"),
         ]),
-        Step(kind="cooldown", duration_minutes=COOLDOWN_MIN, zone_code="Z1"),
+        Step(kind="cooldown", duration_minutes=cooldown_min, zone_code="Z1"),
     ]
 
 
@@ -139,19 +133,19 @@ def _build_steady_steps(zone: str, duration_minutes: int) -> list[Step]:
 
 
 def _build_activation_steps(zone: str) -> list[Step | RepeatGroup]:
-    """The taper phase's short "3×8min activation" session (spec 004 T012) — shorter
-    warmup/cooldown than the standard interval structure since it exists to open the
-    legs before an event, not accumulate training stress. Total duration moves from
-    the old fixed 40min to 50min under this structure; validated via the eval
-    harness like every other structural total in this feature."""
-    return [
-        Step(kind="warmup", duration_minutes=10, zone_code="Z1"),
-        RepeatGroup(repeat=3, steps=[
-            Step(kind="work", duration_minutes=8, zone_code=zone),
-            Step(kind="recovery", duration_minutes=2, zone_code="Z1"),
-        ]),
-        Step(kind="cooldown", duration_minutes=10, zone_code="Z1"),
-    ]
+    """The taper phase's short "3×8min activation" session — shorter warmup/cooldown
+    than a standard interval structure since it exists to open the legs before an
+    event, not accumulate training stress. Sourced from sessions/threshold.yaml's
+    `taper-activation` template (spec 004 T034); the shape (sets/work/rest) comes
+    from the library, materialized here so `zone` can still be overridden the same
+    way threshold's Z3/Z4 gate needs."""
+    template = select_template("taper", "intervals", 0, family="activation")
+    sets, work, rest = _interval_shape_from_template(template)
+    return _build_interval_steps(
+        sets, work, rest, zone,
+        warmup_min=_warmup_minutes_from_template(template),
+        cooldown_min=_cooldown_minutes_from_template(template),
+    )
 
 
 def _structure_duration(sets: int, work: int, rest: int, warmup_min: int = WARMUP_MIN) -> int:
@@ -164,19 +158,54 @@ def _structure_duration(sets: int, work: int, rest: int, warmup_min: int = WARMU
     return warmup_min + sets * (work + rest) + COOLDOWN_MIN
 
 
-def _get_sweet_spot(week_in_block: int) -> tuple[int, str, int, int, int]:
-    s = SWEET_SPOT_STRUCTURES[week_in_block % len(SWEET_SPOT_STRUCTURES)]
-    return _structure_duration(*s[:3]), s[3], s[0], s[1], s[2]
+def _interval_shape_from_template(template) -> tuple[int, int, int]:
+    """Extracts (sets, work_minutes, rest_minutes) from a library template's one
+    RepeatGroup. plan_builder still materializes the actual steps for a session
+    via `_build_interval_steps()`, since the zone can vary contextually in a way a
+    static template cannot (see threshold's Z3/Z4 gate in `_build_week_template`) —
+    the template supplies the *shape*, not the finished session."""
+    group = next(item for item in template.structure if isinstance(item, RepeatGroup))
+    work_step = next(s for s in group.steps if s.kind == "work")
+    rest_step = next((s for s in group.steps if s.kind == "recovery"), None)
+    rest_minutes = rest_step.duration_minutes if rest_step else 0
+    return group.repeat, work_step.duration_minutes, rest_minutes
 
 
-def _get_threshold(week_in_block: int) -> tuple[int, str, int, int, int]:
-    s = THRESHOLD_STRUCTURES[week_in_block % len(THRESHOLD_STRUCTURES)]
-    return _structure_duration(*s[:3]), s[3], s[0], s[1], s[2]
+def _warmup_minutes_from_template(template) -> int:
+    warmup = next(
+        (item for item in template.structure if isinstance(item, Step) and item.kind == "warmup"),
+        None,
+    )
+    return warmup.duration_minutes if warmup else WARMUP_MIN
 
 
-def _get_vo2(week_in_block: int) -> tuple[int, str, int, int, int]:
-    s = VO2_STRUCTURES[week_in_block % len(VO2_STRUCTURES)]
-    return _structure_duration(*s[:3], warmup_min=WARMUP_VO2_MIN), s[3], s[0], s[1], s[2]
+def _cooldown_minutes_from_template(template) -> int:
+    cooldown = next(
+        (item for item in template.structure if isinstance(item, Step) and item.kind == "cooldown"),
+        None,
+    )
+    return cooldown.duration_minutes if cooldown else COOLDOWN_MIN
+
+
+def _get_sweet_spot(phase: str, week_in_block: int) -> tuple[int, str, int, int, int]:
+    template = select_template(phase, "intervals", week_in_block, family="sweet_spot")
+    sets, work, rest = _interval_shape_from_template(template)
+    duration = _structure_duration(sets, work, rest, _warmup_minutes_from_template(template))
+    return duration, f"{sets}×{work}min Sweet Spot", sets, work, rest
+
+
+def _get_threshold(phase: str, week_in_block: int) -> tuple[int, str, int, int, int]:
+    template = select_template(phase, "intervals", week_in_block, family="threshold")
+    sets, work, rest = _interval_shape_from_template(template)
+    duration = _structure_duration(sets, work, rest, _warmup_minutes_from_template(template))
+    return duration, f"{sets}×{work}min", sets, work, rest
+
+
+def _get_vo2(phase: str, week_in_block: int) -> tuple[int, str, int, int, int]:
+    template = select_template(phase, "intervals", week_in_block, family="vo2")
+    sets, work, rest = _interval_shape_from_template(template)
+    duration = _structure_duration(sets, work, rest, _warmup_minutes_from_template(template))
+    return duration, f"{sets}×{work}min VO2", sets, work, rest
 
 
 def _interval_tss(
@@ -227,15 +256,19 @@ def _build_race_week(
     pre_race_days = sorted([d for d in available_days if d <= cutoff])
 
     # ── Séance 1 : Z2 endurance 120min ────────────────────────────────────────
+    # Zone from sessions/race-week.yaml's race-endurance template; duration is
+    # this function's own concern (event-specific, not library content) — same
+    # "template supplies zone, caller supplies size" split as long_ride/endurance.
+    endurance_zone = select_template("taper", "endurance", 0, family="race").structure[0].zone_code
     if len(pre_race_days) >= 1:
         d0 = pre_race_days[0]
         dur0 = 120
-        steps0 = _build_steady_steps("Z2", dur0)
+        steps0 = _build_steady_steps(endurance_zone, dur0)
         tss0 = estimate_structured_session_tss(steps0, coaching_mode, ftp)
         sessions.append(SessionSpec(
             day_of_week=d0,
             workout_type="endurance",
-            zone_code="Z2",
+            zone_code=endurance_zone,
             duration_minutes=dur0,
             target_time_in_zone_minutes=0,
             tss_target=tss0,
@@ -250,27 +283,17 @@ def _build_race_week(
     # ── Séance 2 : activation Z5 5×5min ──────────────────────────────────────
     if len(pre_race_days) >= 2:
         d1 = pre_race_days[-1]
-        # Structure : 20min Z2 échauffement + 5×(5min Z5 / 3min Z1) + 10min Z1 retour.
-        # Includes a recovery after the final repetition (spec 004 T014, same
-        # uniform-RepeatGroup convention as _build_interval_steps) — total duration
-        # therefore runs slightly higher than the old formula's -rest_min shortcut.
-        sets = 5
-        work_min = 5
-        rest_min = 3
-        steps1: list[Step | RepeatGroup] = [
-            Step(kind="warmup", duration_minutes=20, zone_code="Z2"),
-            RepeatGroup(repeat=sets, steps=[
-                Step(kind="work", duration_minutes=work_min, zone_code="Z5"),
-                Step(kind="recovery", duration_minutes=rest_min, zone_code="Z1"),
-            ]),
-            Step(kind="cooldown", duration_minutes=10, zone_code="Z1"),
-        ]
+        # Sourced from sessions/race-week.yaml's race-activation template
+        # (spec 004 T034) — fixed shape, no zone override needed (unlike threshold).
+        activation_template = select_template("taper", "intervals", 0, family="race")
+        sets, work_min, rest_min = _interval_shape_from_template(activation_template)
+        steps1: list[Step | RepeatGroup] = list(activation_template.structure)
         total_min = derive_duration_minutes(steps1)
         tss1 = estimate_structured_session_tss(steps1, coaching_mode, ftp)
         sessions.append(SessionSpec(
             day_of_week=d1,
             workout_type="intervals",
-            zone_code="Z5",
+            zone_code=derive_zone_code(steps1),
             duration_minutes=total_min,
             target_time_in_zone_minutes=derive_target_time_in_zone_minutes(steps1),
             tss_target=tss1,
@@ -284,13 +307,15 @@ def _build_race_week(
         ))
 
     # ── Marqueur course ────────────────────────────────────────────────────────
-    # tss_target ≥ 1.0 et duration_minutes ≥ 20 (contraintes tests)
-    marker_steps = _build_steady_steps("Z2", 20)
+    # tss_target ≥ 1.0 et duration_minutes ≥ 20 (contraintes tests). Zone from
+    # sessions/race-week.yaml's race-day-marker template (spec 004 T034).
+    marker_zone = select_template("taper", "long_ride", 0, family="race").structure[0].zone_code
+    marker_steps = _build_steady_steps(marker_zone, 20)
     tss_marker = estimate_structured_session_tss(marker_steps, coaching_mode, ftp)
     sessions.append(SessionSpec(
         day_of_week=race_dow,
         workout_type="long_ride",
-        zone_code="Z2",
+        zone_code=marker_zone,
         duration_minutes=20,
         target_time_in_zone_minutes=0,
         tss_target=max(tss_marker, 1.0),
@@ -605,7 +630,7 @@ def _build_week_template(
         cands.append((10.0, "long_ride", "Z2", lr_detail))
 
         if phase_progress >= ss_threshold:
-            _, label, *_ = _get_sweet_spot(week_in_block)
+            _, label, *_ = _get_sweet_spot(phase, week_in_block)
             cands.append((7.0, "intervals", "Z3", label))
 
         cands += [
@@ -625,13 +650,13 @@ def _build_week_template(
         # cyclosportive. L'ancien seuil 0.35 repoussait Z4 aux 2 dernières semaines
         # de build, laissant trop de Tempo/Sweet Spot (Z3) sans travail spécifique col.
         th_zone = "Z4" if phase_progress >= 0.20 else "Z3"
-        _, th_label, *_ = _get_threshold(week_in_block)
+        _, th_label, *_ = _get_threshold(phase, week_in_block)
         cands.append((9.0, "intervals", th_zone, th_label))
 
         # Une endurance avant VO2 : pour n=3 → threshold + endurance (pas VO2)
         cands.append((8.0, "endurance", "Z2", ev0))
 
-        _, vo2_label, *_ = _get_vo2(week_in_block)
+        _, vo2_label, *_ = _get_vo2(phase, week_in_block)
         cands.append((7.0, "intervals", "Z5", vo2_label))
 
         cands += [
@@ -644,10 +669,10 @@ def _build_week_template(
         # Cyclosportive : simuler les conditions de course avec 2-3 cols au seuil Z4.
         cands.append((10.0, "long_ride", "Z2", "avec blocs specifiques au seuil Z4 (simuler les cols de la course)"))
 
-        _, vo2_label, *_ = _get_vo2(week_in_block)
+        _, vo2_label, *_ = _get_vo2(phase, week_in_block)
         cands.append((9.0, "intervals", "Z5", vo2_label))
 
-        _, th_label, *_ = _get_threshold(week_in_block)
+        _, th_label, *_ = _get_threshold(phase, week_in_block)
         cands.append((8.0, "intervals", "Z4", th_label))
 
         cands += [
@@ -869,19 +894,13 @@ def _build_sessions(
 
         for i, day in enumerate(training_days):
             if insert_sprint and not sprint_inserted and i == 1:
-                # Steps use 1-minute granularity — the coarsest unit Step.duration_minutes
-                # supports — as the closest structural representation of a 30-second
-                # sprint (spec 004 T012). The description keeps the real prescribed
-                # duration; the structure is a deliberately approximate summary of it,
-                # not a claim of second-level precision.
-                sprint_steps: list[Step | RepeatGroup] = [
-                    Step(kind="warmup", duration_minutes=15, zone_code="Z2"),
-                    RepeatGroup(repeat=3, steps=[
-                        Step(kind="work", duration_minutes=1, zone_code="Z6"),
-                        Step(kind="recovery", duration_minutes=3, zone_code="Z1"),
-                    ]),
-                    Step(kind="cooldown", duration_minutes=10, zone_code="Z1"),
-                ]
+                # Sourced from sessions/recovery.yaml's recovery-sprint-activation
+                # template (spec 004 T034). Its steps use 1-minute granularity — the
+                # coarsest unit Step.duration_minutes supports — as the closest
+                # structural representation of a 30-second sprint; the description
+                # keeps the real prescribed duration.
+                sprint_template = select_template(phase, "intervals", 0, family="sprint_activation")
+                sprint_steps: list[Step | RepeatGroup] = list(sprint_template.structure)
                 sessions.append(SessionSpec(
                     day_of_week=day,
                     workout_type="intervals",
@@ -960,15 +979,15 @@ def _build_sessions(
     for _, wtype, zone, detail in assigned:
         if wtype == "intervals":
             if "VO2" in detail:
-                _, _, sets, work, rest = _get_vo2(week_in_block)
+                _, _, sets, work, rest = _get_vo2(phase, week_in_block)
                 isteps = _build_interval_steps(sets, work, rest, zone, warmup_min=WARMUP_VO2_MIN)
             elif "Sweet" in detail or "Spot" in detail:
-                _, _, sets, work, rest = _get_sweet_spot(week_in_block)
+                _, _, sets, work, rest = _get_sweet_spot(phase, week_in_block)
                 isteps = _build_interval_steps(sets, work, rest, zone)
             elif "activation" in detail:
                 isteps = _build_activation_steps(zone)
             else:
-                _, _, sets, work, rest = _get_threshold(week_in_block)
+                _, _, sets, work, rest = _get_threshold(phase, week_in_block)
                 isteps = _build_interval_steps(sets, work, rest, zone)
             itss = estimate_structured_session_tss(isteps, coaching_mode, ftp)
             interval_steps_list.append(isteps)

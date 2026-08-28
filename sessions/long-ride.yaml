@@ -1,0 +1,20 @@
+templates:
+  - id: long-ride-z2
+    workout_type: long_ride
+    family: long_ride
+    phases: [base, build, peak, taper]
+
+    purpose: Build the durability and fat-adaptation that only time in the saddle provides.
+    intent: >
+      A single continuous Z2 effort — the week's longest session, no internal
+      structure. Duration comes from the athlete's weekly volume and the current
+      phase (plan_builder.py's own progression logic), not from this template.
+    suits: >
+      Every phase. In build and peak, the description may mention threshold
+      blocks simulating race climbs — narrative context for the athlete, not a
+      literal structural change to this template's single Z2 step.
+
+    structure:
+      - kind: steady
+        duration_minutes: 120
+        zone_code: Z2

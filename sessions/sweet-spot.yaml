@@ -1,0 +1,106 @@
+templates:
+  - id: sweet-spot-2x15
+    workout_type: intervals
+    family: sweet_spot
+    phases: [base]
+
+    purpose: Build sub-threshold aerobic power without the recovery cost of true threshold work.
+    intent: >
+      Two 15-minute efforts at the top of Z3 — just below lactate threshold — long
+      enough to raise sustainable power while staying repeatable week over week
+      through the base phase.
+    suits: >
+      The first sweet-spot session of a base phase, once the athlete has enough
+      aerobic foundation (gated by CTL and structured-training history, not by
+      calendar week alone). Too short to be the main stimulus once the athlete is
+      ready for longer sweet-spot work — see sweet-spot-3x15.
+
+    structure:
+      - kind: warmup
+        duration_minutes: 15
+        zone_code: Z1
+      - repeat: 2
+        steps:
+          - kind: work
+            duration_minutes: 15
+            zone_code: Z3
+          - kind: recovery
+            duration_minutes: 5
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 15
+        zone_code: Z1
+
+    scaling:
+      repeat_range: [2, 3]
+      work_minutes_range: [12, 20]
+
+  - id: sweet-spot-2x20
+    workout_type: intervals
+    family: sweet_spot
+    phases: [base]
+
+    purpose: Extend sub-threshold time-in-zone once 2x15 is comfortable.
+    intent: >
+      Same two-effort shape as sweet-spot-2x15, five minutes longer each — the
+      natural next step in sweet-spot progression before adding a third
+      repetition.
+    suits: >
+      Mid-to-late base phase, once shorter sweet-spot sessions are no longer
+      demanding. A lateral progression from 2x15, not a harder one — duration
+      increases, repetition count does not.
+
+    structure:
+      - kind: warmup
+        duration_minutes: 15
+        zone_code: Z1
+      - repeat: 2
+        steps:
+          - kind: work
+            duration_minutes: 20
+            zone_code: Z3
+          - kind: recovery
+            duration_minutes: 5
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 15
+        zone_code: Z1
+
+    scaling:
+      repeat_range: [2, 3]
+      work_minutes_range: [15, 25]
+
+  - id: sweet-spot-3x15
+    workout_type: intervals
+    family: sweet_spot
+    phases: [base]
+
+    purpose: Maximize sustainable sweet-spot volume within a single base-phase session.
+    intent: >
+      Three 15-minute efforts — the highest-volume sweet-spot session in this
+      library's base-phase rotation, trading repetition count for total
+      time-in-zone rather than pushing individual effort duration further.
+    suits: >
+      Late base phase, for an athlete who has already handled sweet-spot-2x20
+      without excessive fatigue. Rotated in alongside the other two variants
+      rather than replacing them, so the stimulus still varies week to week.
+
+    structure:
+      - kind: warmup
+        duration_minutes: 15
+        zone_code: Z1
+      - repeat: 3
+        steps:
+          - kind: work
+            duration_minutes: 15
+            zone_code: Z3
+          - kind: recovery
+            duration_minutes: 5
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 15
+        zone_code: Z1
+
+    scaling:
+      repeat_range: [2, 4]
+      work_minutes_range: [12, 18]

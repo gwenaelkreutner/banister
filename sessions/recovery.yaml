@@ -1,0 +1,52 @@
+templates:
+  - id: recovery-z1
+    workout_type: recovery
+    family: recovery
+    phases: [base, build, peak, taper]
+
+    purpose: Actively promote recovery — blood flow without training stress.
+    intent: >
+      A single continuous Z1 effort — deliberately unstructured, since any
+      internal intensity variation would defeat the point. Duration is short and
+      set by plan_builder.py's residual-TSS budget, not fixed here.
+    suits: >
+      Every phase, especially the day after a high-intensity or long session, and
+      as the anchor session of a recovery week.
+
+    structure:
+      - kind: steady
+        duration_minutes: 45
+        zone_code: Z1
+
+  - id: recovery-sprint-activation
+    workout_type: intervals
+    family: sprint_activation
+    phases: [base, build, peak, taper]
+
+    purpose: Preserve neuromuscular sharpness during a recovery week without adding fatigue.
+    intent: >
+      A Z2 warm-up, three very short maximal sprints with full recovery between
+      them, and a full cool-down. The sprints themselves are brief enough that
+      Step's 1-minute granularity is a deliberate approximation of a ~30-second
+      effort (see app/engine/plan_builder.py's own comment on this) — the point
+      is the neuromuscular reminder, not measurable training load.
+    suits: >
+      A recovery week, for an athlete with enough chronic fitness (CTL) that
+      losing neuromuscular sharpness for a full week would be a real cost —
+      never the first recovery-week session an athlete new to structure sees.
+
+    structure:
+      - kind: warmup
+        duration_minutes: 15
+        zone_code: Z2
+      - repeat: 3
+        steps:
+          - kind: work
+            duration_minutes: 1
+            zone_code: Z6
+          - kind: recovery
+            duration_minutes: 3
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 10
+        zone_code: Z1

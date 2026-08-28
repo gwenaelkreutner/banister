@@ -1,0 +1,173 @@
+templates:
+  - id: threshold-3x12
+    workout_type: intervals
+    family: threshold
+    phases: [build, peak]
+
+    purpose: Raise the power sustainable at lactate threshold.
+    intent: >
+      Three sustained efforts at the top of Z4 with short recoveries, long enough
+      to accumulate threshold time without the session collapsing into a time
+      trial. The shortest-repetition threshold session in the rotation.
+    suits: >
+      Build and peak phases, for an athlete already comfortable with sustained
+      Z3 tempo. Early in a block this can be requested at Z3 instead of Z4 (see
+      plan_builder.py's phase-progress gate) — the same shape carries a lighter
+      intensity until the athlete is ready for true threshold load.
+
+    structure:
+      - kind: warmup
+        duration_minutes: 15
+        zone_code: Z1
+      - repeat: 3
+        steps:
+          - kind: work
+            duration_minutes: 12
+            zone_code: Z4
+          - kind: recovery
+            duration_minutes: 4
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 15
+        zone_code: Z1
+
+    scaling:
+      repeat_range: [2, 4]
+      work_minutes_range: [10, 15]
+
+  - id: threshold-2x20
+    workout_type: intervals
+    family: threshold
+    phases: [build, peak]
+
+    purpose: Build the ability to hold threshold power for a single long effort.
+    intent: >
+      Two 20-minute efforts — the classic long-threshold session. Fewer, longer
+      repetitions than threshold-3x12, closer to what a sustained climb or
+      time-trial effort actually demands.
+    suits: >
+      An athlete who can already handle threshold-3x12 without the third
+      repetition falling apart. Prioritise this over shorter-repetition variants
+      once event specificity (a long sustained climb, a TT) matters more than
+      general threshold volume.
+
+    structure:
+      - kind: warmup
+        duration_minutes: 15
+        zone_code: Z1
+      - repeat: 2
+        steps:
+          - kind: work
+            duration_minutes: 20
+            zone_code: Z4
+          - kind: recovery
+            duration_minutes: 5
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 15
+        zone_code: Z1
+
+    scaling:
+      repeat_range: [2, 3]
+      work_minutes_range: [15, 25]
+
+  - id: threshold-3x15
+    workout_type: intervals
+    family: threshold
+    phases: [build, peak]
+
+    purpose: Bridge between short high-repetition and long low-repetition threshold work.
+    intent: >
+      Three 15-minute efforts — more total threshold time than threshold-3x12,
+      shorter individual efforts than threshold-2x20. The middle option in the
+      rotation, not a stepping stone to be skipped.
+    suits: >
+      Any week in build or peak where the athlete needs threshold stimulus but
+      neither the shorter nor the longer variant fits the week's overall fatigue
+      picture — this is the "default" threshold session when nothing else points
+      elsewhere.
+
+    structure:
+      - kind: warmup
+        duration_minutes: 15
+        zone_code: Z1
+      - repeat: 3
+        steps:
+          - kind: work
+            duration_minutes: 15
+            zone_code: Z4
+          - kind: recovery
+            duration_minutes: 5
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 15
+        zone_code: Z1
+
+    scaling:
+      repeat_range: [2, 4]
+      work_minutes_range: [12, 20]
+
+  - id: threshold-4x10
+    workout_type: intervals
+    family: threshold
+    phases: [build, peak]
+
+    purpose: Accumulate threshold time via short efforts, minimizing pacing risk.
+    intent: >
+      Four 10-minute efforts — the most repetitions, shortest individual efforts
+      in the rotation. Easiest to pace correctly, which matters when the week's
+      other sessions have already left some residual fatigue.
+    suits: >
+      A build or peak week where threshold stimulus is still needed but the
+      athlete is carrying more fatigue than usual — shorter efforts are more
+      forgiving of a slightly-off day than a single 20-minute effort would be.
+
+    structure:
+      - kind: warmup
+        duration_minutes: 15
+        zone_code: Z1
+      - repeat: 4
+        steps:
+          - kind: work
+            duration_minutes: 10
+            zone_code: Z4
+          - kind: recovery
+            duration_minutes: 3
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 15
+        zone_code: Z1
+
+    scaling:
+      repeat_range: [3, 5]
+      work_minutes_range: [8, 12]
+
+  - id: taper-activation
+    workout_type: intervals
+    family: activation
+    phases: [taper]
+
+    purpose: Open the legs during a taper without adding meaningful training stress.
+    intent: >
+      Three 8-minute efforts at Z4 with a short warm-up and cool-down — far
+      shorter than any real threshold session (see threshold-3x12 and siblings).
+      Exists to keep the legs sharp while volume drops, not to build fitness.
+    suits: >
+      The taper phase's one remaining intensity session, once long-ride and
+      endurance volume have already been cut back.
+
+    structure:
+      - kind: warmup
+        duration_minutes: 10
+        zone_code: Z1
+      - repeat: 3
+        steps:
+          - kind: work
+            duration_minutes: 8
+            zone_code: Z4
+          - kind: recovery
+            duration_minutes: 2
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 10
+        zone_code: Z1

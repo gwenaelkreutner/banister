@@ -37,9 +37,12 @@ def _build_analyzed_duck(log) -> SimpleNamespace | None:
 
 
 async def main(out_path: str) -> None:
+    from sqlalchemy import select
+
     from app.config import settings
     from app.db.client import AsyncSessionFactory
     from app.db import repositories as repo
+    from app.db.models.training_plan import TrainingPlan
     from app.engine.schemas import TrainingPlanSchema
     from app.engine.adherence_kpi import compute_session_kpi
     from app.providers.analysis.matching import evaluate_activity_plan_match
@@ -54,33 +57,45 @@ async def main(out_path: str) -> None:
                 json.dump({"entries": []}, f, indent=2, sort_keys=True)
             return
 
-        plan = await repo.plan_repo.get_active_plan(session, user.id)
-        if plan is None:
-            print("No active plan — writing an empty snapshot.")
-            with open(out_path, "w", encoding="utf-8") as f:
-                json.dump({"entries": []}, f, indent=2, sort_keys=True)
-            return
-
-        plan_schema = TrainingPlanSchema.model_validate(plan.plan_technical)
-        weeks_by_num = {w.week_number: w for w in plan_schema.weeks}
-
         all_logs = await repo.session_log_repo.get_all_for_user(session, user.id)
-        all_logs = [lg for lg in all_logs if lg.plan_id == plan.id]
         all_logs.sort(key=lambda lg: str(lg.id))  # stable ordering regardless of DB fetch order
 
-        # used_slots mirrors app/services/activity_feedback.py's real ingestion-time
-        # computation: only already-"done" logs occupy a slot.
-        used_slots = frozenset(
-            (lg.week_number, lg.day_of_week) for lg in all_logs if lg.status == "done"
-        )
+        # Resolve each log against the plan it actually belongs to — not the
+        # currently active one. A log's plan can be inactive (superseded by a
+        # later /setup) without the log itself becoming meaningless; assuming
+        # "active plan owns every log" broke this script the first time a real
+        # /setup regeneration happened mid-session (spec 004, found live).
+        plan_cache: dict[str, TrainingPlan | None] = {}
 
         for log in all_logs:
+            plan_id = str(log.plan_id)
+            if plan_id not in plan_cache:
+                result = await session.execute(select(TrainingPlan).where(TrainingPlan.id == log.plan_id))
+                plan_cache[plan_id] = result.scalar_one_or_none()
+            plan = plan_cache[plan_id]
+
             entry: dict = {
                 "log_id": str(log.id),
                 "status": log.status,
                 "week": log.week_number,
                 "day": log.day_of_week,
             }
+
+            if plan is None:
+                entry["error"] = "plan referenced by this log no longer exists"
+                results.append(entry)
+                continue
+
+            plan_schema = TrainingPlanSchema.model_validate(plan.plan_technical)
+            weeks_by_num = {w.week_number: w for w in plan_schema.weeks}
+
+            # used_slots mirrors app/services/activity_feedback.py's real
+            # ingestion-time computation, scoped to this log's own plan.
+            used_slots = frozenset(
+                (lg.week_number, lg.day_of_week)
+                for lg in all_logs
+                if lg.plan_id == log.plan_id and lg.status == "done"
+            )
 
             duck = _build_analyzed_duck(log)
             if duck is not None:

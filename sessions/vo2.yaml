@@ -1,0 +1,105 @@
+templates:
+  - id: vo2-5x5
+    workout_type: intervals
+    family: vo2
+    phases: [build, peak]
+
+    purpose: Raise VO2max and the power sustainable for 3-8 minute efforts.
+    intent: >
+      Five 5-minute efforts at Z5 — the standard VO2max session shape, enough
+      repetitions to accumulate meaningful time at high intensity without
+      requiring the longer recovery a 6-repetition session needs.
+    suits: >
+      Build and peak phases, once the athlete's aerobic base can support Z5
+      work without excessive next-day fatigue. The default VO2max session when
+      neither more nor fewer repetitions are specifically indicated.
+
+    structure:
+      - kind: warmup
+        duration_minutes: 20
+        zone_code: Z1
+      - repeat: 5
+        steps:
+          - kind: work
+            duration_minutes: 5
+            zone_code: Z5
+          - kind: recovery
+            duration_minutes: 3
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 15
+        zone_code: Z1
+
+    scaling:
+      repeat_range: [4, 6]
+      work_minutes_range: [4, 6]
+
+  - id: vo2-6x5
+    workout_type: intervals
+    family: vo2
+    phases: [build, peak]
+
+    purpose: Push VO2max stimulus further once 5x5 is well tolerated.
+    intent: >
+      Six 5-minute efforts — one more repetition than vo2-5x5, the highest total
+      VO2max volume in this library's rotation. The session most likely to leave
+      real residual fatigue; sequence it away from other high-intensity days.
+    suits: >
+      An athlete already handling vo2-5x5 comfortably, in a week where no other
+      Z4-Z6 session follows within 48 hours (the same rule that governs sweet
+      spot and threshold spacing applies here).
+
+    structure:
+      - kind: warmup
+        duration_minutes: 20
+        zone_code: Z1
+      - repeat: 6
+        steps:
+          - kind: work
+            duration_minutes: 5
+            zone_code: Z5
+          - kind: recovery
+            duration_minutes: 3
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 15
+        zone_code: Z1
+
+    scaling:
+      repeat_range: [5, 7]
+      work_minutes_range: [4, 6]
+
+  - id: vo2-4x6
+    workout_type: intervals
+    family: vo2
+    phases: [build, peak]
+
+    purpose: VO2max stimulus with longer individual efforts than the 5-minute variants.
+    intent: >
+      Four 6-minute efforts — fewer, longer repetitions than vo2-5x5, closer to
+      what a sustained hard climb or a longer race effort actually demands.
+      Total work time is similar to vo2-5x5; the pacing challenge is different.
+    suits: >
+      Build and peak phases, as a deliberate variation from the 5-minute
+      repetitions — useful when the athlete's target event favours sustained
+      efforts over short, sharp ones.
+
+    structure:
+      - kind: warmup
+        duration_minutes: 20
+        zone_code: Z1
+      - repeat: 4
+        steps:
+          - kind: work
+            duration_minutes: 6
+            zone_code: Z5
+          - kind: recovery
+            duration_minutes: 3
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 15
+        zone_code: Z1
+
+    scaling:
+      repeat_range: [3, 5]
+      work_minutes_range: [5, 8]

@@ -1,0 +1,67 @@
+templates:
+  - id: race-endurance
+    workout_type: endurance
+    family: race
+    phases: [taper]
+
+    purpose: Maintain leg feel and muscular tone in the days before the event without adding fatigue.
+    intent: >
+      A comfortable, continuous Z2 effort — no internal structure, no intensity.
+      Pure maintenance, not a training stimulus.
+    suits: >
+      The first available day of race week, before the pre-event activation
+      session. Never the day immediately before the event.
+
+    structure:
+      - kind: steady
+        duration_minutes: 120
+        zone_code: Z2
+
+  - id: race-activation
+    workout_type: intervals
+    family: race
+    phases: [taper]
+
+    purpose: Open the legs with short high-intensity efforts without accumulating fatigue.
+    intent: >
+      A short Z2 warm-up, five short Z5 efforts, and a full return to Z1 —
+      a neuromuscular reminder, not a VO2max training stimulus. Shorter warm-up
+      and far fewer repetitions than a real VO2max session (see vo2.yaml);
+      confusing the two would defeat the point of a taper.
+    suits: >
+      Mid race-week, at least two days before the event and after the
+      maintenance endurance ride. Never the day before the event.
+
+    structure:
+      - kind: warmup
+        duration_minutes: 20
+        zone_code: Z2
+      - repeat: 5
+        steps:
+          - kind: work
+            duration_minutes: 5
+            zone_code: Z5
+          - kind: recovery
+            duration_minutes: 3
+            zone_code: Z1
+      - kind: cooldown
+        duration_minutes: 10
+        zone_code: Z1
+
+  - id: race-day-marker
+    workout_type: long_ride
+    family: race
+    phases: [taper]
+
+    purpose: Placeholder for the event itself — a short symbolic warm-up, not a prescribed session.
+    intent: >
+      The real ride is the event, imported automatically from the training data
+      source once it happens. This template exists only so race day has an entry
+      in the plan at all, with the shortest duration the schema allows.
+    suits: >
+      Race day, and only race day.
+
+    structure:
+      - kind: steady
+        duration_minutes: 20
+        zone_code: Z2

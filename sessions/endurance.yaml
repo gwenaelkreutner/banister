@@ -1,0 +1,21 @@
+templates:
+  - id: endurance-z2
+    workout_type: endurance
+    family: endurance
+    phases: [base, build, peak, taper]
+
+    purpose: Build and maintain aerobic base without adding fatigue that competes with quality sessions.
+    intent: >
+      A single continuous Z2 effort — no internal structure, the steady
+      counterpart to the interval sessions in this library. Duration is set per
+      athlete and per week from the remaining TSS budget, not fixed here; this
+      template supplies the zone and the rationale, not the size.
+    suits: >
+      Every phase, every week — the volume workhorse of the plan. Rotated with
+      cadence and force-vélo variants at the description level (plan_builder.py's
+      ENDURANCE_VARIANTS) without changing this template's structure.
+
+    structure:
+      - kind: steady
+        duration_minutes: 60
+        zone_code: Z2
