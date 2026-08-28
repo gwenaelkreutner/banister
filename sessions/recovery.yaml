@@ -18,6 +18,9 @@ templates:
         duration_minutes: 45
         zone_code: Z1
 
+    scaling:
+      steady_minutes_range: [20, 90]
+
   - id: recovery-sprint-activation
     workout_type: intervals
     family: sprint_activation

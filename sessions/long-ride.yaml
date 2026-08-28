@@ -18,3 +18,6 @@ templates:
       - kind: steady
         duration_minutes: 120
         zone_code: Z2
+
+    scaling:
+      steady_minutes_range: [60, 360]
