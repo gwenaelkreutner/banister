@@ -125,9 +125,9 @@ shippable increment.
 and of the readers touched in Phase 4 — verifying it now closes the P1 increment rather than leaving a
 known-unverified path open while the library is built.
 
-- [ ] T027 [US5] Verify a legacy plan loads, displays via `/plan` and `/week N`, matches activities and scores adherence, using `tests/fixtures/plans/legacy_plan.json` (SC-005)
-- [ ] T028 [US5] Verify a plan holding **both** legacy and structured sessions behaves correctly — the ordinary state during a transition, requiring no handling beyond per-session nullability
-- [ ] T029 [US5] Verify generating a new plan leaves the stored legacy plan unaffected
+- [X] T027 [US5] Wrote `tests/test_engine/test_legacy_plan_compat.py` — `_format_week()` (the function behind `/plan`/`/week N`) renders every week of the real legacy fixture without error; `score_activity_vs_session()` and `compute_session_kpi()` score a legacy session without error (SC-005). This is also the third independent confirmation of the same guarantee: `scripts/snapshot_session_behaviour.py` has exercised matching+adherence against the real DB's own legacy-shaped plan on every phase of this feature and stayed byte-identical throughout — this test makes that check part of `pytest` rather than something a developer has to remember to run separately
+- [X] T028 [US5] Same file: a plan with one structured session grafted onto an otherwise-legacy fixture renders and scores correctly through the same code path, no special-casing
+- [X] T029 [US5] Same file: generating an independent new plan (`generate_plan()`, which never reads or writes any existing plan document) leaves the legacy fixture file byte-identical on disk, verified by re-reading and comparing, not just asserted
 
 **Checkpoint**: P1 increment complete and safe to leave in place. The remaining phases add capability
 without changing what the athlete already has.
