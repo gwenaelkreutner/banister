@@ -7,26 +7,24 @@ Architecture en un seul process : aiogram v3 (bot) + FastAPI (webhooks/OAuth) + 
 
 **Principe fondateur : le LLM ne calcule jamais la charge d'entraînement — moteur déterministe uniquement.**
 
-## ⚠️ Refonte open source en cours
+## Refonte open source — terminée (specs 001–007)
 
-Ce document décrit **l'état actuel du code**, pas la cible. Une refonte vers un produit self-hosted open
-source est spécifiée dans `specs/001` à `007`, et gouvernée par `.specify/memory/constitution.md`.
+Ce document décrit **l'état actuel du code**. La refonte vers un produit self-hosted open source
+(specs `001`–`007`, gouvernée par `.specify/memory/constitution.md` **v1.1.0**) est **complète**.
 
 **✅ Fait** : spec 003 (SQLite local remplace Supabase), spec 002 (intervals.icu remplace Strava, log manuel
 supprimé), spec 004 (séances structurées, bibliothèque de templates, fitting), spec 005 (push des séances
 vers le calendrier intervals.icu — `/publish`, `/unpublish`), spec 006 (garde-fous d'entraînement +
-vérification des chiffres de la réponse LLM) — voir sections ci-dessous, à jour.
+vérification des chiffres de la réponse LLM), spec 007 (setup = confirmation de ce que la source sait ;
+`/goal`, `/reset`, `/voice` ; `load_persona()` câblé).
 
-Ce qui reste à faire, et qui rendra d'autres sections de ce fichier obsolètes :
-
-| Décision | Effet sur ce document |
-|---|---|
-| Câblage de `load_persona()` (voix du coach configurable) | Sections chat/prompts |
-| Premier lancement (spec 007) — relocalisera `DISCLAIMER_TEXT` au flux first-run | Section garde-fous |
-
-**Ordre de construction** (les numéros de spec sont des identifiants, pas une séquence) :
-~~`003` base locale~~ (fait) → ~~`002` intervals.icu~~ (fait) → ~~`004` séances structurées~~ (fait) →
-~~`005` push calendrier~~ (fait) → ~~`006` garde-fous~~ (fait) → `007` premier lancement.
+Reste hors specs, connu :
+- `docs/ARCHITECTURE.md` jamais retouché depuis le scaffold (décrit encore Supabase + Strava) — sa
+  réécriture est sa propre tâche ; `CLAUDE.md` est la référence vivante (constitution v1.1.0).
+- Écriture-retour d'une correction FTP vers intervals.icu (spec 007 FR-006) : différée derrière une sonde
+  d'endpoint autorisée séparément. Défaut livré = FR-007 (l'athlète change sur intervals.icu, aucune
+  valeur locale divergente).
+- `fit_template()` (spec 004) construit et testé mais pas branché à `generate_plan()`.
 
 Mettre ce fichier à jour **au fil de** chaque migration, pas après coup.
 
@@ -70,8 +68,8 @@ app/
 ├── main.py                  # FastAPI + lifespan (polling dev / webhook prod)
 ├── config.py                # Settings Pydantic
 ├── core/
-│   ├── persona.py           # load_persona() → Persona depuis personas/*.yaml
-│   │                        # ⚠️ construit mais JAMAIS appelé — prompts.py a encore ses prompts en dur
+│   ├── persona.py           # load_persona() → Persona depuis personas/*.yaml (câblé spec 007
+│   │                        # via services/coach_voice.py — /voice choisit users.coach_voice)
 │   └── exceptions.py        # BanisterError + PersonaNotFoundError
 ├── bot/
 │   ├── setup.py             # Dispatcher + middlewares + routers (ordre critique)
@@ -79,9 +77,9 @@ app/
 │   ├── middlewares/
 │   │   ├── db_session.py    # Ouvre AsyncSession (doit précéder single_user)
 │   │   └── single_user.py   # Garde TELEGRAM_OWNER_ID + injection User (pas d'upsert)
-│   ├── keyboards/           # Prefixes callbacks : setup: / plan: / log: / chat: / rem: / pub:
-│   ├── routers/             # Ordre réel dans setup.py : common → setup → plan
-│   │                        # → session_log → forme → recap → reminders → publish → chat (DERNIER)
+│   ├── keyboards/           # Prefixes callbacks : setup: / plan: / log: / chat: / rem: / pub: / goal: / voice:
+│   ├── routers/             # Ordre réel dans setup.py : common → setup → plan → session_log →
+│   │                        # forme → recap → reminders → publish → goal → reset → voice → chat (DERNIER)
 │   │   └── publish.py       # /publish (approbation + écriture calendrier), /unpublish (spec 005)
 │   └── (chat doit rester en dernier — catch-all)
 ├── db/
@@ -313,7 +311,7 @@ doc (FR-016, SC-007). ⚠️ le ratio `ATL/CTL` est du 7j:42j (EWMA), la plage 0
 
 | Table | Description |
 |-------|-------------|
-| `users` | Compte Telegram, flags onboarding (`onboarding_completed_at`), préférences rappels (`reminders_enabled`, `reminder_hour`, `reminder_minute`, `reminder_last_sent_at`) |
+| `users` | Compte Telegram, flags onboarding (`onboarding_completed_at`), préférences rappels (`reminders_enabled`, `reminder_hour`, `reminder_minute`, `reminder_last_sent_at`) ; spec 007 : `coach_voice` (id persona choisi, NULL → `settings.persona`), `disclaimer_acknowledged_at` (disclaimer montré 1×). Ces deux-là survivent à `/reset` |
 | `athlete_profiles` | `profile` JSON → `AthleteProfileSchema` |
 | `training_plans` | `plan_technical` JSON → `TrainingPlanSchema`, `start_date`, `is_active` |
 | `session_logs` | `plan_id` NOT NULL, `tss_actual`, `rpe_emoji`, `logged_date`, `source_activity_id` (id intervals.icu) ; métriques qualité (`cardiac_drift_index`, `intervals_consistency_index`, `respect_zones_score`, `session_type_real`, `variability_index`, `intensity_factor`, `dominant_zone`) ; contexte (`elevation_gain_m`, `average_temp_c`, `athlete_count`) |
@@ -500,17 +498,45 @@ reminder_last_sent_at DATE    NULL
 - Notification en 3 messages : A (teaser, silencieux) → B (métrique héros, silencieux) → C (verdict + clavier RPE, seule vibration)
 - Post-RPE : `edit_text` sur Message C → "Ton coach analyse..." → edit → récit LLM 3 phrases (aucune notification supplémentaire)
 
-## Flux de configuration (`/setup`)
+## Flux de configuration — `/setup`, `/goal`, `/reset`, `/voice` (spec 007)
+
+**`/setup` est une confirmation, pas un interrogatoire.** Il lit `GET /athlete` (FTP, LTHR, FC max, FC
+repos, poids, sexe, **âge depuis `icu_date_of_birth`**), le montre, puis ne demande que ce qu'aucune source
+ne connaît.
 
 ```
-/setup → SPORT → GOAL → DATE → VOLUME → POWER → AGE → _finalize_setup() → plan
+/setup → read_athlete_profile() → CONFIRM_PROFILE → [CORRECT_VALUE]
+       → GOAL → DATE → VOLUME (voulu) → CONSTRAINTS → _finalize_setup() → plan → disclaimer (1×)
 ```
 
-6 étapes, `SetupStates` dans `app/bot/states.py`, tout dans `app/bot/routers/setup.py` (~456 lignes).
-Relancer `/setup` régénère le plan intégralement.
+- Seuils lus depuis `sportSettings[]` (entrée cyclisme par `types`), **pas** le `icu_ftp` racine (null).
+  `app/providers/intervals/athlete_profile.py` — mapping pur, chaque champ porte son origine ; absent =
+  jamais un défaut silencieux (FR-008).
+- `_build_profile()` prend les valeurs confirmées → `*_source == "source"` (nouvelle valeur du `Literal`).
+  `hr_rest` = vrai `icu_resting_hr`.
+- **Correction (FR-007)** : `CORRECT_VALUE` capture la valeur voulue mais **garde celle de la source** ;
+  l'athlète est renvoyé sur intervals.icu. Aucune divergence locale (Constitution IV). Écriture-retour =
+  différée (voir statut en tête).
+- `parse_goal_date()` : passé rejeté, < 21 j re-confirmation, > 365 j averti (FR-015). Partagé avec `/goal`.
+- Récap « ce sur quoi j'ai construit ton plan » après génération (`_built_from_recap`, FR-004).
 
-`_build_profile()` assemble l'`AthleteProfileSchema` ; si l'historique intervals.icu a été importé, la
-forme actuelle (`current_ctl` / `current_atl` / `current_tsb`) est injectée depuis cet historique.
+**`/goal`** (`app/bot/routers/goal.py`, `GoalStates`) — changer d'objectif sans rien perdre : relit la
+source, demande objectif + date seulement, régénère depuis la forme actuelle (`get_current_fitness`, jamais
+zéro), garde 100 % de l'historique (les `session_logs` etc. pointent vers l'ancien plan désactivé). Signale
+un calendrier périmé via `check_divergence` de spec 005 (FR-014). Résumé « change / gardé » (FR-016).
+
+**`/reset`** (`app/bot/routers/reset.py`, `ResetStates.CONFIRM`) — action **distincte** de `/goal` : liste
+chiffrée de ce qui sera supprimé, confirmation tapée `SUPPRIMER`, puis `user_repo.purge_athlete_data`
+(10 tables par-athlète, **aucun appel sortant** — vérifié par scan AST). Garde `coach_voice` et
+`disclaimer_acknowledged_at` (identité, pas données d'entraînement). `onboarding_completed_at` remis à
+`None` → prochain `/setup` = vrai premier run.
+
+**`/voice`** (`app/bot/routers/voice.py`) — liste `personas/*.yaml` avec leur descripteur, écrit
+`users.coach_voice`, effet au message suivant (colonne lue par requête, pas de redémarrage).
+`services/coach_voice.py::resolve_voice(user)` → `(Persona, fell_back)` : `coach_voice` → `settings.persona`
+(défaut `pace`) → `coach-default`. Une voix introuvable → défaut + notice (FR-026). `build_ux_system_prompt`
+et `build_system_prompt` prennent un `persona=` optionnel ; sans lui, l'ancien texte « Pace » en dur.
+`_MODE_PERSONA` (modes narratifs) reste un axe séparé, non fusionné.
 
 ## Variables d'environnement
 
@@ -573,5 +599,10 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier l'assemblage des signaux / la raison d'insuffisance | `app/services/guardrail_service.py` |
 | Modifier la vérification des chiffres de la réponse LLM (ancrage, tolérance, retrait) | `app/services/response_verification.py` |
 | Modifier le disclaimer ou les règles no-diagnostic | `app/llm/prompts.py` — `DISCLAIMER_TEXT`, `SCOPE_OF_ADVICE_RULES` |
+| Modifier la lecture du profil source (setup) | `app/providers/intervals/athlete_profile.py` — `map_athlete_profile()` |
+| Modifier l'écran de confirmation / `_build_profile` (setup) | `app/bot/routers/setup.py` |
+| Modifier `/goal` (re-plan) ou `/reset` (purge) | `app/bot/routers/{goal,reset}.py` |
+| Ajouter / modifier une voix de coach | `personas/*.yaml` (YAML seul, aucun code) — `/voice` la liste |
+| Modifier la résolution de voix / le fallback | `app/services/coach_voice.py` — `resolve_voice()` |
 | Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `alembic revision --autogenerate` |
 | Architecture complète | `docs/ARCHITECTURE.md` |

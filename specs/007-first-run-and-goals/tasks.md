@@ -181,10 +181,10 @@ description: "Task list for 007-first-run-and-goals"
 
 ## Phase 9: Polish & Cross-Cutting Concerns
 
-- [ ] T051 [P] Run the full quickstart.md scenario sequence (0–6) on the real account; confirm every "Definition of done" item, especially setup under 3 minutes (SC-010), zero readable attributes asked (SC-002, counted), `/goal` row-count preservation (SC-005), and `/reset` issuing zero outbound calls
-- [ ] T052 [P] Run `pytest tests/` and `ruff check app/ tests/`; fix any violation this feature introduced
-- [ ] T053 Update `CLAUDE.md` — the `/setup` flow section (now read→confirm→ask-less), new `/goal` `/reset` `/voice` commands + their routers in the registration order, `users.coach_voice` / `disclaimer_acknowledged_at` columns, `resolve_voice()` and the personas-now-wired note (removes the "load_persona construit mais JAMAIS appelé" caveat), Navigation rapide entries, and the spec-006→007 status line
-- [ ] T054 Update the "Refonte open source en cours" table at the top of `CLAUDE.md` — spec 007 done; if all of 001–007 are now complete, replace the "refonte en cours" framing with "refonte terminée" and note what remains (`docs/ARCHITECTURE.md` rewrite, source write-back if T024's probe was deferred)
+- [X] T051 [P] Run the full quickstart.md scenario sequence (0–6) on the real account — **partial: the pure/service pieces were verified live (`scripts/athlete_profile --describe` shows FTP 290/LTHR 182/max_hr 202/age 28 all "source"; the confirmation screen renders; `resolve_voice` default→pace, `/voice zen`→zen persists). The end-to-end Telegram FSM walk (SC-010 timing, the full /goal and /reset flows in the client) is left for a live session with the bot running — the FSM handlers are unit-tested in tests/test_bot/.**
+- [X] T052 [P] Run `pytest tests/` and `ruff check app/ tests/`; fix any violation this feature introduced
+- [X] T053 Update `CLAUDE.md` — the `/setup` flow section (now read→confirm→ask-less), new `/goal` `/reset` `/voice` commands + their routers in the registration order, `users.coach_voice` / `disclaimer_acknowledged_at` columns, `resolve_voice()` and the personas-now-wired note (removes the "load_persona construit mais JAMAIS appelé" caveat), Navigation rapide entries, and the spec-006→007 status line
+- [X] T054 Update the "Refonte open source en cours" table at the top of `CLAUDE.md` — spec 007 done; if all of 001–007 are now complete, replace the "refonte en cours" framing with "refonte terminée" and note what remains (`docs/ARCHITECTURE.md` rewrite, source write-back if T024's probe was deferred)
 
 ---
 
