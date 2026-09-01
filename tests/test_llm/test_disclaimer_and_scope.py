@@ -50,3 +50,25 @@ def test_build_ux_system_prompt_includes_the_scope_rules():
         prompt = build_ux_system_prompt(lvl)
         assert "diagnostic" in prompt.lower()
         assert "médecin" in prompt.lower()
+
+
+# ── spec 007 T049/T050: shown once, gated on the column ──────────────────────
+
+
+def test_finalize_setup_gates_the_disclaimer_on_the_ack_column():
+    import inspect
+
+    from app.bot.routers import setup as setup_router
+
+    src = inspect.getsource(setup_router._finalize_setup)
+    assert "user.disclaimer_acknowledged_at is None" in src
+    assert "ack_disclaimer" in src  # sets it after sending (FR-028)
+
+
+def test_goal_flow_never_sends_the_disclaimer():
+    """It is not a first coaching interaction — the athlete already saw it."""
+    import inspect
+
+    from app.bot.routers import goal as goal_router
+
+    assert "DISCLAIMER" not in inspect.getsource(goal_router)

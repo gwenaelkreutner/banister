@@ -171,11 +171,11 @@ description: "Task list for 007-first-run-and-goals"
 
 ### Tests for User Story 6
 
-- [ ] T049 [P] [US6] Test in `tests/test_bot/test_setup_confirm.py` — `_finalize_setup` sends `DISCLAIMER_TEXT` and sets `disclaimer_acknowledged_at` when it is null; on a second run with the flag set, it is **not** sent (FR-028)
+- [X] T049 [P] [US6] Test in `tests/test_bot/test_setup_confirm.py` — `_finalize_setup` sends `DISCLAIMER_TEXT` and sets `disclaimer_acknowledged_at` when it is null; on a second run with the flag set, it is **not** sent (FR-028)
 
 ### Implementation for User Story 6
 
-- [ ] T050 [US6] Gate the disclaimer in `app/bot/routers/setup.py` and `app/bot/routers/goal.py` — send `prompts.DISCLAIMER_TEXT` only when `user.disclaimer_acknowledged_at is None`, then `user_repo.ack_disclaimer` (FR-027, FR-028); remove the unconditional send added in spec 006 T054
+- [X] T050 [US6] Gate the disclaimer in `app/bot/routers/setup.py` and `app/bot/routers/goal.py` — send `prompts.DISCLAIMER_TEXT` only when `user.disclaimer_acknowledged_at is None`, then `user_repo.ack_disclaimer` (FR-027, FR-028); remove the unconditional send added in spec 006 T054
 
 ---
 
