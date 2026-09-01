@@ -101,3 +101,54 @@ def test_seeded_fitness_is_disclosed_in_the_recap():
     profile = _build_profile(fsm)
     recap = _built_from_recap(profile, fsm, seeded=True)
     assert "estimation prudente" in recap  # FR-010
+
+
+# ── US2: the correction flow (FR-006a, FR-007, SC-004) ───────────────────────
+
+
+class _FakeState:
+    def __init__(self, data: dict):
+        self._data = dict(data)
+        self.state = None
+
+    async def get_data(self):
+        return dict(self._data)
+
+    async def update_data(self, **kw):
+        self._data.update(kw)
+
+    async def set_state(self, s):
+        self.state = s
+
+
+class _FakeMessage:
+    def __init__(self, text: str):
+        self.text = text
+        self.sent: list[str] = []
+
+    async def answer(self, text, **kw):
+        self.sent.append(text)
+
+
+async def test_correcting_ftp_defers_to_the_source_and_shows_from_to():
+    from app.bot.routers.setup import correct_value
+
+    state = _FakeState({"read_ftp": 290, "_correcting": "ftp", "corrections_deferred": {}})
+    msg = _FakeMessage("305")
+    await correct_value(msg, state)
+
+    data = await state.get_data()
+    assert data["corrections_deferred"]["ftp"] == {"wanted": 305.0, "current": 290}
+    assert data["_correcting"] is None
+    body = msg.sent[-1]
+    assert "305" in body and "290" in body           # from → to (FR-006a)
+    assert "intervals.icu" in body and "Réglages" in body  # sent to the source (FR-007)
+
+
+async def test_correction_with_no_field_selected_is_a_noop():
+    from app.bot.routers.setup import correct_value
+
+    state = _FakeState({"read_ftp": 290})
+    msg = _FakeMessage("305")
+    await correct_value(msg, state)
+    assert (await state.get_data()).get("corrections_deferred") in (None, {})

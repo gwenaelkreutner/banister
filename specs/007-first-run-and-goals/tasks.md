@@ -78,15 +78,15 @@ description: "Task list for 007-first-run-and-goals"
 
 ### Tests for User Story 2
 
-- [ ] T020 [P] [US2] Test the correction flow in `tests/test_bot/test_setup_confirm.py` — `✏️ Corriger` → pick FTP → enter value → the athlete is shown `290 → 305` and told the value lives at intervals.icu; with no write-back endpoint, setup proceeds on **290** and states the divergence; the stored profile FTP is 290, not 305 (FR-007, SC-004)
-- [ ] T021 [P] [US2] Test that a source value missing (no cycling FTP) makes setup **ask** rather than default, and the coach states it runs on HR (FR-008, FR-009), in `tests/test_bot/test_setup_confirm.py`
+- [X] T020 [P] [US2] Test the correction flow in `tests/test_bot/test_setup_confirm.py` — `✏️ Corriger` → pick FTP → enter value → the athlete is shown `290 → 305` and told the value lives at intervals.icu; with no write-back endpoint, setup proceeds on **290** and states the divergence; the stored profile FTP is 290, not 305 (FR-007, SC-004)
+- [X] T021 [P] [US2] Test that a source value missing (no cycling FTP) makes setup **ask** rather than default, and the coach states it runs on HR (FR-008, FR-009), in `tests/test_bot/test_setup_confirm.py`
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Implement the `CORRECT_VALUE` state in `app/bot/routers/setup.py` — list the editable read values; on selection, prompt for the new value; render the `from → to` + "cette valeur vit dans ton compte intervals.icu" message (contracts §3)
-- [ ] T023 [US2] FR-007 default path: after a correction, do **not** write the new value into the profile; keep the source's current value, set `read_from_source_at`, and add "j'utilise {source_value} tant qu'intervals.icu n'est pas à jour — change-le dans Réglages → Sport → {field}" to the confirmation summary. Return to `CONFIRM_PROFILE`
-- [ ] T024 [US2] **[PROBE — separate authorisation]** Probe `PUT /athlete/{id}` / `PUT .../sportSettings/{id}` for FTP/weight write-back against a throwaway value, verify it round-trips and can be reverted, and record the result in research.md. **Only if it passes**: implement `client.update_athlete_field()` and an approval-gated write-back branch in `CORRECT_VALUE` (shown `from→to`, own approval tap, approval recorded — FR-006a/b); a failed write falls through to T023's path (FR-006c). If it does not pass or is not authorised, mark this task done-by-deferral and leave T023 as the only path
-- [ ] T025 [US2] FR-009 rendering: when the read profile has no cycling FTP, the confirmation screen omits the FTP row, `coaching_mode` is `"hr"`, and `_finalize_setup` states "je pilote sur la fréquence cardiaque, je n'ai pas de FTP mesurée"
+- [X] T022 [US2] Implement the `CORRECT_VALUE` state in `app/bot/routers/setup.py` — list the editable read values; on selection, prompt for the new value; render the `from → to` + "cette valeur vit dans ton compte intervals.icu" message (contracts §3)
+- [X] T023 [US2] FR-007 default path: after a correction, do **not** write the new value into the profile; keep the source's current value, set `read_from_source_at`, and add "j'utilise {source_value} tant qu'intervals.icu n'est pas à jour — change-le dans Réglages → Sport → {field}" to the confirmation summary. Return to `CONFIRM_PROFILE`
+- [X] T024 [US2] **[DEFERRED — no separate authorisation given]** The write-back probe writes to the athlete's intervals.icu *account settings* (not a deletable calendar event) and was not authorised this session. FR-007 is the shipped correction path and is complete on its own: a correction is captured, the source's value is kept, the athlete is directed to change it at intervals.icu, and no divergent local value is stored (SC-004 holds). `client.update_athlete_field()` and the approval-gated write-back branch are left for a session that authorises the probe — same fence as spec 005's events-API verification.
+- [X] T025 [US2] FR-009 rendering: when the read profile has no cycling FTP, the confirmation screen omits the FTP row, `coaching_mode` is `"hr"`, and `_finalize_setup` states "je pilote sur la fréquence cardiaque, je n'ai pas de FTP mesurée"
 
 **Checkpoint**: US1 + US2 — the confirmation is honest end to end; no silent inference, no local override.
 
