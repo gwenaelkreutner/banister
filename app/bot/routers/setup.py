@@ -1,12 +1,16 @@
 """
-Commande /setup — configuration initiale et régénération du plan.
+Commande /setup — configuration initiale et régénération du plan (spec 007).
 
 Flow FSM (SetupStates) :
-  SPORT → GOAL → DATE → VOLUME → POWER → AGE → génération du plan
+  lecture de la source → CONFIRM_PROFILE → [CORRECT_VALUE] → GOAL → DATE → VOLUME
+  → CONSTRAINTS → génération du plan
 
-Peut être relancé à tout moment : /setup repart depuis le début et régénère le plan.
+Setup lit tout ce qu'intervals.icu sait de l'athlète (FTP, FC, poids, âge, forme,
+volume réel), le fait confirmer, puis ne demande que ce qui ne peut pas être lu :
+l'objectif, sa date, le volume voulu, les contraintes santé.
 """
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 
 from aiogram import F, Router
@@ -16,10 +20,10 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.states import PlanStates, SetupStates
+from app.config import settings
 from app.db import repositories as repo
 from app.db.repositories import activity_repo
 from app.engine.atl_ctl import compute_fitness_from_any, estimate_initial_ctl
-from app.services.fitness import get_current_fitness
 from app.engine.plan_builder import generate_plan
 from app.engine.schemas import (
     AthleteProfileSchema,
@@ -29,8 +33,19 @@ from app.engine.schemas import (
     PhysioProfile,
 )
 from app.engine.tss import tss_from_weekly_hours
+from app.providers.intervals.athlete_profile import ReadProfile, read_athlete_profile, stamp
+from app.providers.intervals.client import IntervalsClient
+from app.services.fitness import get_current_fitness
 
+logger = logging.getLogger(__name__)
 router = Router()
+
+
+def _intervals_client() -> IntervalsClient:
+    return IntervalsClient(
+        settings.intervals_api_key.get_secret_value(),
+        athlete_id=settings.intervals_athlete_id,
+    )
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
 
@@ -40,12 +55,27 @@ def _kb(buttons: list[tuple[str, str]]) -> InlineKeyboardMarkup:
     )
 
 
-def sport_keyboard() -> InlineKeyboardMarkup:
+def confirm_keyboard() -> InlineKeyboardMarkup:
     return _kb([
-        ("🚴 Cyclisme", "setup:sport:cycling"),
-        ("🏃 Course à pied", "setup:sport:running"),
-        ("🏊 Triathlon", "setup:sport:triathlon"),
-        ("🏅 Autre sport", "setup:sport:other"),
+        ("✅ Tout est bon", "setup:confirm:ok"),
+        ("✏️ Corriger une valeur", "setup:confirm:edit"),
+    ])
+
+
+def correct_keyboard() -> InlineKeyboardMarkup:
+    return _kb([
+        ("FTP", "setup:correct:ftp"),
+        ("FC max", "setup:correct:max_hr"),
+        ("FC repos", "setup:correct:resting_hr"),
+        ("Poids", "setup:correct:weight"),
+        ("↩️ Revenir", "setup:correct:back"),
+    ])
+
+
+def constraints_keyboard() -> InlineKeyboardMarkup:
+    return _kb([
+        ("Aucune contrainte santé", "setup:constraints:none"),
+        ("J'en ai une — je la décris", "setup:constraints:describe"),
     ])
 
 
@@ -72,52 +102,163 @@ def volume_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def power_keyboard() -> InlineKeyboardMarkup:
-    return _kb([
-        ("⚡ Oui, j'ai un capteur de puissance", "setup:power:yes"),
-        ("❤️ Non, j'utilise la fréquence cardiaque", "setup:power:no"),
-    ])
+# ── Entry point : read the source, then confirm ───────────────────────────────
+
+def _read_profile_to_fsm(rp: ReadProfile) -> dict:
+    """Flatten a ReadProfile into JSON-safe FSM data. `_build_profile` reads this back."""
+    return {
+        "read_ftp": rp.ftp.value,
+        "read_ftp_present": rp.ftp.present,
+        "read_lthr": rp.lthr.value,
+        "read_max_hr": rp.max_hr.value,
+        "read_resting_hr": rp.resting_hr.value,
+        "read_weight": rp.weight_kg.value,
+        "read_sex": rp.sex.value,
+        "read_age": rp.age.value,
+        "read_has_power_meter": rp.has_power_meter,
+        "read_coaching_mode": rp.coaching_mode,
+        "read_from_source_at": stamp(),
+        "corrections_deferred": {},
+    }
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+def _render_confirm_screen(rp: ReadProfile) -> str:
+    def row(label: str, rv, unit: str) -> str:
+        if not rv.present:
+            return f"  {label:<16} — absent, je te le demanderai"
+        note = f"\n  {'':<16}⚠️ {rv.note}" if rv.note else ""
+        return f"  {label:<16} <b>{rv.value}</b> {unit}   · {rv.origin}{note}"
+
+    mode = "puissance" if rp.coaching_mode == "power" else "fréquence cardiaque"
+    age_bit = f"· {rp.age.value} ans" if rp.age.present else ""
+    lines = [
+        "\U0001f4cb <b>Voici ce que je sais déjà de toi</b> (lu depuis intervals.icu) :",
+        "",
+        row("FTP", rp.ftp, "W"),
+        row("LTHR", rp.lthr, "bpm"),
+        row("FC max", rp.max_hr, "bpm"),
+        row("FC repos", rp.resting_hr, "bpm"),
+        row("Poids", rp.weight_kg, "kg"),
+        row("Sexe / âge", rp.sex, age_bit),
+        "",
+        f"Pilotage : <b>{mode}</b>.",
+        "",
+        "C'est bon ? Sinon corrige — mais ces valeurs vivent dans ton compte "
+        "intervals.icu, je lis depuis là.",
+    ]
+    return "\n".join(lines)
+
 
 @router.message(Command("setup"))
-async def cmd_setup(message: Message, state: FSMContext) -> None:
+async def cmd_setup(message: Message, state: FSMContext, session: AsyncSession, user) -> None:
     await state.clear()
-    await state.set_state(SetupStates.SPORT)
+    await message.answer("⏳ Je lis ton profil intervals.icu…")
+    try:
+        rp = await read_athlete_profile(_intervals_client())
+    except Exception:
+        logger.exception("read_athlete_profile failed during /setup")
+        await message.answer(
+            "⚠️ Je n'arrive pas à lire ton profil intervals.icu pour l'instant. "
+            "Vérifie ta clé API et réessaie /setup dans un moment."
+        )
+        return
+
+    await state.update_data(**_read_profile_to_fsm(rp))
+    await state.set_state(SetupStates.CONFIRM_PROFILE)
     await message.answer(
-        "⚙️ <b>Configuration de Banister</b>\n\n"
-        "Quelques questions pour calibrer ton plan d'entraînement.\n\n"
-        "Quel est ton sport principal ?",
-        parse_mode="HTML",
-        reply_markup=sport_keyboard(),
+        _render_confirm_screen(rp), parse_mode="HTML", reply_markup=confirm_keyboard()
     )
 
 
-# ── Step 1 : Sport ─────────────────────────────────────────────────────────────
+# ── CONFIRM_PROFILE ──────────────────────────────────────────────────────────
 
-@router.callback_query(SetupStates.SPORT, F.data.startswith("setup:sport:"))
-async def setup_sport(callback: CallbackQuery, state: FSMContext) -> None:
-    sport = callback.data.split(":")[2]
-    await state.update_data(sport=sport)
-
-    if sport != "cycling":
-        await callback.message.edit_text(
-            "ℹ️ Les sports autres que le cyclisme seront mieux pris en charge dans les prochaines versions.\n"
-            "Le plan généré utilisera les mêmes principes de charge (TSS/CTL/ATL).\n\n"
-            "Quel est ton objectif ?",
-            reply_markup=goal_keyboard(),
-        )
-    else:
-        await callback.message.edit_text(
-            "Quel est ton objectif ?",
-            reply_markup=goal_keyboard(),
-        )
+@router.callback_query(SetupStates.CONFIRM_PROFILE, F.data == "setup:confirm:ok")
+async def confirm_ok(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(SetupStates.GOAL)
+    await callback.message.edit_text(
+        "\U0001f44d Parfait. Maintenant ce que je ne peux pas deviner.\n\n"
+        "Quel est ton objectif ?",
+        reply_markup=goal_keyboard(),
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
-# ── Step 2 : Goal ──────────────────────────────────────────────────────────────
+@router.callback_query(SetupStates.CONFIRM_PROFILE, F.data == "setup:confirm:edit")
+async def confirm_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SetupStates.CORRECT_VALUE)
+    await callback.message.edit_text(
+        "Quelle valeur veux-tu corriger ?", reply_markup=correct_keyboard()
+    )
+    await callback.answer()
+
+
+# ── CORRECT_VALUE ────────────────────────────────────────────────────────────
+# Phase 4 (US2) adds the write-to-source branch. Here: capture the new value, keep
+# the source's current one (FR-007 default), note the caveat for the recap.
+
+_CORRECT_LABELS = {
+    "ftp": ("FTP", "W"), "max_hr": ("FC max", "bpm"),
+    "resting_hr": ("FC repos", "bpm"), "weight": ("Poids", "kg"),
+}
+_CORRECT_SRC_KEY = {
+    "ftp": "read_ftp", "max_hr": "read_max_hr",
+    "resting_hr": "read_resting_hr", "weight": "read_weight",
+}
+
+
+@router.callback_query(SetupStates.CORRECT_VALUE, F.data == "setup:correct:back")
+async def correct_back(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SetupStates.CONFIRM_PROFILE)
+    await callback.message.edit_text("Reprenons. C'est bon ?", reply_markup=confirm_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(SetupStates.CORRECT_VALUE, F.data.startswith("setup:correct:"))
+async def correct_pick(callback: CallbackQuery, state: FSMContext) -> None:
+    field = callback.data.split(":")[2]
+    if field not in _CORRECT_LABELS:
+        await callback.answer()
+        return
+    label, unit = _CORRECT_LABELS[field]
+    await state.update_data(_correcting=field)
+    await callback.message.edit_text(
+        f"Nouvelle valeur pour <b>{label}</b> (en {unit}) ? Envoie juste le nombre.",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(SetupStates.CORRECT_VALUE, F.text)
+async def correct_value(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    field = data.get("_correcting")
+    if not field:
+        await message.answer("Choisis d'abord une valeur à corriger.")
+        return
+    label, unit = _CORRECT_LABELS[field]
+    try:
+        new_val = float(message.text.strip().replace(",", "."))
+    except ValueError:
+        await message.answer(f"⚠️ Envoie un nombre pour {label}.")
+        return
+
+    current = data.get(_CORRECT_SRC_KEY[field])
+    deferred = dict(data.get("corrections_deferred") or {})
+    deferred[field] = {"wanted": new_val, "current": current}
+    await state.update_data(corrections_deferred=deferred, _correcting=None)
+    await state.set_state(SetupStates.CONFIRM_PROFILE)
+    await message.answer(
+        f"Noté : tu veux {label} à {new_val:g} {unit} (actuellement {current} {unit} "
+        f"selon intervals.icu).\n\n"
+        f"Cette valeur vit dans ton compte intervals.icu — change-la là "
+        f"(Réglages → Sport → {label}), je relirai. En attendant je construis ton "
+        f"plan sur {current} {unit}.",
+        reply_markup=confirm_keyboard(),
+    )
+
+
+# ── GOAL ─────────────────────────────────────────────────────────────────────
 
 @router.callback_query(SetupStates.GOAL, F.data.startswith("setup:goal:"))
 async def setup_goal(callback: CallbackQuery, state: FSMContext) -> None:
@@ -125,148 +266,109 @@ async def setup_goal(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(goal=goal)
     await state.set_state(SetupStates.DATE)
     await callback.message.edit_text(
-        "📅 As-tu un événement cible ?\n\n"
-        "Réponds avec la date au format <code>AAAA-MM-JJ</code> (ex: <code>2026-09-15</code>)\n"
+        "\U0001f4c5 As-tu un événement cible ?\n\n"
+        "Réponds avec la date au format <code>AAAA-MM-JJ</code> "
         "ou tape <code>aucune</code> si tu n'as pas d'échéance.",
         parse_mode="HTML",
     )
     await callback.answer()
 
 
-# ── Step 3 : Target date ───────────────────────────────────────────────────────
+# ── DATE ─────────────────────────────────────────────────────────────────────
 
 @router.message(SetupStates.DATE)
 async def setup_date(message: Message, state: FSMContext) -> None:
     raw = message.text.strip().lower()
     target_date = None
-
     if raw not in ("aucune", "none", "-", "skip"):
         try:
             target_date = date.fromisoformat(message.text.strip())
-            if target_date <= date.today():
-                await message.answer(
-                    "⚠️ La date doit être dans le futur. Réessaie (format <code>AAAA-MM-JJ</code>) "
-                    "ou tape <code>aucune</code>.",
-                    parse_mode="HTML",
-                )
-                return
         except ValueError:
             await message.answer(
-                "⚠️ Format non reconnu. Utilise <code>AAAA-MM-JJ</code> (ex: <code>2026-09-15</code>) "
+                "⚠️ Format non reconnu. Utilise <code>AAAA-MM-JJ</code> "
                 "ou tape <code>aucune</code>.",
                 parse_mode="HTML",
             )
             return
+        if target_date <= date.today():
+            await message.answer(
+                "⚠️ La date doit être dans le futur. Réessaie "
+                "ou tape <code>aucune</code>.",
+                parse_mode="HTML",
+            )
+            return
+        days = (target_date - date.today()).days
+        data = await state.get_data()
+        if days < 21 and data.get("_date_confirmed") != target_date.isoformat():
+            await state.update_data(_date_confirmed=target_date.isoformat())
+            await message.answer(
+                f"⚠️ {days} jours, c'est très court pour un vrai bloc. "
+                "Renvoie la même date pour confirmer, ou choisis-en une plus lointaine."
+            )
+            return
+        if days > 365:
+            await message.answer(
+                "ℹ️ Si loin, le plan est surtout de la spéculation — "
+                "je le construis quand même, mais vise plutôt un point plus proche."
+            )
 
-    await state.update_data(target_date=target_date.isoformat() if target_date else None)
+    await state.update_data(
+        target_date=target_date.isoformat() if target_date else None, _date_confirmed=None
+    )
     await state.set_state(SetupStates.VOLUME)
+    recent = (await state.get_data()).get("read_recent_hours")
+    hint = f" (tes 6 dernières semaines : ~{recent:.0f} h/sem)" if recent else ""
     await message.answer(
-        "🕐 Combien d'heures par semaine peux-tu consacrer à l'entraînement ?",
+        f"\U0001f550 Combien d'heures par semaine tu <b>veux</b> t'entraîner ?{hint}",
+        parse_mode="HTML",
         reply_markup=volume_keyboard(),
     )
 
 
-# ── Step 4 : Weekly volume ─────────────────────────────────────────────────────
+# ── VOLUME ───────────────────────────────────────────────────────────────────
 
 @router.callback_query(SetupStates.VOLUME, F.data.startswith("setup:vol:"))
 async def setup_volume(callback: CallbackQuery, state: FSMContext) -> None:
     hours = float(callback.data.split(":")[2])
     await state.update_data(hours_per_week=hours)
-    await state.set_state(SetupStates.POWER)
+    await state.set_state(SetupStates.CONSTRAINTS)
     await callback.message.edit_text(
-        "📊 As-tu un capteur de puissance (ou de vitesse/allure pour la course) ?",
-        reply_markup=power_keyboard(),
+        "\U0001fa7a Dernière question — aucune source ne la connaît : as-tu une "
+        "contrainte santé qui limite ce que tu peux faire en sécurité ?",
+        reply_markup=constraints_keyboard(),
     )
     await callback.answer()
 
 
-# ── Step 5 : Power meter ───────────────────────────────────────────────────────
+# ── CONSTRAINTS ──────────────────────────────────────────────────────────────
 
-@router.callback_query(SetupStates.POWER, F.data == "setup:power:yes")
-async def setup_power_yes(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(has_power_meter=True)
-    await state.set_state(SetupStates.AGE)
+@router.callback_query(SetupStates.CONSTRAINTS, F.data == "setup:constraints:none")
+async def constraints_none(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, user
+) -> None:
+    await state.update_data(health_constraints=False)
+    await callback.message.edit_text("⏳ Génération de ton plan en cours…")
+    await callback.answer()
+    await _finalize_setup(callback.message, state, session, user, await state.get_data())
+
+
+@router.callback_query(SetupStates.CONSTRAINTS, F.data == "setup:constraints:describe")
+async def constraints_describe(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.edit_text(
-        "⚡ Quel est ton FTP actuel (en watts) ?\n\n"
-        "Réponds avec un nombre (ex: <code>260</code>), "
-        "ou <code>?</code> si tu ne sais pas — je l'estimerai.",
-        parse_mode="HTML",
+        "Décris-la en une phrase (zone du corps, sévérité, ce que tu évites)."
     )
     await callback.answer()
-    # Store a flag so AGE handler knows to also collect FTP
-    await state.update_data(_awaiting_ftp=True)
 
 
-@router.callback_query(SetupStates.POWER, F.data == "setup:power:no")
-async def setup_power_no(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(has_power_meter=False)
-    await state.set_state(SetupStates.AGE)
-    await callback.message.edit_text(
-        "❤️ Quelle est ta fréquence cardiaque maximale (en bpm) ?\n\n"
-        "Réponds avec un nombre (ex: <code>183</code>), "
-        "ou <code>?</code> si tu ne sais pas — je l'estimerai.",
-        parse_mode="HTML",
+@router.message(SetupStates.CONSTRAINTS, F.text)
+async def constraints_text(
+    message: Message, state: FSMContext, session: AsyncSession, user
+) -> None:
+    await state.update_data(
+        health_constraints=True, health_constraints_note=message.text.strip()[:500]
     )
-    await callback.answer()
-    await state.update_data(_awaiting_ftp=False)
-
-
-# ── Step 5b : FTP or HR max (text input) ──────────────────────────────────────
-
-@router.message(SetupStates.AGE, F.text)
-async def setup_age_or_metric(message: Message, state: FSMContext, session: AsyncSession, user) -> None:
-    fsm_data = await state.get_data()
-    awaiting_ftp: bool = fsm_data.get("_awaiting_ftp", False)
-    has_ftp_or_hr = "ftp" in fsm_data or "hr_max" in fsm_data
-
-    # First text input in AGE state = FTP or HR max
-    if not has_ftp_or_hr:
-        raw = message.text.strip()
-        if awaiting_ftp:
-            if raw == "?":
-                await state.update_data(ftp=None, ftp_source="estimated")
-            else:
-                try:
-                    ftp = int(raw)
-                    if not (50 <= ftp <= 600):
-                        raise ValueError
-                    await state.update_data(ftp=ftp, ftp_source="declared")
-                except ValueError:
-                    await message.answer("⚠️ Valeur incorrecte. Entre un FTP en watts (ex: <code>260</code>) ou <code>?</code>.", parse_mode="HTML")
-                    return
-        else:
-            if raw == "?":
-                await state.update_data(hr_max=None, hr_max_source="estimated")
-            else:
-                try:
-                    hr = int(raw)
-                    if not (100 <= hr <= 230):
-                        raise ValueError
-                    await state.update_data(hr_max=hr, hr_max_source="declared")
-                except ValueError:
-                    await message.answer("⚠️ Valeur incorrecte. Entre ta FC max en bpm (ex: <code>183</code>) ou <code>?</code>.", parse_mode="HTML")
-                    return
-
-        await message.answer(
-            "👤 Quel est ton âge ? (ex: <code>38</code>)",
-            parse_mode="HTML",
-        )
-        return
-
-    # Second text input = Age → final step, generate plan
-    try:
-        age = int(message.text.strip())
-        if not (14 <= age <= 90):
-            raise ValueError
-    except ValueError:
-        await message.answer("⚠️ Âge invalide. Entre un nombre entier (ex: <code>38</code>).", parse_mode="HTML")
-        return
-
-    await state.update_data(age=age)
-    await message.answer("⏳ Génération de ton plan en cours...")
-
-    fsm_data = await state.get_data()
-    await _finalize_setup(message, state, session, user, fsm_data)
+    await message.answer("⏳ Génération de ton plan en cours…")
+    await _finalize_setup(message, state, session, user, await state.get_data())
 
 
 # ── Finalization : create user, build profile, generate plan ───────────────────
@@ -278,8 +380,6 @@ async def _finalize_setup(
     user,
     data: dict,
 ) -> None:
-    from app.config import settings
-
     # Create or reuse user record
     if user is None:
         tg = message.from_user
@@ -295,19 +395,27 @@ async def _finalize_setup(
     # l'athlète vient tout juste de se connecter et que le poller n'a pas encore eu son
     # premier tick (import_history/ingest_wellness sont idempotents, voir poller.py)
     fitness = None
+    fitness_is_seeded = False
     try:
         current = await get_current_fitness(session, user.id)
         if current is not None:
             fitness = current.metrics
         else:
             activities = await activity_repo.get_for_user(session, user.id, days=120)
-            if activities:
-                weekly_tss_seed = tss_from_weekly_hours(float(data.get("hours_per_week", 5)))
-                initial_ctl_seed = estimate_initial_ctl(weekly_tss_seed)
-                seed_date = date.today() - timedelta(days=120)
+            weekly_tss_seed = tss_from_weekly_hours(float(data.get("hours_per_week", 5)))
+            initial_ctl_seed = estimate_initial_ctl(weekly_tss_seed)
+            seed_date = date.today() - timedelta(days=120)
+            if activities and len(activities) >= 4:
                 fitness = compute_fitness_from_any(
                     activities, initial_ctl=initial_ctl_seed, seed_date=seed_date
                 )
+            else:
+                # FR-010 — too little history to measure current fitness: use a
+                # documented conservative seed and disclose it.
+                fitness = compute_fitness_from_any(
+                    activities or [], initial_ctl=initial_ctl_seed, seed_date=seed_date
+                )
+                fitness_is_seeded = True
     except Exception:
         pass
 
@@ -328,8 +436,11 @@ async def _finalize_setup(
         end_date=end_date,
     )
 
-    # Save/overwrite athlete profile
+    # Save/overwrite athlete profile — with the source-read provenance markers (FR-005).
     profile_data = profile.model_dump(mode="json")
+    profile_data["read_from_source_at"] = data.get("read_from_source_at")
+    if data.get("corrections_deferred"):
+        profile_data["corrections_deferred"] = data["corrections_deferred"]
     existing_profile = await repo.profile_repo.get_by_user_id(session, user.id)
     if existing_profile is None:
         await repo.profile_repo.create(session, user.id, profile_data)
@@ -343,16 +454,19 @@ async def _finalize_setup(
     await state.clear()
 
     summary = _build_plan_summary(plan)
+    built_from = _built_from_recap(profile, data, fitness_is_seeded)
     await message.answer(
-        f"🎉 <b>Ton plan est prêt !</b>\n\n{summary}\n\n"
+        f"🎉 <b>Ton plan est prêt !</b>\n\n{summary}\n\n{built_from}\n\n"
         "Tape /plan pour voir ta première semaine en détail. 🚴",
         parse_mode="HTML",
     )
 
-    # Disclaimer avant la première interaction de coaching (spec 006 FR-028, SC-009).
-    from app.llm.prompts import DISCLAIMER_TEXT
+    # Disclaimer avant la première interaction de coaching — une seule fois (FR-028).
+    if user.disclaimer_acknowledged_at is None:
+        from app.llm.prompts import DISCLAIMER_TEXT
 
-    await message.answer(DISCLAIMER_TEXT, parse_mode="HTML")
+        await message.answer(DISCLAIMER_TEXT, parse_mode="HTML")
+        await repo.user_repo.ack_disclaimer(session, user)
 
     # LLM narrative in background (non-blocking)
     import asyncio
@@ -364,23 +478,36 @@ async def _finalize_setup(
 
 
 def _build_profile(data: dict, fitness=None) -> AthleteProfileSchema:
-    has_pm = data.get("has_power_meter", False)
-    ftp = data.get("ftp")
-    age = data.get("age", 35)
-    hr_max = data.get("hr_max")
-    if hr_max is None:
-        hr_max = 220 - age
+    """Build the profile from the CONFIRMED read values (spec 007 US1) + the four
+    answers. Everything read from intervals.icu carries `*_source == "source"`
+    (Constitution IV); nothing is silently defaulted.
 
+    FR-007: a value the athlete asked to correct is kept at the source's *current*
+    number (the correction must be applied at intervals.icu) — the wanted value lives
+    only in `corrections_deferred`, for the recap caveat.
+    """
+    has_pm = bool(data.get("read_has_power_meter"))
+    ftp = data.get("read_ftp")                    # source value, kept even if "corrected"
+    max_hr = data.get("read_max_hr")
+    resting_hr = data.get("read_resting_hr")
+    age = data.get("read_age") or 35
+
+    ftp_source = "source" if ftp is not None else "estimated"
+    hr_max_source = "source" if max_hr is not None else "estimated"
+    hr_rest_source = "source" if resting_hr is not None else "estimated"
+
+    if max_hr is None:
+        max_hr = 220 - int(age)
+    if resting_hr is None:
+        resting_hr = 60
     if has_pm and ftp is None:
-        level_ftp = {"beginner": 150, "intermediate": 220, "advanced": 280, "expert": 340}
-        ftp = level_ftp.get("intermediate", 220)
+        # FR-008-adjacent: only reached if the athlete confirmed a power-meter setup
+        # with no FTP anywhere — a coarse level default, flagged estimated.
+        ftp = {"beginner": 150, "intermediate": 220, "advanced": 280, "expert": 340}["intermediate"]
 
-    target_date = None
-    if data.get("target_date"):
-        target_date = date.fromisoformat(data["target_date"])
+    target_date = date.fromisoformat(data["target_date"]) if data.get("target_date") else None
 
     hours = float(data.get("hours_per_week", 7))
-    # Infer level from weekly hours
     if hours <= 5:
         level = "beginner"
     elif hours <= 8:
@@ -403,22 +530,54 @@ def _build_profile(data: dict, fitness=None) -> AthleteProfileSchema:
         structured_plan_history=False,
         equipment=EquipmentProfile(
             power_meter=has_pm,
-            ftp=ftp,
-            ftp_source=data.get("ftp_source", "estimated"),
+            ftp=int(ftp) if ftp is not None else None,
+            ftp_source=ftp_source,
         ),
         physio=PhysioProfile(
-            age=age,
-            hr_max=hr_max,
-            hr_max_source=data.get("hr_max_source", "estimated"),
-            hr_rest=60,
-            hr_rest_source="estimated",
+            age=int(age),
+            hr_max=int(max_hr),
+            hr_max_source=hr_max_source,
+            hr_rest=int(resting_hr),
+            hr_rest_source=hr_rest_source,
         ),
-        coaching_mode="power" if has_pm else "hr",
-        health_constraints=False,
+        coaching_mode=data.get("read_coaching_mode") or ("power" if has_pm else "hr"),
+        health_constraints=bool(data.get("health_constraints")),
         current_ctl=fitness.ctl if fitness else None,
         current_atl=fitness.atl if fitness else None,
         current_tsb=fitness.tsb if fitness else None,
     )
+
+
+def _built_from_recap(profile: AthleteProfileSchema, data: dict, seeded: bool) -> str:
+    """FR-004 — every input the plan was built from, visible with its origin."""
+    e, p, o = profile.equipment, profile.physio, profile.objective
+    src = {"source": "lu depuis intervals.icu", "declared": "que tu as donné",
+           "estimated": "estimé"}
+    lines = ["🧾 <b>Ce sur quoi j'ai construit ton plan</b>"]
+    if e.ftp:
+        lines.append(f"  • FTP {e.ftp} W · {src.get(e.ftp_source, e.ftp_source)}")
+    lines.append(f"  • FC max {p.hr_max} bpm · {src.get(p.hr_max_source, p.hr_max_source)}")
+    lines.append(
+        f"  • FC repos {p.hr_rest} bpm · "
+        f"{src.get(p.hr_rest_source, p.hr_rest_source)}"
+    )
+    when = f" le {o.target_date:%d/%m/%Y}" if o.target_date else ""
+    lines.append(f"  • Objectif : {o.type}{when}")
+    hrs = profile.availability.hours_per_week
+    lines.append(f"  • Volume voulu : {hrs:g} h/sem (ton choix)")
+    if profile.health_constraints:
+        lines.append("  • Contrainte santé prise en compte")
+    if seeded:
+        lines.append(
+            "  • Forme de départ : <i>estimation prudente</i> — pas assez d'historique "
+            "pour la mesurer, elle se calera sur tes données réelles en quelques semaines"
+        )
+    for field, info in (data.get("corrections_deferred") or {}).items():
+        lines.append(
+            f"  ⚠️ {field} : tu voulais {info['wanted']:g}, je garde {info['current']} "
+            "tant qu'intervals.icu n'est pas à jour"
+        )
+    return "\n".join(lines)
 
 
 def _build_plan_summary(plan) -> str:
@@ -455,8 +614,8 @@ def _build_plan_summary(plan) -> str:
 
 async def _generate_narrative(user_id, plan, profile, *, bot, chat_id) -> None:
     try:
-        from app.llm.narrator import generate_plan_narrative
         from app.db.client import AsyncSessionFactory
+        from app.llm.narrator import generate_plan_narrative
 
         narrative = await generate_plan_narrative(plan, profile.level, profile.objective.type)
 

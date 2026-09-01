@@ -199,15 +199,15 @@ class AvailabilityProfile(BaseModel):
 class EquipmentProfile(BaseModel):
     power_meter: bool
     ftp: int | None = None
-    ftp_source: Literal["declared", "estimated"] = "estimated"
+    ftp_source: Literal["declared", "estimated", "source"] = "estimated"
 
 
 class PhysioProfile(BaseModel):
     age: int
     hr_max: int
-    hr_max_source: Literal["declared", "estimated"] = "estimated"
+    hr_max_source: Literal["declared", "estimated", "source"] = "estimated"
     hr_rest: int
-    hr_rest_source: Literal["declared", "estimated"] = "estimated"
+    hr_rest_source: Literal["declared", "estimated", "source"] = "estimated"
 
 
 class AthleteProfileSchema(BaseModel):

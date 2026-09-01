@@ -53,18 +53,18 @@ description: "Task list for 007-first-run-and-goals"
 
 ### Tests for User Story 1
 
-- [ ] T011 [P] [US1] Test the confirmation flow in `tests/test_bot/test_setup_confirm.py` — after `read_athlete_profile`, the FSM presents `CONFIRM_PROFILE` before any question about the athlete; on `✅`, the only states entered are goal/date/volume/constraints; age is never asked; `hr_rest` comes from `icu_resting_hr` not the hard-coded 60
-- [ ] T012 [P] [US1] Test that `_build_profile` marks source-derived values `ftp_source`/`hr_max_source`/`hr_rest_source == "source"` and stamps `read_from_source_at` (FR-005, SC-003), in `tests/test_bot/test_setup_confirm.py`
+- [X] T011 [P] [US1] Test the confirmation flow in `tests/test_bot/test_setup_confirm.py` — after `read_athlete_profile`, the FSM presents `CONFIRM_PROFILE` before any question about the athlete; on `✅`, the only states entered are goal/date/volume/constraints; age is never asked; `hr_rest` comes from `icu_resting_hr` not the hard-coded 60
+- [X] T012 [P] [US1] Test that `_build_profile` marks source-derived values `ftp_source`/`hr_max_source`/`hr_rest_source == "source"` and stamps `read_from_source_at` (FR-005, SC-003), in `tests/test_bot/test_setup_confirm.py`
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Add `CONFIRM_PROFILE` and `CORRECT_VALUE` to `SetupStates` in `app/bot/states.py`
-- [ ] T014 [US1] Build the confirmation screen renderer in `app/bot/routers/setup.py` — the table from contracts/first-run.md §2 with an origin line per value and an age where the source dates it; `[✅ Tout est bon]` / `[✏️ Corriger une valeur]` keyboard (`setup:confirm:*`)
-- [ ] T015 [US1] Rework `cmd_setup` / the early `SetupStates` in `app/bot/routers/setup.py` — on `/setup` with no active plan: call `read_athlete_profile`, store the `ReadProfile` in FSM data, enter `CONFIRM_PROFILE`. Remove the SPORT / POWER / AGE questions from the first-run path (they are read)
-- [ ] T016 [US1] After `✅`: enter the goal/date/volume/constraints sub-flow (reuse existing GOAL/DATE/VOLUME states; keep the constraints question). VOLUME text: "combien d'heures tu **veux** t'entraîner" — with the actual recent volume shown as a reference (FR-003, spec Assumptions)
-- [ ] T017 [US1] Rework `_build_profile()` in `app/bot/routers/setup.py` to take the confirmed `ReadProfile` + the four answers — FTP/LTHR/max_hr/weight/sex/age from the read profile with `*_source="source"`; `hr_rest` from `icu_resting_hr`; level still inferred from intended hours (unchanged heuristic); `read_from_source_at` stamped
-- [ ] T018 [US1] FR-010 path: when `wellness` < ~14 days and `activities` < ~4 weeks, seed CTL with `estimate_initial_ctl(tss_from_weekly_hours(intended_hours))` and have `_finalize_setup` say so — extend the existing fitness-seed block, add the disclosure line
-- [ ] T019 [US1] "What the plan was built from" recap after generation (FR-004) — a short block listing every input and its origin, appended to the `_finalize_setup` success message or shown on `/plan`
+- [X] T013 [US1] Add `CONFIRM_PROFILE` and `CORRECT_VALUE` to `SetupStates` in `app/bot/states.py`
+- [X] T014 [US1] Build the confirmation screen renderer in `app/bot/routers/setup.py` — the table from contracts/first-run.md §2 with an origin line per value and an age where the source dates it; `[✅ Tout est bon]` / `[✏️ Corriger une valeur]` keyboard (`setup:confirm:*`)
+- [X] T015 [US1] Rework `cmd_setup` / the early `SetupStates` in `app/bot/routers/setup.py` — on `/setup` with no active plan: call `read_athlete_profile`, store the `ReadProfile` in FSM data, enter `CONFIRM_PROFILE`. Remove the SPORT / POWER / AGE questions from the first-run path (they are read)
+- [X] T016 [US1] After `✅`: enter the goal/date/volume/constraints sub-flow (reuse existing GOAL/DATE/VOLUME states; keep the constraints question). VOLUME text: "combien d'heures tu **veux** t'entraîner" — with the actual recent volume shown as a reference (FR-003, spec Assumptions)
+- [X] T017 [US1] Rework `_build_profile()` in `app/bot/routers/setup.py` to take the confirmed `ReadProfile` + the four answers — FTP/LTHR/max_hr/weight/sex/age from the read profile with `*_source="source"`; `hr_rest` from `icu_resting_hr`; level still inferred from intended hours (unchanged heuristic); `read_from_source_at` stamped
+- [X] T018 [US1] FR-010 path: when `wellness` < ~14 days and `activities` < ~4 weeks, seed CTL with `estimate_initial_ctl(tss_from_weekly_hours(intended_hours))` and have `_finalize_setup` say so — extend the existing fitness-seed block, add the disclosure line
+- [X] T019 [US1] "What the plan was built from" recap after generation (FR-004) — a short block listing every input and its origin, appended to the `_finalize_setup` success message or shown on `/plan`
 
 **Checkpoint**: US1 functional — a connected athlete confirms one screen and answers four things.
 
