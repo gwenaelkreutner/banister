@@ -125,14 +125,14 @@ description: "Task list for 007-first-run-and-goals"
 
 ### Tests for User Story 4
 
-- [ ] T035 [P] [US4] Test `/reset` in `tests/test_bot/test_reset.py` — the warning lists real counts; typing anything but the exact word deletes nothing (FR-019, SC-006); typing the word deletes every listed row, verified by re-query (SC-006); `coach_voice` and `disclaimer_acknowledged_at` survive
-- [ ] T036 [P] [US4] Test that `purge_athlete_data` / the reset path import no `IntervalsClient` method — an AST/grep assertion (FR-020, SC-007), in `tests/test_bot/test_reset.py`
+- [X] T035 [P] [US4] Test `/reset` in `tests/test_bot/test_reset.py` — the warning lists real counts; typing anything but the exact word deletes nothing (FR-019, SC-006); typing the word deletes every listed row, verified by re-query (SC-006); `coach_voice` and `disclaimer_acknowledged_at` survive
+- [X] T036 [P] [US4] Test that `purge_athlete_data` / the reset path import no `IntervalsClient` method — an AST/grep assertion (FR-020, SC-007), in `tests/test_bot/test_reset.py`
 
 ### Implementation for User Story 4
 
-- [ ] T037 [US4] Implement `/reset` in `app/bot/routers/reset.py` — gather counts (`session_logs`, `chat_messages`, `weekly_adherence`, active plan, profile), render the itemised warning from contracts §4 with the "PAS touché" list, enter a confirm state expecting the literal `SUPPRIMER`
-- [ ] T038 [US4] Confirm handler — exact match on `SUPPRIMER` → `user_repo.purge_athlete_data` + `state.clear()` + reset `onboarding_completed_at` to null so the next `/setup` is a genuine first run; anything else → "rien n'a été supprimé" and exit (FR-019)
-- [ ] T039 [US4] Register `reset_router` in `app/bot/setup.py` before `chat_router`
+- [X] T037 [US4] Implement `/reset` in `app/bot/routers/reset.py` — gather counts (`session_logs`, `chat_messages`, `weekly_adherence`, active plan, profile), render the itemised warning from contracts §4 with the "PAS touché" list, enter a confirm state expecting the literal `SUPPRIMER`
+- [X] T038 [US4] Confirm handler — exact match on `SUPPRIMER` → `user_repo.purge_athlete_data` + `state.clear()` + reset `onboarding_completed_at` to null so the next `/setup` is a genuine first run; anything else → "rien n'a été supprimé" and exit (FR-019)
+- [X] T039 [US4] Register `reset_router` in `app/bot/setup.py` before `chat_router`
 
 **Checkpoint**: US1–US4 — goal change and start-over are distinct, and neither is dangerous.
 
