@@ -12,6 +12,17 @@ class SetupStates(StatesGroup):
     CONSTRAINTS = State()      # Contraintes santé (rien qu'aucune source ne connaît)
 
 
+class GoalStates(StatesGroup):
+    """spec 007 /goal — changer d'objectif sans repasser tout le setup."""
+    GOAL = State()
+    DATE = State()
+
+
+class ResetStates(StatesGroup):
+    """spec 007 /reset — confirmation tapée avant toute suppression."""
+    CONFIRM = State()
+
+
 class PlanStates(StatesGroup):
     ACTIVE = State()               # Utilisation normale post-setup
     SUSPENDED = State()            # Suspendu (contraintes santé détectées)

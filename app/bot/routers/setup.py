@@ -104,6 +104,31 @@ def volume_keyboard() -> InlineKeyboardMarkup:
 
 # ── Entry point : read the source, then confirm ───────────────────────────────
 
+_NO_DATE = ("aucune", "none", "-", "skip")
+
+
+def parse_goal_date(text: str) -> tuple[date | None, str | None]:
+    """Shared by /setup and /goal (FR-015). Returns (date, problem):
+    problem ∈ None | "format" | "past" | "too_soon" | "too_far".
+    "too_soon" / "too_far" still yield the date — the caller decides whether to warn or
+    require a re-confirm."""
+    raw = text.strip().lower()
+    if raw in _NO_DATE:
+        return None, None
+    try:
+        d = date.fromisoformat(text.strip())
+    except ValueError:
+        return None, "format"
+    if d <= date.today():
+        return None, "past"
+    days = (d - date.today()).days
+    if days < 21:
+        return d, "too_soon"
+    if days > 365:
+        return d, "too_far"
+    return d, None
+
+
 def _read_profile_to_fsm(rp: ReadProfile) -> dict:
     """Flatten a ReadProfile into JSON-safe FSM data. `_build_profile` reads this back."""
     return {
@@ -278,39 +303,34 @@ async def setup_goal(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(SetupStates.DATE)
 async def setup_date(message: Message, state: FSMContext) -> None:
-    raw = message.text.strip().lower()
-    target_date = None
-    if raw not in ("aucune", "none", "-", "skip"):
-        try:
-            target_date = date.fromisoformat(message.text.strip())
-        except ValueError:
-            await message.answer(
-                "⚠️ Format non reconnu. Utilise <code>AAAA-MM-JJ</code> "
-                "ou tape <code>aucune</code>.",
-                parse_mode="HTML",
-            )
-            return
-        if target_date <= date.today():
-            await message.answer(
-                "⚠️ La date doit être dans le futur. Réessaie "
-                "ou tape <code>aucune</code>.",
-                parse_mode="HTML",
-            )
-            return
-        days = (target_date - date.today()).days
+    target_date, problem = parse_goal_date(message.text)
+    if problem == "format":
+        await message.answer(
+            "⚠️ Format non reconnu. Utilise <code>AAAA-MM-JJ</code> ou tape <code>aucune</code>.",
+            parse_mode="HTML",
+        )
+        return
+    if problem == "past":
+        await message.answer(
+            "⚠️ La date doit être dans le futur. Réessaie ou tape <code>aucune</code>.",
+            parse_mode="HTML",
+        )
+        return
+    if problem == "too_soon":
         data = await state.get_data()
-        if days < 21 and data.get("_date_confirmed") != target_date.isoformat():
+        if data.get("_date_confirmed") != target_date.isoformat():
             await state.update_data(_date_confirmed=target_date.isoformat())
+            days = (target_date - date.today()).days
             await message.answer(
                 f"⚠️ {days} jours, c'est très court pour un vrai bloc. "
                 "Renvoie la même date pour confirmer, ou choisis-en une plus lointaine."
             )
             return
-        if days > 365:
-            await message.answer(
-                "ℹ️ Si loin, le plan est surtout de la spéculation — "
-                "je le construis quand même, mais vise plutôt un point plus proche."
-            )
+    if problem == "too_far":
+        await message.answer(
+            "ℹ️ Si loin, le plan est surtout de la spéculation — "
+            "je le construis quand même, mais vise plutôt un point plus proche."
+        )
 
     await state.update_data(
         target_date=target_date.isoformat() if target_date else None, _date_confirmed=None

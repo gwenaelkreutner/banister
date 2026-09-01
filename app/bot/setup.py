@@ -29,6 +29,9 @@ def create_dispatcher() -> Dispatcher:
     from app.bot.routers.recap import router as recap_router
     from app.bot.routers.reminders import router as reminders_router
     from app.bot.routers.publish import router as publish_router
+    from app.bot.routers.goal import router as goal_router
+    from app.bot.routers.reset import router as reset_router
+    from app.bot.routers.voice import router as voice_router
     from app.bot.routers.chat import router as chat_router
 
     dp.include_router(common_router)
@@ -39,6 +42,9 @@ def create_dispatcher() -> Dispatcher:
     dp.include_router(recap_router)
     dp.include_router(reminders_router)
     dp.include_router(publish_router)
+    dp.include_router(goal_router)
+    dp.include_router(reset_router)
+    dp.include_router(voice_router)
     dp.include_router(chat_router)  # doit être en dernier (handler générique)
 
     return dp

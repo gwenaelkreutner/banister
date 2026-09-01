@@ -100,18 +100,18 @@ description: "Task list for 007-first-run-and-goals"
 
 ### Tests for User Story 3
 
-- [ ] T026 [P] [US3] Test `/goal` in `tests/test_bot/test_goal_change.py` — `session_logs` / `weekly_adherence` / `chat_messages` / `activities` counts identical before and after (SC-005); the new plan's week-1 TSS target is derived from current CTL, not zero (FR-012); sport / FTP / age / constraints are not re-asked (FR-013)
-- [ ] T027 [P] [US3] Test that a past goal date is rejected and a date < 21 days / > 365 days is challenged (FR-015), in `tests/test_bot/test_goal_change.py`
-- [ ] T028 [P] [US3] Test that when published calendar entries exist under the old plan, `/goal` surfaces the divergence via spec 005's `check_divergence` (FR-014), in `tests/test_bot/test_goal_change.py`
+- [X] T026 [P] [US3] Test `/goal` in `tests/test_bot/test_goal_change.py` — `session_logs` / `weekly_adherence` / `chat_messages` / `activities` counts identical before and after (SC-005); the new plan's week-1 TSS target is derived from current CTL, not zero (FR-012); sport / FTP / age / constraints are not re-asked (FR-013)
+- [X] T027 [P] [US3] Test that a past goal date is rejected and a date < 21 days / > 365 days is challenged (FR-015), in `tests/test_bot/test_goal_change.py`
+- [X] T028 [P] [US3] Test that when published calendar entries exist under the old plan, `/goal` surfaces the divergence via spec 005's `check_divergence` (FR-014), in `tests/test_bot/test_goal_change.py`
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] Implement `/goal` in `app/bot/routers/goal.py` — requires an active plan; silently calls `read_athlete_profile` (no confirmation screen); asks goal type + date, and volume only on an explicit "je veux changer mon volume"; reuses `SetupStates.GOAL`/`DATE` or its own states
-- [ ] T030 [US3] Goal-date validation in `app/bot/routers/goal.py` — reject `target_date <= today`; challenge (ask to confirm) if `< today + 21d` ("trop court pour un vrai bloc") or `> today + 365d` ("si loin, le plan est surtout de la spéculation — vise un point de passage plus proche") (FR-015)
-- [ ] T031 [US3] Plan regeneration in `app/bot/routers/goal.py` — build the profile from the re-read source + the new goal (keep every other field), `generate_plan()`, `deactivate_all_for_user` + `plan_repo.create` (history rows keep pointing at the now-inactive plan, as `/setup` already does), `profile_repo.update` in place
-- [ ] T032 [US3] Post-regeneration: call spec 005's `check_divergence(new_schema, live_published_entries)` and, if non-empty, tell the athlete the calendar is stale and to relance `/publish` (FR-014); reuse `describe_divergence_for_coach` phrasing
-- [ ] T033 [US3] "What changed / what carried over" summary in `app/bot/routers/goal.py` (FR-016) — new weeks count + periodisation shape vs old; counts of kept sessions / adherence weeks / settings
-- [ ] T034 [US3] Register `goal_router` in `app/bot/setup.py` before `chat_router`
+- [X] T029 [US3] Implement `/goal` in `app/bot/routers/goal.py` — requires an active plan; silently calls `read_athlete_profile` (no confirmation screen); asks goal type + date, and volume only on an explicit "je veux changer mon volume"; reuses `SetupStates.GOAL`/`DATE` or its own states
+- [X] T030 [US3] Goal-date validation in `app/bot/routers/goal.py` — reject `target_date <= today`; challenge (ask to confirm) if `< today + 21d` ("trop court pour un vrai bloc") or `> today + 365d` ("si loin, le plan est surtout de la spéculation — vise un point de passage plus proche") (FR-015)
+- [X] T031 [US3] Plan regeneration in `app/bot/routers/goal.py` — build the profile from the re-read source + the new goal (keep every other field), `generate_plan()`, `deactivate_all_for_user` + `plan_repo.create` (history rows keep pointing at the now-inactive plan, as `/setup` already does), `profile_repo.update` in place
+- [X] T032 [US3] Post-regeneration: call spec 005's `check_divergence(new_schema, live_published_entries)` and, if non-empty, tell the athlete the calendar is stale and to relance `/publish` (FR-014); reuse `describe_divergence_for_coach` phrasing
+- [X] T033 [US3] "What changed / what carried over" summary in `app/bot/routers/goal.py` (FR-016) — new weeks count + periodisation shape vs old; counts of kept sessions / adherence weeks / settings
+- [X] T034 [US3] Register `goal_router` in `app/bot/setup.py` before `chat_router`
 
 **Checkpoint**: US1–US3 — a goal change is a light, non-destructive re-plan.
 
