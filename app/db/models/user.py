@@ -28,6 +28,14 @@ class User(Base, TimestampMixin):
     reminder_minute: Mapped[int] = mapped_column(SmallInteger, default=30)
     reminder_last_sent_at: Mapped[date | None] = mapped_column(Date, nullable=True)
 
+    # spec 007. Identity/preference state — NOT training data: both survive /reset.
+    #   coach_voice: personas/*.yaml id the athlete chose; NULL -> settings.persona
+    #     (FR-024).
+    #   disclaimer_acknowledged_at: set the first time the disclaimer is shown, so it
+    #     is shown exactly once (FR-028).
+    coach_voice: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    disclaimer_acknowledged_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
     @property
     def onboarding_completed(self) -> bool:
         return self.onboarding_completed_at is not None

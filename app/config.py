@@ -78,8 +78,11 @@ class Settings(BaseSettings):
     # error for an out-of-range value without duplicating that logic.
     intervals_poll_interval_minutes: int = 5
 
-    # Persona
-    persona: str = "coach-default"  # filename in personas/ without .yaml
+    # Persona — filename in personas/ without .yaml. Deployer default; per-athlete
+    # override lives in users.coach_voice (spec 007). "pace" is the French voice that
+    # matches the historical inline prompts; "coach-default" is the guaranteed-present
+    # fallback target (FR-026).
+    persona: str = "pace"
 
     @property
     def is_dev(self) -> bool:

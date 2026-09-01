@@ -21,8 +21,8 @@ description: "Task list for 007-first-run-and-goals"
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] Create skeleton files with module docstrings: `app/providers/intervals/athlete_profile.py`, `app/services/coach_voice.py`, `app/bot/routers/goal.py`, `app/bot/routers/reset.py`, `app/bot/routers/voice.py`, `scripts/athlete_profile.py`
-- [ ] T002 [P] Create the new test directories with the project's `__init__.py` convention: `tests/test_bot/`, `tests/test_core/`
+- [X] T001 [P] Create skeleton files with module docstrings: `app/providers/intervals/athlete_profile.py`, `app/services/coach_voice.py`, `app/bot/routers/goal.py`, `app/bot/routers/reset.py`, `app/bot/routers/voice.py`, `scripts/athlete_profile.py`
+- [X] T002 [P] Create the new test directories with the project's `__init__.py` convention: `tests/test_bot/`, `tests/test_core/`
 
 ---
 
@@ -32,14 +32,14 @@ description: "Task list for 007-first-run-and-goals"
 
 **⚠️ CRITICAL**: No user story work begins until this phase is complete.
 
-- [ ] T003 Add `coach_voice` (`String(64)`, nullable) and `disclaimer_acknowledged_at` (`UtcDateTime`, nullable) to `User` in `app/db/models/user.py` per data-model.md §Persisted
-- [ ] T004 Generate the Alembic migration for the two columns via `alembic revision --autogenerate` in `migrations/versions/` (depends on T003); test it applies on a fresh DB and on the live `data/banister.db`
-- [ ] T005 **[REGRESSION]** In `app/core/persona.py`: drop the `ux_prompt` requirement — `Persona` carries one `system_prompt`; `load_persona()` validates only `system_prompt` present; `format_ux_prompt` removed or made an alias of `format_system_prompt` (research R2)
-- [ ] T006 [P] Test in `tests/test_core/test_persona.py` — `load_persona()` returns a `Persona` for **every** file in `personas/` without raising; a file missing `system_prompt` still raises `PersonaNotFoundError` (depends on T005)
-- [ ] T007 [P] Implement `read_athlete_profile(client) -> ReadProfile` in `app/providers/intervals/athlete_profile.py` per contracts/first-run.md §1 — thresholds from `sportSettings[]` selecting the entry whose `types` contains a cycling type; age from `icu_date_of_birth`; `icu_resting_hr` labelled as a profile default; every field carries `origin` + optional `as_of`; a field the source lacks is **absent**, never defaulted (FR-008); no cycling FTP → FTP absent + HR-mode flag (FR-009)
-- [ ] T008 [P] Test `read_athlete_profile()` in `tests/test_providers/test_athlete_profile.py` against a captured `GET /athlete` fixture (this account: FTP 290, LTHR 182, max_hr 202, DOB 1990-01-01) and against a fixture with no cycling `sportSettings` entry (FR-009 path)
-- [ ] T009 [P] Implement `scripts/athlete_profile.py --describe` — prints the confirmation-screen values with origins (quickstart Scenario 0), read-only (depends on T007)
-- [ ] T010 [P] Add `user_repo.set_coach_voice(session, user_id, voice_id | None)`, `user_repo.ack_disclaimer(session, user_id)`, and `user_repo.purge_athlete_data(session, user_id)` in `app/db/repositories/user_repo.py` — purge deletes `session_logs` / `chat_messages` / `activities` / `training_plans` / `athlete_profiles` / `weekly_adherence` / publication rows for the user, keeps the `User` row (telegram_id, first_name, coach_voice, disclaimer_acknowledged_at, reminder prefs); issues no outbound call (depends on T003)
+- [X] T003 Add `coach_voice` (`String(64)`, nullable) and `disclaimer_acknowledged_at` (`UtcDateTime`, nullable) to `User` in `app/db/models/user.py` per data-model.md §Persisted
+- [X] T004 Generate the Alembic migration for the two columns via `alembic revision --autogenerate` in `migrations/versions/` (depends on T003); test it applies on a fresh DB and on the live `data/banister.db`
+- [X] T005 In `app/config.py`: change `persona` default from `"coach-default"` to `"pace"` (research R2 — pace.yaml is already the French voice matching the live coach; making it the resolved default is what stops the wiring change from regressing behaviour). No `persona.py` change needed — an earlier research draft wrongly claimed the loader was broken; it works
+- [X] T006 [P] Test in `tests/test_core/test_persona.py` — `load_persona()` returns a `Persona` with non-empty `system_prompt` and `ux_prompt` for **every** file in `personas/`; an unknown id and a file missing a required field both raise `PersonaNotFoundError`; `pace` resolves and is `language: fr`
+- [X] T007 [P] Implement `read_athlete_profile(client) -> ReadProfile` in `app/providers/intervals/athlete_profile.py` per contracts/first-run.md §1 — thresholds from `sportSettings[]` selecting the entry whose `types` contains a cycling type; age from `icu_date_of_birth`; `icu_resting_hr` labelled as a profile default; every field carries `origin` + optional `as_of`; a field the source lacks is **absent**, never defaulted (FR-008); no cycling FTP → FTP absent + HR-mode flag (FR-009)
+- [X] T008 [P] Test `read_athlete_profile()` in `tests/test_providers/test_athlete_profile.py` against a captured `GET /athlete` fixture (this account: FTP 290, LTHR 182, max_hr 202, DOB 1990-01-01) and against a fixture with no cycling `sportSettings` entry (FR-009 path)
+- [X] T009 [P] Implement `scripts/athlete_profile.py --describe` — prints the confirmation-screen values with origins (quickstart Scenario 0), read-only (depends on T007)
+- [X] T010 [P] Add `user_repo.set_coach_voice(session, user_id, voice_id | None)`, `user_repo.ack_disclaimer(session, user_id)`, and `user_repo.purge_athlete_data(session, user_id)` in `app/db/repositories/user_repo.py` — purge deletes `session_logs` / `chat_messages` / `activities` / `training_plans` / `athlete_profiles` / `weekly_adherence` / publication rows for the user, keeps the `User` row (telegram_id, first_name, coach_voice, disclaimer_acknowledged_at, reminder prefs); issues no outbound call (depends on T003)
 
 **Checkpoint**: schema migrated, `load_persona` fixed and tested, the source reader works, the repo verbs exist.
 

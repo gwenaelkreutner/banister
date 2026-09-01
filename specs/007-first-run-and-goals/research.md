@@ -43,19 +43,21 @@ straight from the source, and `icu_date_of_birth` gives an exact age if one is s
 questions (goal, date, volume) + the constraints question. SC-002 ("zero readable attributes asked for") is
 achievable and testable.
 
-## R2 — `load_persona()` is not merely uncalled — it is broken against its own persona files
+## R2 — `load_persona()` works; it is simply never called. `personas/pace.yaml` is already the French voice
 
 **Question**: The spec's "known starting point" says the voice-loading mechanism "already exists and
 works". Does it?
 
-**Finding**: `app/core/persona.py::load_persona()` **raises `PersonaNotFoundError` for every file in
-`personas/`**. The `Persona` dataclass and the loader both require a `ux_prompt` field; not one of
-`personas/analyst.yaml`, `coach-default.yaml`, `pace.yaml`, `zen.yaml` has it — they carry `system_prompt`
-only. The loader has never been exercised end to end.
+**Finding** — *corrected after a direct test* (an earlier draft of this file claimed the loader was broken;
+it is not — that was a misread of truncated output, and the spec's "code is the authority" rule applies):
 
-Second finding: the persona files are **English** (`language: en`, English prose), while the live coach is
-**French** — `prompts.py` holds ~7 inline French prompts under two identities ("Pace" in the chat/UX path,
-"Banister" in the plan/recap/blocks paths):
+`load_persona()` loads **all four** shipped personas without error. Each `personas/*.yaml` has both
+`system_prompt` and `ux_prompt`. `personas/pace.yaml` is **already a complete French "Pace" voice**
+(`language: fr`, 2160-char system prompt, 1492-char ux prompt) that closely matches the live inline text.
+
+So the mechanism is genuinely finished. The only missing piece is the wiring: `prompts.py` holds ~7 inline
+prompts instead of calling `load_persona()`, under two identities ("Pace" in the chat/UX path, "Banister"
+in the plan/recap/blocks paths):
 
 | Constant / function | Identity | Consumed by |
 |---|---|---|
@@ -67,11 +69,13 @@ Second finding: the persona files are **English** (`language: en`, English prose
 | `build_narrative_system_prompt()` + `_MODE_PERSONA` | — (narrative modes) | `activity_analysis.py` (narrative mode) |
 
 **Decision**: "finishing an existing unfinished piece" means, concretely:
-1. Reconcile the `Persona` schema with the files — the cleanest is to **drop the separate `ux_prompt`
-   requirement** and let a persona carry one `system_prompt` (its full voice), because the split between
-   "identity" and "UX rules" is an artefact of how `prompts.py` grew, not a real seam.
-2. Rewrite the shipped personas in **French**, matching the live "Pace" voice as the default so behaviour
-   does not regress, plus at least one genuinely different voice (e.g. a terse "Analyste", a warm "Zen").
+1. **No schema change** — the `Persona` dataclass and `load_persona()` are fine as they are. `system_prompt`
+   is the coach identity, `ux_prompt` is the response-style layer; the split maps cleanly onto
+   `build_system_prompt`'s `COACH_SOUL` vs `build_ux_system_prompt`'s rules.
+2. **`personas/pace.yaml` becomes the default** (`settings.persona` → `"pace"`), since it already matches
+   the live voice and is French. `coach-default.yaml` / `analyst.yaml` / `zen.yaml` are English — rewrite
+   at least one into a genuinely different **French** voice so `/voice` has a real choice, and keep a
+   `coach-default` that always resolves (the FR-026 fallback target).
 3. Wire `load_persona()` into the **chat path first** (`build_ux_system_prompt` + `COACH_SOUL`), which is
    where the athlete actually converses. The narrator/recap/blocks paths (identity "Banister") are
    lower-traffic and can move in the same change or a follow-up — but they must end up on the *same*
