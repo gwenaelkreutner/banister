@@ -311,6 +311,7 @@ def build_system_prompt(
     calendar_divergence: str | None = None,
     guardrail_findings: list | None = None,
     recovery_insufficiency: str | None = None,
+    persona=None,
 ) -> str:
     p = profile
 
@@ -444,7 +445,10 @@ def build_system_prompt(
         lines += ["", f"ℹ️ {recovery_insufficiency}"]
 
     lines.append("")
-    lines.append(COACH_SOUL.format(first_name=first_name))
+    if persona is not None:
+        lines.append(persona.format_system_prompt(first_name=first_name))
+    else:
+        lines.append(COACH_SOUL.format(first_name=first_name))
 
     return "\n".join(lines)
 

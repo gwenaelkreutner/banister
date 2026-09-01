@@ -82,7 +82,10 @@ async def run_chat(
     # 2. Construire system prompt et messages
     user_level: int = getattr(profile, "user_level", 0) if profile else 0
     from app.llm.prompts import build_ux_system_prompt
-    ux_rules = build_ux_system_prompt(user_level)
+    from app.services.coach_voice import resolve_voice
+
+    _persona, _voice_fell_back = resolve_voice(user)
+    ux_rules = build_ux_system_prompt(user_level, persona=_persona)
     def _item_date(item):
         return item.logged_date if hasattr(item, "logged_date") else item.activity_date
 
@@ -158,6 +161,7 @@ async def run_chat(
         calendar_divergence=calendar_divergence,
         guardrail_findings=guardrail_findings,
         recovery_insufficiency=recovery_gap,
+        persona=_persona,
     )
     system = f"{ux_rules}\n\n---\n\n{coaching_ctx}"
     if has_load_reduction_finding(guardrail_findings):
@@ -204,6 +208,12 @@ async def run_chat(
         tools=TOOL_DEFINITIONS,
         tool_executor=tool_executor,
     )
+
+    # Voix demandée introuvable → on répond avec la voix par défaut et on le dit (FR-026).
+    if _voice_fell_back and response_text:
+        from app.services.coach_voice import VOICE_FALLBACK_NOTICE
+
+        response_text = VOICE_FALLBACK_NOTICE + response_text
 
     # 4b. Vérification : chaque chiffre que la réponse avance sur une métrique doit
     # correspondre à ce qui a été retrouvé ; sinon la phrase est retirée et l'échec

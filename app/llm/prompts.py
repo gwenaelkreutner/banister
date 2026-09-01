@@ -285,11 +285,14 @@ SCOPE_OF_ADVICE_RULES = (
 )
 
 
-def build_ux_system_prompt(user_level: int) -> str:
+def build_ux_system_prompt(user_level: int, persona=None) -> str:
     """Retourne le system prompt UXWriting avec vocabulaire adapté au niveau.
 
     Args:
         user_level: 0=Débutant, 1=Amateur, 2=Intermédiaire
+        persona: si fourni (spec 007 US5), sa voix `ux_prompt` remplace le texte
+          "Pace" par défaut. Le vocabulaire adapté au niveau et les règles spec 006
+          (scope-of-advice) restent ajoutés dans tous les cas.
 
     Returns:
         System prompt string à passer au LLM.
@@ -307,6 +310,16 @@ def build_ux_system_prompt(user_level: int) -> str:
         "remplace-les toujours par les définitions ci-dessus ou une formulation simple. "
         if lvl < 2 else ""
     )
+    level_and_rules = (
+        f"{level_ctx} "
+        f"Vocabulaire : CTL={ctl_term}, ATL={atl_term}, TSB={tsb_term}, TSS={tss_term}. "
+        f"{acronym_ban}"
+        "Interprète les données, ne recalcule jamais. "
+        f"{SCOPE_OF_ADVICE_RULES}"
+    )
+
+    if persona is not None:
+        return f"{persona.ux_prompt.strip()}\n\n{level_and_rules}"
 
     return (
         "Tu t'appelles Pace, coach cyclisme personnel. "

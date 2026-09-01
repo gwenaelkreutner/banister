@@ -146,18 +146,18 @@ description: "Task list for 007-first-run-and-goals"
 
 ### Tests for User Story 5
 
-- [ ] T040 [P] [US5] Test `resolve_voice()` in `tests/test_llm/test_voice_wiring.py` — `coach_voice` set → that persona; `None` → `settings.persona`; unresolvable id → `coach-default` **and** a flag/marker that the caller renders a fallback notice (FR-024, FR-026)
-- [ ] T041 [P] [US5] Test that the chat path uses `resolve_voice(user)` — `build_ux_system_prompt` / `COACH_SOUL` output changes with the column (FR-023), in `tests/test_llm/test_voice_wiring.py`
+- [X] T040 [P] [US5] Test `resolve_voice()` in `tests/test_llm/test_voice_wiring.py` — `coach_voice` set → that persona; `None` → `settings.persona`; unresolvable id → `coach-default` **and** a flag/marker that the caller renders a fallback notice (FR-024, FR-026)
+- [X] T041 [P] [US5] Test that the chat path uses `resolve_voice(user)` — `build_ux_system_prompt` / `COACH_SOUL` output changes with the column (FR-023), in `tests/test_llm/test_voice_wiring.py`
 
 ### Implementation for User Story 5
 
-- [ ] T042 [US5] Implement `resolve_voice(user) -> tuple[Persona, bool]` in `app/services/coach_voice.py` — reads `user.coach_voice or settings.persona`, `load_persona` with a `try/except PersonaNotFoundError` → `load_persona("coach-default")`; second element is "fell back" (FR-024, FR-026)
-- [ ] T043 [US5] Rewrite `personas/coach-default.yaml` in French to match the live "Pace" voice (from `COACH_SOUL` + `build_ux_system_prompt`) so the chat path does not regress; this is the default
-- [ ] T044 [P] [US5] Write `personas/analyste.yaml` (terse, metrics-first, French) and `personas/zen.yaml` (calm, encouraging, French) — genuinely different voices, each with a clear `voice:` descriptor for `/voice` (FR-022)
-- [ ] T045 [US5] Wire `app/llm/tools.py::build_system_prompt` and `app/llm/prompts.py::build_ux_system_prompt` to take the resolved persona (passed from `chat.py` via `resolve_voice(user)`) instead of the inline `COACH_SOUL` / "Tu t'appelles Pace" text — the inline text becomes the fallback persona's content, not a second identity
-- [ ] T046 [US5] Move the "Banister"-identity prompts (`WEEKLY_RECAP_SYSTEM_PROMPT`, `PLAN_SYSTEM_PROMPT`, `WEEK_SYSTEM_PROMPT`, `COACH_BLOCKS_SYSTEM_PROMPT`) onto the resolved persona too — one selected voice everywhere; `_MODE_PERSONA` (narrative modes) stays a separate axis, untouched (spec Assumptions)
-- [ ] T047 [US5] Implement `/voice` in `app/bot/routers/voice.py` — list every `personas/*.yaml` with `name` + `voice`; a button per persona (`voice:set:<id>`); on select, `user_repo.set_coach_voice` + confirm; available any time (FR-021)
-- [ ] T048 [US5] Register `voice_router` in `app/bot/setup.py` before `chat_router`
+- [X] T042 [US5] Implement `resolve_voice(user) -> tuple[Persona, bool]` in `app/services/coach_voice.py` — reads `user.coach_voice or settings.persona`, `load_persona` with a `try/except PersonaNotFoundError` → `load_persona("coach-default")`; second element is "fell back" (FR-024, FR-026)
+- [X] T043 [US5] Rewrite `personas/coach-default.yaml` in French to match the live "Pace" voice (from `COACH_SOUL` + `build_ux_system_prompt`) so the chat path does not regress; this is the default
+- [X] T044 [P] [US5] Write `personas/analyste.yaml` (terse, metrics-first, French) and `personas/zen.yaml` (calm, encouraging, French) — genuinely different voices, each with a clear `voice:` descriptor for `/voice` (FR-022)
+- [X] T045 [US5] Wire `app/llm/tools.py::build_system_prompt` and `app/llm/prompts.py::build_ux_system_prompt` to take the resolved persona (passed from `chat.py` via `resolve_voice(user)`) instead of the inline `COACH_SOUL` / "Tu t'appelles Pace" text — the inline text becomes the fallback persona's content, not a second identity
+- [X] T046 [US5] Move the "Banister"-identity prompts (`WEEKLY_RECAP_SYSTEM_PROMPT`, `PLAN_SYSTEM_PROMPT`, `WEEK_SYSTEM_PROMPT`, `COACH_BLOCKS_SYSTEM_PROMPT`) onto the resolved persona too — one selected voice everywhere; `_MODE_PERSONA` (narrative modes) stays a separate axis, untouched (spec Assumptions)
+- [X] T047 [US5] Implement `/voice` in `app/bot/routers/voice.py` — list every `personas/*.yaml` with `name` + `voice`; a button per persona (`voice:set:<id>`); on select, `user_repo.set_coach_voice` + confirm; available any time (FR-021)
+- [X] T048 [US5] Register `voice_router` in `app/bot/setup.py` before `chat_router`
 
 **Checkpoint**: US1–US5 — the coach speaks in the athlete's chosen voice, and the mechanism that was broken now works.
 
