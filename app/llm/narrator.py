@@ -6,6 +6,7 @@ Ne calcule rien — transforme uniquement en narratif FR.
 
 import logging
 
+from app.config import settings
 from app.engine.schemas import TrainingPlanSchema, WeekPlan
 from app.llm.prompts import (
     PLAN_SYSTEM_PROMPT,
@@ -73,7 +74,7 @@ async def generate_plan_narrative(
         intro = await provider.generate(
             system_prompt=PLAN_SYSTEM_PROMPT,
             user_message=user_msg,
-            max_tokens=600,
+            max_tokens=settings.llm_max_tokens,
         )
 
         return {"intro": intro, "weeks": {}}
@@ -107,7 +108,7 @@ async def generate_week_narrative(
         return await provider.generate(
             system_prompt=WEEK_SYSTEM_PROMPT,
             user_message=user_msg,
-            max_tokens=250,
+            max_tokens=settings.llm_max_tokens,
         )
 
     except Exception as e:

@@ -36,7 +36,13 @@ class Settings(BaseSettings):
     llm_model: str = "claude-sonnet-4-6"
     anthropic_api_key: str = ""
     openrouter_api_key: str = ""
-    llm_max_tokens: int = 600
+    # Budget de sortie pour les appels LLM rédactionnels (narratif de plan, réponse
+    # finale du chat agentique). Défaut haut volontairement : certains modèles
+    # OpenRouter consomment beaucoup de tokens de "raisonnement" cachés avant d'émettre
+    # du contenu visible — un budget bas se traduit par finish_reason=length et un
+    # contenu vide, silencieusement absorbé par le fallback déterministe (vu en réel
+    # avec stepfun/step-3.5-flash : 300–2048 insuffisant, 4000 suffisant).
+    llm_max_tokens: int = 4000
     chat_model: str = "anthropic/claude-sonnet-4-6"  # modèle via OpenRouter pour le chat agentique
 
     # App

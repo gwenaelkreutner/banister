@@ -173,7 +173,7 @@ async def run_agentic_loop(
                 final_resp = await client.chat.completions.create(
                     model=effective_model,
                     messages=[{"role": "system", "content": system}] + final_messages,
-                    max_tokens=600,
+                    max_tokens=settings.llm_max_tokens,
                 )
                 final_content = (final_resp.choices[0].message.content or "").strip()
                 if not final_content:
@@ -231,7 +231,7 @@ async def run_agentic_loop(
     response = await client.chat.completions.create(
         model=effective_model,
         messages=[{"role": "system", "content": system}] + all_messages,
-        max_tokens=400,
+        max_tokens=settings.llm_max_tokens,
     )
     content = (response.choices[0].message.content or "").strip()
     if not content:
