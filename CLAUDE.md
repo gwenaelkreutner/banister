@@ -19,12 +19,14 @@ vérification des chiffres de la réponse LLM), spec 007 (setup = confirmation d
 `/goal`, `/reset`, `/voice` ; `load_persona()` câblé).
 
 Reste hors specs, connu :
-- `docs/ARCHITECTURE.md` jamais retouché depuis le scaffold (décrit encore Supabase + Strava) — sa
-  réécriture est sa propre tâche ; `CLAUDE.md` est la référence vivante (constitution v1.1.0).
+- `docs/ARCHITECTURE.md` réécrit (2026-09-07) pour refléter l'état specs 001–007 — modèle de process,
+  couches, flux de données ; complémentaire de ce fichier (qui garde l'historique spec par spec et la
+  navigation). `CLAUDE.md` reste la référence vivante (constitution v1.1.0).
 - Écriture-retour d'une correction FTP vers intervals.icu (spec 007 FR-006) : différée derrière une sonde
   d'endpoint autorisée séparément. Défaut livré = FR-007 (l'athlète change sur intervals.icu, aucune
   valeur locale divergente).
-- `fit_template()` (spec 004) construit et testé mais pas branché à `generate_plan()`.
+- `fit_template()` (spec 004) construit et testé mais pas branché à `generate_plan()` — le brancher mérite
+  sa propre spec (ne pas perturber le placement physiologique de `_assign_sessions_to_days()`).
 
 Mettre ce fichier à jour **au fil de** chaque migration, pas après coup.
 
@@ -117,7 +119,7 @@ app/
 │   ├── providers/           # anthropic.py, openrouter.py — interface commune generate()
 │   ├── chat_client.py       # run_agentic_loop() — max 2 itérations outils
 │   ├── chat.py              # run_chat() → (text, intent, tool_used, pending_proposal)
-│   ├── tools.py             # 4 outils LLM + build_system_prompt()
+│   ├── tools.py             # 5 outils LLM + build_system_prompt()
 │   ├── prompts.py           # Contexte système (profil, plan, métriques)
 │   ├── activity_analysis.py # Feedback post-séance enrichi (5 blocs, tone TSB)
 │   └── narrator.py          # Résumé narratif semaine (texte pur)
@@ -551,6 +553,10 @@ INTERVALS_POLL_INTERVAL_MINUTES=5        # optionnel — défaut 5
 LLM_PROVIDER=openrouter          # ou "anthropic"
 LLM_MODEL=...
 CHAT_MODEL=...
+LLM_MAX_TOKENS=4000              # optionnel — budget de sortie des appels rédactionnels (narrator,
+                                # réponse finale du chat agentique). Défaut 4000 : les modèles
+                                # OpenRouter à raisonnement caché épuisent un budget bas avant
+                                # d'émettre du contenu → finish_reason=length → fallback silencieux
 OPENROUTER_API_KEY=...
 ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 ```
