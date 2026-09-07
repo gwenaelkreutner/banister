@@ -110,6 +110,40 @@ verified the same way spec 005 verified the events API.
 the coach-vs-log divergence the metric-authority rule exists to prevent, and the spec's own Assumptions
 call it out.
 
+### R3 addendum (2026-09-07) — read-only endpoint shape verified
+
+Step (a) of the probe (read only, no write) is done. Findings from the published OpenAPI spec
+(`https://intervals.icu/api/v1/docs`, the source RapiDoc renders) and live `GET` calls on this account:
+
+- **Read endpoints confirmed live**:
+  - `GET /api/v1/athlete/{id}/sport-settings` → array of per-sport entries.
+  - `GET /api/v1/athlete/{id}/sport-settings/{id}` where `{id}` is the numeric settings id **or an
+    activity-type alias** (`Ride`, `Run`, …). `…/sport-settings/Ride` returns the cycling entry directly —
+    no need to discover the numeric id (`2336680` on this account).
+- **Write endpoint documented** (not yet exercised):
+  `PUT /api/v1/athlete/{athleteId}/sport-settings/{id}` — summary *"Update sport settings by id or activity
+  type"*. Request body: `application/json`, schema `SportSettings` (62 props; `ftp`, `indoor_ftp`, `lthr`,
+  `max_hr` are `int32`). One **required** query param: `recalcHrZones` (boolean). Only a `200` response is
+  documented.
+- Sibling endpoints for context: `PUT …/sport-settings` (bulk), `POST …/sport-settings` (create with
+  defaults), `PUT …/sport-settings/{id}/apply` (re-derive zones on matching activities, async).
+- The cycling entry on this account: settings id `2336680`, `ftp: 290`, `lthr: 182`, `max_hr: 202`,
+  `eFTPSupported: true`. Athlete id resolves as `i000000` (our client passes `"0"`, which the API accepts).
+
+**Open questions that only a real `PUT` (step b) can settle**:
+1. Does the API merge a **partial** body (`{"ftp": 300}`) or require the full `SportSettings` object?
+   The `events` API tolerated partials; unverified here.
+2. What does `recalcHrZones` do to power zones — is it a no-op for an FTP-only change, or does it need a
+   companion `recalcPowerZones`-style flag that isn't in the spec?
+3. Is the change reversible with a second `PUT` back to the old value with no side effects (zone history,
+   `updated` timestamps, activity re-processing via the `/apply` path)?
+4. Auth scope: does a personal API key (basic auth) have write permission on settings, or is this
+   OAuth-scope gated? (`403` would answer immediately.)
+
+**Recommended step (b) shape when authorised**: single `PUT …/sport-settings/Ride?recalcHrZones=false`
+with a **partial** `{"ftp": <same value it already has>}` (a no-op write) to answer Q1 + Q4 with zero
+real change, then one real round-trip (set to a test value, read back, restore) to answer Q2 + Q3.
+
 ## R4 — "Change the goal" vs "start over": most of the preservation is already true; the gap is the flow
 
 **Question**: The spec says changing a goal today "is served by the same action as starting over, which
