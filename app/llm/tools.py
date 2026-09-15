@@ -179,6 +179,103 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "log_meal",
+            "description": (
+                "Enregistre ce que l'athlète a mangé — un repas isolé ou un récap de toute la "
+                "journée — avec ton estimation du nombre de calories. Utilise cet outil dès que "
+                "l'athlète décrit un aliment ou un repas qu'il a réellement consommé (pas une "
+                "question hypothétique, pas une demande de conseil nutritionnel). N'invente "
+                "jamais une estimation pour un texte qui ne décrit pas de la nourriture. Précise "
+                "toujours dans ta réponse qu'il s'agit d'une ESTIMATION, jamais d'une mesure "
+                "précise."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "entry_type": {
+                        "type": "string",
+                        "enum": ["meal", "day_recap"],
+                        "description": (
+                            "meal = un repas ou une collation isolée. day_recap = un résumé de "
+                            "tout ce qui a été mangé dans la journée en un seul message."
+                        ),
+                    },
+                    "meal_slot": {
+                        "type": "string",
+                        "enum": ["breakfast", "lunch", "dinner", "snack", "other"],
+                        "description": (
+                            "Uniquement si entry_type=meal et que le moment du repas est clair. "
+                            "Ne pas fournir si incertain ou si entry_type=day_recap."
+                        ),
+                    },
+                    "estimated_calories": {
+                        "type": "integer",
+                        "description": (
+                            "Ton estimation du nombre de calories pour CETTE entrée (ce repas, "
+                            "ou le total de la journée si day_recap)."
+                        ),
+                        "minimum": 1,
+                        "maximum": 8000,
+                    },
+                    "days_ago": {
+                        "type": "integer",
+                        "description": (
+                            "0 = aujourd'hui (défaut), 1 = hier, 2 = avant-hier. Utilise si "
+                            "l'athlète parle d'un repas passé."
+                        ),
+                        "minimum": 0,
+                        "maximum": 2,
+                    },
+                },
+                "required": ["entry_type", "estimated_calories"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "undo_last_meal_entry",
+            "description": (
+                "Supprime la toute dernière entrée calorique enregistrée AUJOURD'HUI. Utilise "
+                "cet outil uniquement quand l'athlète signale explicitement une erreur de saisie "
+                "récente (mauvais aliment, mauvaise quantité, entrée en double). Ne s'applique "
+                "jamais à un jour autre qu'aujourd'hui."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_calorie_history",
+            "description": (
+                "Récupère le total calorique estimé jour par jour sur une période récente. "
+                "Utilise cet outil quand l'athlète demande son historique, sa consommation d'un "
+                "jour précis, ou une tendance récente."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": (
+                            "Nombre de jours à couvrir, en remontant depuis aujourd'hui (1 à 30)."
+                        ),
+                        "minimum": 1,
+                        "maximum": 30,
+                    },
+                },
+                "required": ["days"],
+            },
+        },
+    },
 ]
 
 

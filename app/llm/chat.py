@@ -199,7 +199,10 @@ async def run_chat(
 
     # 3. Définir le tool_executor (fermeture sur session/plan/profile)
     async def tool_executor(name: str, args: dict) -> dict:
-        return await _execute_tool(name, args, user=user, session=session, plan=plan, profile=profile, logs=logs, activities=pre_plan_acts)
+        return await _execute_tool(
+            name, args, user=user, session=session, plan=plan, profile=profile, logs=logs,
+            activities=pre_plan_acts, raw_message=user_message,
+        )
 
     # 4. Appel agentique
     response_text, tool_used, last_tool_result = await run_agentic_loop(
@@ -313,6 +316,7 @@ async def _execute_tool(
     profile: AthleteProfileSchema | None,
     logs: list,
     activities: list | None = None,
+    raw_message: str = "",
 ) -> dict:
     """Dispatch vers la fonction déterministe correspondante."""
 
@@ -333,6 +337,15 @@ async def _execute_tool(
 
     elif name == "update_coach_memory":
         return await _tool_update_coach_memory(args, user=user, session=session)
+
+    elif name == "log_meal":
+        return await _tool_log_meal(args, user=user, session=session, raw_message=raw_message)
+
+    elif name == "undo_last_meal_entry":
+        return await _tool_undo_last_meal_entry(user=user, session=session)
+
+    elif name == "get_calorie_history":
+        return await _tool_get_calorie_history(args, user=user, session=session)
 
     else:
         return {"error": f"Outil inconnu : {name}"}
@@ -528,6 +541,127 @@ async def _tool_update_coach_memory(args: dict, user: User, session: AsyncSessio
         return {"ok": True, "action": "update_athlete_notes", "key": key}
 
     return {"ok": False, "error": f"action inconnue : {action}"}
+
+
+# ── Outils nutrition (spec 008) ────────────────────────────────────────────────
+
+_MEAL_DAYS_AGO_MAX = 2
+_CALORIES_MIN = 1
+_CALORIES_MAX = 8000
+
+
+async def _tool_log_meal(args: dict, user: User, session: AsyncSession, raw_message: str) -> dict:
+    """Enregistre un repas ou un récap de journée (contracts/nutrition-tools.md §1).
+    L'estimation calorique vient du LLM (research R2 — hors du périmètre du Principe I,
+    qui porte sur la charge d'entraînement) ; le total du jour, lui, est une somme SQL
+    déterministe recalculée après insertion, jamais additionnée par le modèle."""
+    from app.db.repositories import meal_entry_repo
+
+    entry_type = args.get("entry_type")
+    if entry_type not in ("meal", "day_recap"):
+        entry_type = "meal"
+
+    try:
+        calories = round(float(args.get("estimated_calories")))
+    except (TypeError, ValueError):
+        calories = None
+    if calories is None or not (_CALORIES_MIN <= calories <= _CALORIES_MAX):
+        return {
+            "ok": False,
+            "error": "estimation calorique manquante ou hors limites plausibles — rien n'a été enregistré",
+        }
+
+    try:
+        days_ago = max(0, min(int(args.get("days_ago", 0) or 0), _MEAL_DAYS_AGO_MAX))
+    except (TypeError, ValueError):
+        days_ago = 0
+    entry_date = date.today() - timedelta(days=days_ago)
+
+    meal_slot = args.get("meal_slot") if entry_type == "meal" else None
+
+    # Un récap de journée REMPLACE les entrées déjà loggées ce jour-là plutôt que de s'y
+    # ajouter — sinon la journée serait comptée deux fois (FR-009).
+    replaced = False
+    if entry_type == "day_recap":
+        deleted_count = await meal_entry_repo.delete_for_date(session, user.id, entry_date)
+        replaced = deleted_count > 0
+
+    await meal_entry_repo.create(
+        session,
+        user_id=user.id,
+        entry_date=entry_date,
+        entry_type=entry_type,
+        meal_slot=meal_slot,
+        raw_description=raw_message[:500],
+        estimated_calories=calories,
+    )
+
+    totals = await meal_entry_repo.daily_totals(session, user.id, entry_date, entry_date)
+    day_total = totals[0].total_calories if totals else calories
+
+    return {
+        "ok": True,
+        "estimated_calories": calories,
+        "entry_date": str(entry_date),
+        "day_total_estimated_calories": day_total,
+        "replaced_existing_entries": replaced,
+    }
+
+
+async def _tool_undo_last_meal_entry(user: User, session: AsyncSession) -> dict:
+    """Supprime la dernière entrée loggée AUJOURD'HUI (contracts §2) — jamais un autre
+    jour, une correction est un geste dans la même session."""
+    from app.db.repositories import meal_entry_repo
+
+    today = date.today()
+    latest = await meal_entry_repo.get_latest_for_date(session, user.id, today)
+    if latest is None:
+        return {"ok": False, "error": "aucune entrée aujourd'hui à annuler"}
+
+    removed_calories = latest.estimated_calories
+    await meal_entry_repo.delete(session, latest)
+
+    totals = await meal_entry_repo.daily_totals(session, user.id, today, today)
+    day_total = totals[0].total_calories if totals else 0
+
+    return {
+        "ok": True,
+        "removed_estimated_calories": removed_calories,
+        "entry_date": str(today),
+        "day_total_estimated_calories": day_total,
+    }
+
+
+async def _tool_get_calorie_history(args: dict, user: User, session: AsyncSession) -> dict:
+    """Historique jour par jour (contracts §3) — chaque jour de la période est présent,
+    loggé ou non ; un jour non loggé n'a jamais de `total_calories` (FR-008)."""
+    from app.db.repositories import meal_entry_repo
+
+    try:
+        days = max(1, min(int(args.get("days", 7) or 7), 30))
+    except (TypeError, ValueError):
+        days = 7
+
+    today = date.today()
+    start = today - timedelta(days=days - 1)
+    totals = await meal_entry_repo.daily_totals(session, user.id, start, today)
+    by_date = {t.entry_date: t for t in totals}
+
+    result_days = []
+    for offset in range(days):
+        d = start + timedelta(days=offset)
+        if d in by_date:
+            t = by_date[d]
+            result_days.append({
+                "date": str(d),
+                "logged": True,
+                "total_calories": t.total_calories,
+                "entry_count": t.entry_count,
+            })
+        else:
+            result_days.append({"date": str(d), "logged": False})
+
+    return {"range_start": str(start), "range_end": str(today), "days": result_days}
 
 
 def _compute_zone_restrictions(severity: str) -> dict:

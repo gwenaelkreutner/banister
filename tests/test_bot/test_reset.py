@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from app.bot.routers import reset as reset_router
 from app.bot.routers.reset import cmd_reset, reset_confirm
 from app.db.models.chat_message import ChatMessage
+from app.db.models.meal_entry import MealEntry
 from app.db.models.session_log import SessionLog
 from app.db.models.user import User
 from app.db.repositories import plan_repo, profile_repo, user_repo
@@ -56,6 +57,10 @@ async def _populate(db_session) -> User:
         ))
     for i in range(3):
         db_session.add(ChatMessage(user_id=u.id, role="user", content=f"m{i}"))
+    db_session.add(MealEntry(
+        user_id=u.id, entry_date=date.today(), entry_type="meal", meal_slot="lunch",
+        raw_description="omelette", estimated_calories=500,
+    ))
     await db_session.flush()
     return u
 
@@ -97,11 +102,22 @@ async def test_exact_word_deletes_everything_local_and_keeps_identity(db_session
     assert await plan_repo.get_active_plan(db_session, u.id) is None
     assert await profile_repo.get_by_user_id(db_session, u.id) is None
 
+    # spec 008 research R5 — nutrition history is neither training data nor identity;
+    # it survives a /reset by explicit athlete request, unlike everything else here.
+    assert await db_session.scalar(select(func.count()).select_from(MealEntry)) == 1
+
     refreshed = await db_session.get(User, u.id)
     assert refreshed is not None                    # user row survives
     assert refreshed.coach_voice == "zen"           # identity kept (FR-020)
     assert refreshed.disclaimer_acknowledged_at is not None
     assert refreshed.onboarding_completed_at is None  # next /setup is a real first run
+
+
+def test_meal_entries_not_in_purge_models():
+    """spec 008 research R5 — a grep, not a vibe: MealEntry must not be one of /reset's
+    purge targets, the same standard test_reset_path_issues_no_outbound_call sets for
+    the outbound-call guarantee."""
+    assert MealEntry not in user_repo._PURGE_MODELS
 
 
 def test_reset_path_issues_no_outbound_call():

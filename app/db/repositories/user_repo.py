@@ -98,6 +98,11 @@ async def ack_disclaimer(session: AsyncSession, user: User) -> None:
 # Every per-athlete row `/reset` deletes. `coach_voice` and `disclaimer_acknowledged_at`
 # live on `users` and are deliberately NOT here — they are identity, not training data
 # (FR-020: a reset athlete keeps their chosen voice and is not re-shown the disclaimer).
+#
+# `MealEntry` (spec 008) is ALSO deliberately not here — a third category, distinct from
+# both: not training data and not identity, but a personal record the athlete explicitly
+# asked to survive a training reset (spec 008 research R5). Nutrition history is kept
+# indefinitely regardless of what happens to the coaching relationship.
 _PURGE_MODELS = (
     ResponseCheckFailure,
     GuardrailAcknowledgement,

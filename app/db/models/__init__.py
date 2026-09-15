@@ -2,6 +2,7 @@ from app.db.models.activity import Activity
 from app.db.models.base import Base
 from app.db.models.chat_message import ChatMessage
 from app.db.models.guardrail import GuardrailAcknowledgement, ResponseCheckFailure
+from app.db.models.meal_entry import MealEntry
 from app.db.models.profile import AthleteProfile
 from app.db.models.publication import PublicationApproval, PublishedEntry
 from app.db.models.session_log import SessionLog
@@ -27,4 +28,5 @@ __all__ = [
     "SyncState",
     "ResponseCheckFailure",
     "GuardrailAcknowledgement",
+    "MealEntry",
 ]

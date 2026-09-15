@@ -90,7 +90,8 @@ app/
 │   └── repositories/        # Accès DB — jamais de SQL dans les handlers
 │       ├── weekly_adherence_repo.py  # upsert + get_recent — persistance taux d'adhérence /recap
 │       ├── publication_repo.py       # PublicationApproval + PublishedEntry (spec 005)
-│       └── guardrail_repo.py         # ResponseCheckFailure + GuardrailAcknowledgement (spec 006)
+│       ├── guardrail_repo.py         # ResponseCheckFailure + GuardrailAcknowledgement (spec 006)
+│       └── meal_entry_repo.py        # create/delete_for_date/daily_totals — suivi calorique (spec 008)
 ├── services/                # Orchestration : repos + LLM, sans dépendance aiogram
 │   ├── weekly_recap.py      # compute_weekly_recap() → WeeklyRecapResult
 │   ├── activity_feedback.py # assemble_activity_feedback() — contexte post-séance, sans dépendance bot
@@ -99,7 +100,8 @@ app/
 │   │                        # diff plan↔calendrier, check_divergence(), retrait — sans dépendance aiogram
 │   ├── guardrail_service.py # spec 006 : assemble_workload/recovery_findings, recovery_insufficiency,
 │   │                        # décline/accepte via chemins existants — AUCUN chemin d'écriture propre
-│   └── response_verification.py  # spec 006 : MetricRegistry + verify_response + apply_result (US3)
+│   ├── response_verification.py  # spec 006 : MetricRegistry + verify_response + apply_result (US3)
+│   └── nutrition_reminder.py # spec 008 : needs_reminder() — pur, testable sans importer app/main.py
 ├── engine/                  # Moteur déterministe — zéro LLM ici
 │   ├── schemas.py           # Pydantic : AthleteProfileSchema, TrainingPlanSchema, SessionSpec, Step, RepeatGroup
 │   ├── periodization.py     # Blocs Base/Build/Peak/Taper
@@ -119,7 +121,7 @@ app/
 │   ├── providers/           # anthropic.py, openrouter.py — interface commune generate()
 │   ├── chat_client.py       # run_agentic_loop() — max 2 itérations outils
 │   ├── chat.py              # run_chat() → (text, intent, tool_used, pending_proposal)
-│   ├── tools.py             # 5 outils LLM + build_system_prompt()
+│   ├── tools.py             # 8 outils LLM + build_system_prompt()
 │   ├── prompts.py           # Contexte système (profil, plan, métriques)
 │   ├── activity_analysis.py # Feedback post-séance enrichi (5 blocs, tone TSB)
 │   └── narrator.py          # Résumé narratif semaine (texte pur)
@@ -325,6 +327,7 @@ doc (FR-016, SC-007). ⚠️ le ratio `ATL/CTL` est du 7j:42j (EWMA), la plage 0
 | `guardrail_acknowledgements` | spec 006 — décision de l'athlète sur une occurrence de garde-fou (`occurrence_key` = `kind:jour`, `decision` accepted/declined). Un refus démote l'action sans museler le signal (FR-025/FR-026) |
 | `publication_approvals` | spec 005 — consentement enregistré et lié au contenu (`content_hash` SHA-256 sur ce qui a été montré) ; `status` pending/approved/declined (terminal, jamais supprimé — FR-003) ; `horizon_start`/`horizon_end`, `session_count` |
 | `published_entries` | spec 005 — une ligne par séance écrite au calendrier ; `external_id` unique/user (`banister:<plan>:<date>:<slug>`), `intervals_event_id`, `approval_id` (FR-005), `content_hash`, `withdrawn_at` (gardée en historique — distingue « retirée par nous » de « supprimée par l'athlète ») |
+| `meal_entries` | spec 008 — un repas ou un récap de journée loggé en langage naturel via le chat ; `entry_date`, `entry_type` (meal/day_recap), `meal_slot` (nullable), `raw_description` (texte verbatim de l'athlète), `estimated_calories` (estimation LLM, jamais recalculée). Gardée indéfiniment, **jamais purgée par `/reset`** (ni donnée d'entraînement, ni identité — un historique perso que l'athlète a explicitement demandé de garder) |
 
 `oauth_connections` a été supprimée (spec 002 T059) — l'authentification intervals.icu est une clé API
 personnelle, pas un flux OAuth, donc aucune table de tokens n'est nécessaire.
@@ -530,8 +533,10 @@ un calendrier périmé via `check_divergence` de spec 005 (FR-014). Résumé « 
 **`/reset`** (`app/bot/routers/reset.py`, `ResetStates.CONFIRM`) — action **distincte** de `/goal` : liste
 chiffrée de ce qui sera supprimé, confirmation tapée `SUPPRIMER`, puis `user_repo.purge_athlete_data`
 (10 tables par-athlète, **aucun appel sortant** — vérifié par scan AST). Garde `coach_voice` et
-`disclaimer_acknowledged_at` (identité, pas données d'entraînement). `onboarding_completed_at` remis à
-`None` → prochain `/setup` = vrai premier run.
+`disclaimer_acknowledged_at` (identité, pas données d'entraînement) **et** `meal_entries` (spec 008 —
+historique perso, ni donnée d'entraînement ni identité, gardé par demande explicite de l'athlète ;
+`MealEntry` n'est délibérément pas dans `_PURGE_MODELS`, vérifié par test). `onboarding_completed_at` remis
+à `None` → prochain `/setup` = vrai premier run.
 
 **`/voice`** (`app/bot/routers/voice.py`) — liste `personas/*.yaml` avec leur descripteur, écrit
 `users.coach_voice`, effet au message suivant (colonne lue par requête, pas de redémarrage).
@@ -539,6 +544,36 @@ chiffrée de ce qui sera supprimé, confirmation tapée `SUPPRIMER`, puis `user_
 (défaut `pace`) → `coach-default`. Une voix introuvable → défaut + notice (FR-026). `build_ux_system_prompt`
 et `build_system_prompt` prennent un `persona=` optionnel ; sans lui, l'ancien texte « Pace » en dur.
 `_MODE_PERSONA` (modes narratifs) reste un axe séparé, non fusionné.
+
+## Suivi calorique (spec 008)
+
+L'athlète décrit ce qu'il a mangé en langage naturel dans le chat — pas de commande dédiée, pas de FSM.
+Trois outils LLM de plus (8 au total) dans `app/llm/tools.py` / `app/llm/chat.py`, même mécanisme que les
+5 outils existants (le LLM extrait, une fonction Python déterministe persiste et calcule).
+
+- **`log_meal`** — repas isolé ou récap de journée. L'estimation calorique vient de la connaissance du LLM
+  (pas de base nutritionnelle externe, choix explicite v1) — **hors du périmètre du Principe I**, qui porte
+  sur la charge d'entraînement, pas la nutrition. Le **total du jour**, lui, reste une somme SQL
+  déterministe recalculée après chaque insertion (`meal_entry_repo.daily_totals`), jamais additionnée par
+  le modèle. Un récap de journée (`entry_type=day_recap`) **remplace** les entrées déjà loggées ce jour-là
+  au lieu de s'y ajouter — sinon double-comptage.
+- **`undo_last_meal_entry`** — supprime la dernière entrée loggée aujourd'hui (correction = annuler puis
+  reloguer, pas d'édition en place).
+- **`get_calorie_history`** — total jour par jour sur une période ; un jour sans entrée est explicitement
+  `"logged": false`, jamais affiché comme 0 kcal.
+
+**Délibérément non fait** : aucune de ces trois figures n'est vérifiée par
+`app/services/response_verification.py` (spec 006) — ce module est ancré sur un vocabulaire
+d'entraînement (CTL/ATL/TSB/FTP/ACWR/monotonie/VFC/FC repos) et le rester tant que le suivi calorique reste
+standalone. Aucun changement à `/recap` ni au system prompt du chat — intégration explicitement différée.
+
+**Rappel du soir** — `app/main.py::_nutrition_reminder_scheduler` envoie un message vers 22h00 (convention
+UTC+1 fixe, identique à `_run_session_reminders` — pas de `ZoneInfo`) si rien n'a été loggé ce jour-là.
+Pas de nouvelle colonne : l'absence de ligne `meal_entries` pour aujourd'hui **est** l'état « pas encore
+fait » (`app/services/nutrition_reminder.py::needs_reminder`). Pas de `/commande` pour changer l'heure —
+fixe pour cette version.
+
+**Script** : `scripts/nutrition_state.py --describe` (totaux récents, lecture seule).
 
 ## Variables d'environnement
 
@@ -610,5 +645,8 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier `/goal` (re-plan) ou `/reset` (purge) | `app/bot/routers/{goal,reset}.py` |
 | Ajouter / modifier une voix de coach | `personas/*.yaml` (YAML seul, aucun code) — `/voice` la liste |
 | Modifier la résolution de voix / le fallback | `app/services/coach_voice.py` — `resolve_voice()` |
+| Modifier le suivi calorique (`log_meal`, `undo_last_meal_entry`, `get_calorie_history`) | `app/llm/tools.py` (schémas) + `_tool_log_meal()`/`_tool_undo_last_meal_entry()`/`_tool_get_calorie_history()` dans `app/llm/chat.py` |
+| Modifier l'agrégation calorique (total du jour, historique) | `app/db/repositories/meal_entry_repo.py` — `daily_totals()` |
+| Modifier le rappel calorique du soir | `app/main.py` — `_nutrition_reminder_scheduler()` / `_run_nutrition_reminders()` ; sélection dans `app/services/nutrition_reminder.py` |
 | Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `alembic revision --autogenerate` |
 | Architecture complète | `docs/ARCHITECTURE.md` |

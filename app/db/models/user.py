@@ -45,3 +45,9 @@ class User(Base, TimestampMixin):
     session_logs: Mapped[list["SessionLog"]] = relationship(back_populates="user", cascade="all, delete-orphan")  # noqa: F821
     chat_messages: Mapped[list["ChatMessage"]] = relationship(back_populates="user", cascade="all, delete-orphan")  # noqa: F821
     activities: Mapped[list["Activity"]] = relationship(back_populates="user", cascade="all, delete-orphan")  # noqa: F821
+    # spec 008 — nutrition history, deliberately NOT purged by /reset (see the comment on
+    # user_repo._PURGE_MODELS): neither training data nor identity, kept indefinitely by
+    # explicit athlete request.
+    meal_entries: Mapped[list["MealEntry"]] = relationship(  # noqa: F821
+        back_populates="user", cascade="all, delete-orphan"
+    )

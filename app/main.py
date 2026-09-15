@@ -2,7 +2,7 @@ import asyncio
 import logging
 import logging.config
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from html import escape
 
 from fastapi import FastAPI, Request
@@ -83,6 +83,7 @@ async def lifespan(app: FastAPI):
 
     recap_scheduler_task = asyncio.create_task(_weekly_recap_scheduler(bot))
     reminder_scheduler_task = asyncio.create_task(_session_reminder_scheduler(bot))
+    nutrition_reminder_scheduler_task = asyncio.create_task(_nutrition_reminder_scheduler(bot))
     poller_scheduler_task = asyncio.create_task(_run_intervals_poller())
 
     yield
@@ -96,6 +97,12 @@ async def lifespan(app: FastAPI):
     reminder_scheduler_task.cancel()
     try:
         await reminder_scheduler_task
+    except asyncio.CancelledError:
+        pass
+
+    nutrition_reminder_scheduler_task.cancel()
+    try:
+        await nutrition_reminder_scheduler_task
     except asyncio.CancelledError:
         pass
 
@@ -307,6 +314,78 @@ async def _run_session_reminders(bot):
                 await asyncio.sleep(0.1)  # rate limit entre utilisateurs
         except Exception:
             logger.exception(f"Erreur rappel séance user {telegram_id}")
+
+
+def _format_nutrition_reminder() -> str:
+    return (
+        "🍽️ <b>Rien loggé aujourd'hui</b>\n\n"
+        "Tu n'as pas encore décrit ce que tu as mangé aujourd'hui.\n"
+        "Dis-moi simplement ce que tu as pris (un repas ou un résumé de la journée) "
+        "et je t'estime les calories."
+    )
+
+
+async def _nutrition_reminder_scheduler(bot):
+    """Envoie un rappel calorique quotidien à 22h00 si rien n'a été loggé ce jour-là
+    (spec 008 US5). Même convention UTC+1 fixe ("CET") que _run_session_reminders,
+    délibérément pas une ZoneInfo Europe/Paris — voir research R4 : un vrai fix DST
+    toucherait les deux rappels à la fois, hors périmètre de cette feature."""
+    CET = timezone(timedelta(hours=1))
+    while True:
+        now_cet = datetime.now(CET)
+        next_run = now_cet.replace(hour=22, minute=0, second=0, microsecond=0)
+        if next_run <= now_cet:
+            next_run += timedelta(days=1)
+
+        wait_seconds = (next_run - now_cet).total_seconds()
+        logger.info(
+            f"Prochain rappel calories dans {wait_seconds / 3600:.1f}h "
+            f"({next_run.strftime('%Y-%m-%d %H:%M')} CET)"
+        )
+        await asyncio.sleep(wait_seconds)
+
+        try:
+            await _run_nutrition_reminders(bot)
+        except Exception:
+            logger.exception("Erreur lors des rappels caloriques")
+
+
+async def _run_nutrition_reminders(bot):
+    """Envoie le rappel à chaque utilisateur actif n'ayant rien loggé aujourd'hui."""
+    from sqlalchemy import select
+
+    from app.db.client import AsyncSessionFactory
+    from app.db.models.user import User
+    from app.services.nutrition_reminder import needs_reminder
+
+    today = date.today()
+
+    async with AsyncSessionFactory() as session:
+        result = await session.execute(
+            select(User).where(
+                User.is_active,
+                User.onboarding_completed_at.is_not(None),
+            )
+        )
+        users = list(result.scalars().all())
+
+    pending: list[int] = []
+    for user in users:
+        async with AsyncSessionFactory() as session:
+            if await needs_reminder(session, user.id, today):
+                pending.append(user.telegram_id)
+
+    if not pending:
+        return
+
+    logger.info(f"Rappel calories : {len(pending)} utilisateur(s)")
+    text = _format_nutrition_reminder()
+    for telegram_id in pending:
+        try:
+            await bot.send_message(telegram_id, text, parse_mode="HTML")
+            await asyncio.sleep(0.1)  # rate limit entre utilisateurs
+        except Exception:
+            logger.exception(f"Erreur rappel calories user {telegram_id}")
 
 
 async def run_polling():
