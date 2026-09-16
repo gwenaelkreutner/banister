@@ -548,6 +548,32 @@ historique perso, ni donnée d'entraînement ni identité, gardé par demande ex
 et `build_system_prompt` prennent un `persona=` optionnel ; sans lui, l'ancien texte « Pace » en dur.
 `_MODE_PERSONA` (modes narratifs) reste un axe séparé, non fusionné.
 
+## Mémoire du coach (hors spec — jamais documenté avant, construit le 2026-08-27)
+
+Trois horizons, pas un seul :
+- **Court terme** : les 8 derniers messages de chat (`repo.chat_repo.get_conversation(..., limit=8)` dans
+  `app/llm/chat.py`), sans résumé — au-delà, perdu.
+- **Long terme** : outil LLM `update_coach_memory` (`app/llm/tools.py`) — le modèle mémorise une
+  observation **durable** (pattern de fatigue récurrent, contrainte physique confirmée, préférence de
+  communication, événement marquant), jamais un état transitoire (fatigue du jour, météo). Deux formes,
+  toutes deux sur `AthleteProfile` (colonnes JSON `coach_memory`/`athlete_notes`,
+  `app/db/models/profile.py`) :
+  - `action: add_note` → ajoute une note catégorisée (`fatigue`/`motivation`/`physique`/`event`/
+    `preference`) à la liste `coach_memory`
+  - `action: update_athlete_notes` → écrit/écrase une clé stable dans le dict `athlete_notes`
+  - Max 1 appel par conversation (consigne dans la description de l'outil, pas appliqué côté code).
+  - Relu à **chaque** tour de chat et réinjecté dans `build_system_prompt(coach_memory=…,
+    athlete_notes=…)` (`chat.py` ~ligne 159) — donc disponible au modèle indéfiniment, pas juste tant que
+    ça reste dans la fenêtre des 8 messages.
+- **Moyen terme** : n'existe pas. Pas de résumé glissant des dernières semaines entre les deux horizons
+  ci-dessus — identifié comme piste d'amélioration, pas encore scopé.
+
+Purgé par `/reset` comme le reste du profil (`AthleteProfile` est dans `_PURGE_MODELS`, pas de traitement
+spécial pour `coach_memory`/`athlete_notes`).
+
+Lecture manuelle (hors Telegram) : `python -m scripts.coach_memory_state --describe` — lit directement
+`athlete_profiles.coach_memory`/`.athlete_notes`, même chemin que `build_system_prompt()`.
+
 ## Suivi calorique (spec 008)
 
 L'athlète décrit ce qu'il a mangé en langage naturel dans le chat — pas de commande dédiée, pas de FSM.
