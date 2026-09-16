@@ -1,13 +1,41 @@
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 
 from app.bot.middlewares.db_session import DbSessionMiddleware
 from app.bot.middlewares.single_user import SingleUserMiddleware
 from app.config import settings
 
+# Ordre = flux d'usage (onboarding puis routine), pas alphabétique — affiché tel quel
+# dans le menu "/" de Telegram.
+BOT_COMMANDS = [
+    BotCommand(command="start", description="Démarrer / accueil"),
+    BotCommand(command="setup", description="Configurer ton profil et générer un plan"),
+    BotCommand(command="plan", description="Voir ton programme de la semaine"),
+    BotCommand(command="week", description="Voir une semaine du plan (ex: /week 3)"),
+    BotCommand(command="forme", description="Métriques de forme (CTL/ATL/TSB)"),
+    BotCommand(command="recap", description="Récapitulatif hebdomadaire"),
+    BotCommand(command="goal", description="Changer d'objectif et régénérer le plan"),
+    BotCommand(command="publish", description="Publier les séances vers ton calendrier"),
+    BotCommand(command="unpublish", description="Retirer les séances publiées"),
+    BotCommand(command="reminders", description="Gérer les rappels de séance"),
+    BotCommand(command="voice", description="Choisir la voix de ton coach"),
+    BotCommand(command="reset", description="Réinitialiser tes données d'entraînement"),
+    BotCommand(command="cancel", description="Annuler l'action en cours"),
+    BotCommand(command="help", description="Aide"),
+]
+
 
 def create_bot() -> Bot:
     return Bot(token=settings.telegram_bot_token)
+
+
+async def register_bot_commands(bot: Bot) -> None:
+    """Peuple le menu "/" natif de Telegram — sans ça, l'app cliente affiche un menu
+    vide même si les commandes fonctionnent (elles sont routées par Command(), pas par
+    ce menu). Idempotent — Telegram écrase la liste précédente à chaque appel, donc
+    rappelable sans risque à chaque démarrage."""
+    await bot.set_my_commands(BOT_COMMANDS)
 
 
 def create_dispatcher() -> Dispatcher:

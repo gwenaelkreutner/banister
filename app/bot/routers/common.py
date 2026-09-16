@@ -47,7 +47,12 @@ async def cmd_help(message: Message) -> None:
         "• /week N — Voir la semaine N de ton plan\n"
         "• /forme — Voir tes métriques de forme (CTL/ATL/TSB)\n"
         "• /recap — Récapitulatif hebdomadaire\n"
+        "• /goal — Changer d'objectif et régénérer le plan\n"
+        "• /publish — Publier les séances vers ton calendrier\n"
+        "• /unpublish — Retirer les séances publiées\n"
         "• /reminders — Gérer les rappels de séance\n"
+        "• /voice — Choisir la voix de ton coach\n"
+        "• /reset — Réinitialiser tes données d'entraînement\n"
         "• /cancel — Annuler l'action en cours\n\n"
         "Tu peux aussi me poser des questions librement ! 💬",
         parse_mode="HTML",

@@ -8,7 +8,7 @@ from html import escape
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.bot.setup import create_bot, create_dispatcher
+from app.bot.setup import create_bot, create_dispatcher, register_bot_commands
 from app.config import settings
 from app.db.client import get_session
 from app.db.lifecycle import (
@@ -66,6 +66,8 @@ async def lifespan(app: FastAPI):
     # else runs. A bad key must surface as a clear startup failure here, not as a
     # mysterious empty result the first time the poller tries to use it.
     await verify_intervals_credential()
+
+    await register_bot_commands(bot)
 
     if settings.use_webhook:
         webhook_url = f"{settings.telegram_webhook_url}"
