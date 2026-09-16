@@ -62,7 +62,11 @@ if not config.get_main_option("sqlalchemy.url"):
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers defaults to True, which silently kills every logger the
+    # running app already configured (app.*, uvicorn's) the moment a migration runs —
+    # looked like the app had frozen right after "Checking database schema..." when it
+    # had actually finished startup and kept working, just with no more log output.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
