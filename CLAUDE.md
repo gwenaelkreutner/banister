@@ -532,7 +532,10 @@ un calendrier périmé via `check_divergence` de spec 005 (FR-014). Résumé « 
 
 **`/reset`** (`app/bot/routers/reset.py`, `ResetStates.CONFIRM`) — action **distincte** de `/goal` : liste
 chiffrée de ce qui sera supprimé, confirmation tapée `SUPPRIMER`, puis `user_repo.purge_athlete_data`
-(10 tables par-athlète, **aucun appel sortant** — vérifié par scan AST). Garde `coach_voice` et
+(11 tables par-athlète, **aucun appel sortant** — vérifié par scan AST). `sync_state` est de ces 11 : sans
+ça `history_import_complete` restait à `True` après la purge d'`activities`, donc `import_history()`
+ne relançait jamais le réimport des ~120 jours d'historique au `/setup` suivant (bug réel, corrigé après
+coup — pas repéré au moment où spec 007 a écrit `/reset`). Garde `coach_voice` et
 `disclaimer_acknowledged_at` (identité, pas données d'entraînement) **et** `meal_entries` (spec 008 —
 historique perso, ni donnée d'entraînement ni identité, gardé par demande explicite de l'athlète ;
 `MealEntry` n'est délibérément pas dans `_PURGE_MODELS`, vérifié par test). `onboarding_completed_at` remis
