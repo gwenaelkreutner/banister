@@ -16,11 +16,11 @@ BOT_COMMANDS = [
     BotCommand(command="forme", description="Métriques de forme (CTL/ATL/TSB)"),
     BotCommand(command="recap", description="Récapitulatif hebdomadaire"),
     BotCommand(command="goal", description="Changer d'objectif et régénérer le plan"),
-    BotCommand(command="publish", description="Publier les séances vers ton calendrier"),
+    BotCommand(command="publish", description="Publier les 2 prochaines semaines au calendrier"),
     BotCommand(command="unpublish", description="Retirer les séances publiées"),
     BotCommand(command="reminders", description="Gérer les rappels de séance"),
     BotCommand(command="voice", description="Choisir la voix de ton coach"),
-    BotCommand(command="reset", description="Réinitialiser tes données d'entraînement"),
+    BotCommand(command="reset", description="Effacer profil + historique local (garde intervals.icu)"),
     BotCommand(command="cancel", description="Interrompre /setup, /goal ou /reset en cours"),
     BotCommand(command="help", description="Aide"),
 ]

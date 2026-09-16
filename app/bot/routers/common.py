@@ -48,11 +48,11 @@ async def cmd_help(message: Message) -> None:
         "• /forme — Voir tes métriques de forme (CTL/ATL/TSB)\n"
         "• /recap — Récapitulatif hebdomadaire\n"
         "• /goal — Changer d'objectif et régénérer le plan\n"
-        "• /publish — Publier les séances vers ton calendrier\n"
+        "• /publish — Publier les 2 prochaines semaines au calendrier\n"
         "• /unpublish — Retirer les séances publiées\n"
         "• /reminders — Gérer les rappels de séance\n"
         "• /voice — Choisir la voix de ton coach\n"
-        "• /reset — Réinitialiser tes données d'entraînement\n"
+        "• /reset — Effacer profil + historique local (garde intervals.icu)\n"
         "• /cancel — Interrompre /setup, /goal ou /reset en cours\n\n"
         "Tu peux aussi me poser des questions librement ! 💬",
         parse_mode="HTML",
