@@ -10,6 +10,7 @@ from app.db.models.guardrail import GuardrailAcknowledgement, ResponseCheckFailu
 from app.db.models.profile import AthleteProfile
 from app.db.models.publication import PublicationApproval, PublishedEntry
 from app.db.models.session_log import SessionLog
+from app.db.models.sync_state import SyncState
 from app.db.models.training_plan import TrainingPlan
 from app.db.models.user import User
 from app.db.models.weekly_adherence import WeeklyAdherence
@@ -114,6 +115,12 @@ _PURGE_MODELS = (
     Activity,
     TrainingPlan,
     AthleteProfile,
+    # Without this, history_import_complete stays True after Activity rows are wiped
+    # above, so import_history() no-ops forever and the athlete's history never comes
+    # back after a /reset. Deleting the row (not just the flag) also clears
+    # last_successful_refresh_at and the cursor — get_or_create_sync_state rebuilds a
+    # fresh row with defaults on next use.
+    SyncState,
 )
 
 
