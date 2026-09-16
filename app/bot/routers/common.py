@@ -53,7 +53,7 @@ async def cmd_help(message: Message) -> None:
         "• /reminders — Gérer les rappels de séance\n"
         "• /voice — Choisir la voix de ton coach\n"
         "• /reset — Réinitialiser tes données d'entraînement\n"
-        "• /cancel — Annuler l'action en cours\n\n"
+        "• /cancel — Interrompre /setup, /goal ou /reset en cours\n\n"
         "Tu peux aussi me poser des questions librement ! 💬",
         parse_mode="HTML",
     )

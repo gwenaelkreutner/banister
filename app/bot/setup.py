@@ -21,7 +21,7 @@ BOT_COMMANDS = [
     BotCommand(command="reminders", description="Gérer les rappels de séance"),
     BotCommand(command="voice", description="Choisir la voix de ton coach"),
     BotCommand(command="reset", description="Réinitialiser tes données d'entraînement"),
-    BotCommand(command="cancel", description="Annuler l'action en cours"),
+    BotCommand(command="cancel", description="Interrompre /setup, /goal ou /reset en cours"),
     BotCommand(command="help", description="Aide"),
 ]
 
