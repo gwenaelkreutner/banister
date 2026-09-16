@@ -20,6 +20,11 @@ WORKDIR /app
 # Récupération de l'environnement virtuel créé par uv
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
+# Sans ça, stdout est bufferisé par bloc (pas de TTY dans le conteneur) — un crash
+# rapide au démarrage peut mourir avant que le traceback soit flush vers les logs
+# Docker. Trouvé en réel : un crash-loop sous restart:always ne montrait AUCUNE
+# erreur dans `docker compose logs`, juste le cycle de démarrage qui repartait.
+ENV PYTHONUNBUFFERED=1
 
 # Copie du reste du code
 COPY . .
