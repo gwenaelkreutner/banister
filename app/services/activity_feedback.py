@@ -38,14 +38,14 @@ from app.providers.analysis.analysis_models import AnalyzedSession
 from app.providers.analysis.highlight import HighlightResult, select_highlight
 from app.providers.analysis.matching import ActivitySessionMatch, evaluate_activity_plan_match
 
-Outcome = Literal["matched", "no_plan", "unplanned", "bonus"]
+Outcome = Literal["matched", "freestyle", "unplanned", "bonus"]
 
 
 @dataclass
 class ActivityFeedbackContext:
     """Everything the staged notification needs to render. `outcome` tells the caller
-    which of the three (four, counting "no_plan") notification shapes applies —
-    training outside the plan is never presented as an error (FR-034)."""
+    which of the four notification shapes applies — training outside the plan (or with
+    no plan at all, "freestyle", spec 009) is never presented as an error (FR-034)."""
 
     outcome: Outcome
     analyzed: AnalyzedSession
@@ -77,19 +77,27 @@ async def assemble_activity_feedback(
     `initial_analyzed` as final.
     """
     plan = await repo.plan_repo.get_active_plan(session, user.id)
-    if plan is None:
-        return ActivityFeedbackContext(outcome="no_plan", analyzed=initial_analyzed)
 
     # Idempotency guard: a prior call for this same activity may have already created
     # the SessionLog but never got marked reported (e.g. Telegram delivery failed after
     # ingestion succeeded — exactly the case FR-012 exists to make retryable). Reuse
     # that row rather than creating a duplicate; everything else below (matching,
     # fitness, highlight) is cheap, pure computation and safe to simply redo so the
-    # caller has what it needs to retry the notification.
+    # caller has what it needs to retry the notification. Checked before the plan==None
+    # branch so a freestyle-mode retry is idempotent too (spec 009).
     existing_log = await repo.session_log_repo.get_by_source_activity(session, source_activity_id)
     if existing_log is not None and existing_log.user_id == user.id:
         return await _reuse_existing_log(
             session, user, plan, existing_log, initial_analyzed, activity_date
+        )
+
+    if plan is None:
+        # spec 009 US3 — freestyle mode: nothing to match against, but the activity
+        # still gets logged and gets feedback (FR-008), unlike the old silent "no_plan"
+        # skip (SessionLog.plan_id used to be NOT NULL — see research.md Decision 3).
+        return await _assemble_freestyle_feedback(
+            session, user, initial_analyzed, activity_date,
+            source=source, source_activity_id=source_activity_id,
         )
 
     all_logs_for_plan = await repo.session_log_repo.get_all_for_user(session, user.id)
@@ -271,7 +279,9 @@ async def _reuse_existing_log(
     fitness_metrics, fitness_feedback = await _build_fitness_feedback(session, user.id)
 
     if existing_log.status != "done":
-        outcome: Outcome = "bonus" if existing_log.plan_id else "unplanned"
+        # existing_log.plan_id is None exactly for a freestyle-mode log (spec 009) —
+        # was dead code before plan_id became nullable, since every log had one.
+        outcome: Outcome = "freestyle" if existing_log.plan_id is None else "bonus"
         return ActivityFeedbackContext(
             outcome=outcome,
             analyzed=analyzed,
@@ -280,7 +290,10 @@ async def _reuse_existing_log(
             fitness_feedback=fitness_feedback,
         )
 
-    match_result = evaluate_activity_plan_match(plan, analyzed, activity_date)
+    # A "done" log always came from a real match against `plan` — but the athlete may
+    # have switched to freestyle mode (deactivating that plan) in the window between
+    # ingestion and this retry. Never call evaluate_activity_plan_match(None, ...).
+    match_result = evaluate_activity_plan_match(plan, analyzed, activity_date) if plan else None
 
     session_logs_snap = await repo.session_log_repo.get_all_for_user(session, user.id)
     activities_snap = await repo.activity_repo.get_for_user(session, user.id, days=42)
@@ -292,12 +305,79 @@ async def _reuse_existing_log(
         outcome="matched",
         analyzed=analyzed,
         log=existing_log,
-        match_result=match_result if match_result.candidate else None,
+        match_result=match_result if match_result and match_result.candidate else None,
         fitness_metrics=fitness_metrics,
         fitness_feedback=fitness_feedback,
         weekly_snapshot=weekly_snap,
         highlight=highlight,
         kpi_contribution=existing_log.kpi_contribution,
+    )
+
+
+async def _assemble_freestyle_feedback(
+    session: AsyncSession,
+    user: User,
+    analyzed: AnalyzedSession,
+    activity_date: date,
+    *,
+    source: str,
+    source_activity_id: str,
+) -> ActivityFeedbackContext:
+    """spec 009 US3 — the freestyle-mode counterpart to the plan-matched path above.
+    No `evaluate_activity_plan_match` at all (there is no plan to compare against);
+    otherwise mirrors the "unplanned" branch's SessionLog shape (`plan_id`/`week_number`/
+    `day_of_week` all `None`, `status="unplanned"` — data-model.md's exact reuse of the
+    existing status vocabulary) and the "matched" branch's fitness/highlight assembly, so
+    a freestyle notification looks and feels like any other, per FR-008/US3."""
+    duration_s = analyzed.moving_time_s or analyzed.duration_s
+    elapsed_minutes = int(duration_s / 60)
+
+    log = await repo.session_log_repo.create(
+        session=session,
+        user_id=user.id,
+        plan_id=None,
+        week_number=None,
+        day_of_week=None,
+        logged_date=activity_date,
+        status="unplanned",
+        duration_minutes_actual=elapsed_minutes,
+        tss_actual=analyzed.tss,
+        source_activity_id=source_activity_id,
+        source=source,
+        avg_heart_rate=int(analyzed.avg_hr) if analyzed.avg_hr else None,
+        avg_power=int(analyzed.avg_power) if analyzed.avg_power else None,
+        normalized_power=int(analyzed.normalized_power) if analyzed.normalized_power else None,
+        environment=analyzed.environment or "outdoor",
+        time_in_zones_s=analyzed.time_in_zones_s or None,
+        cardiac_drift_index=analyzed.cardiac_drift_index,
+        intervals_consistency_index=analyzed.intervals_consistency_index,
+        respect_zones_score=analyzed.respect_zones_score,
+        session_type_real=analyzed.session_type_real,
+        variability_index=analyzed.variability_index,
+        intensity_factor=analyzed.intensity_factor,
+        dominant_zone=analyzed.dominant_zone,
+    )
+
+    fitness_metrics, fitness_feedback = await _build_fitness_feedback(session, user.id)
+    if fitness_metrics is not None:
+        log.ctl_at_session = round(fitness_metrics.ctl, 1)
+        log.atl_at_session = round(fitness_metrics.atl, 1)
+        log.tsb_at_session = round(fitness_metrics.tsb, 1)
+
+    session_logs_snap = await repo.session_log_repo.get_all_for_user(session, user.id)
+    activities_snap = await repo.activity_repo.get_for_user(session, user.id, days=42)
+    weekly_snap = compute_weekly_snapshot(session_logs_snap + activities_snap, activity_date)
+    fm = fitness_metrics or FitnessMetrics(ctl=0.0, atl=0.0, tsb=0.0)
+    highlight = select_highlight(analyzed, fm, weekly_snap)
+
+    return ActivityFeedbackContext(
+        outcome="freestyle",
+        analyzed=analyzed,
+        log=log,
+        fitness_metrics=fitness_metrics,
+        fitness_feedback=fitness_feedback,
+        weekly_snapshot=weekly_snap,
+        highlight=highlight,
     )
 
 

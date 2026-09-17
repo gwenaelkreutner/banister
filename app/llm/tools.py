@@ -168,14 +168,39 @@ TOOL_DEFINITIONS = [
                     },
                     "key": {
                         "type": "string",
-                        "description": "Clé dans athlete_notes — requis pour update_athlete_notes.",
+                        "description": (
+                            "Clé dans athlete_notes — requis pour update_athlete_notes. "
+                            "Utilise la clé 'disliked_workout_types' quand l'athlète dit détester "
+                            "ou vouloir éviter un type de séance (mode libre en tient compte)."
+                        ),
                     },
                     "value": {
                         "type": "string",
-                        "description": "Valeur à enregistrer — requis pour update_athlete_notes.",
+                        "description": (
+                            "Valeur à enregistrer — requis pour update_athlete_notes. "
+                            "Pour 'disliked_workout_types' : liste séparée par des virgules parmi "
+                            "long_ride, intervals, endurance, recovery (ex: 'intervals,long_ride')."
+                        ),
                     },
                 },
                 "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_freestyle_session_suggestion",
+            "description": (
+                "Propose une séance adaptée à la forme actuelle de l'athlète, sans référence à un "
+                "plan (mode libre uniquement — n'existe pas si l'athlète a un objectif actif). "
+                "Utilise cet outil quand l'athlète demande quoi faire aujourd'hui / une séance / "
+                "un conseil d'entraînement alors qu'il n'a pas d'objectif actif."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
             },
         },
     },
@@ -277,6 +302,22 @@ TOOL_DEFINITIONS = [
         },
     },
 ]
+
+# Tools that only make sense with an active plan — offering them in freestyle mode
+# would let the model attempt an action that can never succeed there (spec 009 research
+# Decision 6). `get_freestyle_session_suggestion` is the symmetric case: it never
+# appears in goal mode.
+_GOAL_ONLY_TOOLS = frozenset(
+    {"get_upcoming_sessions", "propose_plan_modification", "propose_session_adjustment"}
+)
+_FREESTYLE_ONLY_TOOLS = frozenset({"get_freestyle_session_suggestion"})
+
+
+def tools_for_mode(coaching_mode: str) -> list[dict]:
+    """Filters `TOOL_DEFINITIONS` by coaching mode (`"goal"` or `"freestyle"`) before it
+    is handed to the model — never let it call a tool that has nothing to act on."""
+    excluded = _FREESTYLE_ONLY_TOOLS if coaching_mode == "goal" else _GOAL_ONLY_TOOLS
+    return [t for t in TOOL_DEFINITIONS if t["function"]["name"] not in excluded]
 
 
 # ── Construction du system prompt ─────────────────────────────────────────────

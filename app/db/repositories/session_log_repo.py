@@ -10,9 +10,9 @@ from app.db.models.session_log import SessionLog
 async def create(
     session: AsyncSession,
     user_id: uuid.UUID,
-    plan_id: uuid.UUID,
-    week_number: int,
-    day_of_week: int,
+    plan_id: uuid.UUID | None,
+    week_number: int | None,
+    day_of_week: int | None,
     logged_date: date,
     status: str,
     rpe_emoji: str | None = None,

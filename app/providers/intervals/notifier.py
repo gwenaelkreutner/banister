@@ -222,17 +222,6 @@ async def notify_detected_activity(
         session, user, client, activity_summary, announce=announce
     )
 
-    if context.outcome == "no_plan":
-        # No active plan to match against at all — same silent skip the inbound webhook
-        # path used to have (nothing to ingest without a plan_id, SessionLog.plan_id is
-        # NOT NULL). Left
-        # unreported deliberately: once a plan exists, a later poll within the 7-day
-        # window should still pick this activity up.
-        logger.debug(
-            "No active plan for user %s — activity %s left unprocessed.", user.id, activity_id
-        )
-        return
-
     delivered = True
     if announce:
         if context.outcome == "matched":
@@ -240,6 +229,13 @@ async def notify_detected_activity(
         elif context.outcome == "bonus":
             delivered = await _notify_simple(
                 bot, user.telegram_id, "🔄 <b>Sortie bonus enregistrée</b>", context
+            )
+        elif context.outcome == "freestyle":
+            # spec 009 US3 — no plan exists to match or miss against, so the title never
+            # implies one (FR-008, US3 Acceptance Scenario 1). Distinct from "unplanned"
+            # copy below, which is specifically about a plan the activity didn't fit.
+            delivered = await _notify_simple(
+                bot, user.telegram_id, "🚴 <b>Activité enregistrée</b>", context
             )
         else:  # "unplanned"
             delivered = await _notify_simple(

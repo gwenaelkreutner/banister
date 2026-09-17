@@ -165,3 +165,46 @@ async def test_recovery_insufficiency_none_when_fully_evaluable(db_session):
     # HRV still has no data — so a note is still expected, mentioning VFC only.
     note = await recovery_insufficiency(db_session, u.id, today=TODAY)
     assert note is not None and "VFC" in note and "FC de repos" not in note
+
+
+# ── Freestyle mode regression pin (spec 009 research Decision 7) ────────────────
+# assemble_workload_findings/assemble_recovery_findings were already plan-agnostic
+# before spec 009 (both fall back to `plan_start = today` when there is no active
+# plan) — this pins that claim so a future change can't silently reintroduce a
+# dependency on an active plan existing.
+
+
+async def test_workload_findings_identical_with_or_without_an_active_plan(db_session):
+    u = await _user(db_session)
+    await wellness_repo.upsert(db_session, u.id, TODAY, ctl=44.0, atl=63.5, ramp_rate=6.43)
+
+    without_plan = await assemble_workload_findings(db_session, u.id, today=TODAY)
+
+    from app.db.repositories import plan_repo
+
+    await plan_repo.create(
+        db_session, u.id, plan_technical={}, start_date=TODAY - timedelta(days=30),
+        end_date=TODAY + timedelta(days=30),
+    )
+    with_plan = await assemble_workload_findings(db_session, u.id, today=TODAY)
+
+    assert [f.kind for f in without_plan] == [f.kind for f in with_plan]
+    assert [f.severity for f in without_plan] == [f.severity for f in with_plan]
+
+
+async def test_recovery_findings_identical_with_or_without_an_active_plan(db_session):
+    u = await _user(db_session)
+    await _seed_rhr_baseline(db_session, u.id, value=50.0)
+    await wellness_repo.upsert(db_session, u.id, TODAY, resting_hr=65)  # elevated, day 1
+
+    without_plan = await assemble_recovery_findings(db_session, u.id, today=TODAY)
+
+    from app.db.repositories import plan_repo
+
+    await plan_repo.create(
+        db_session, u.id, plan_technical={}, start_date=TODAY - timedelta(days=30),
+        end_date=TODAY + timedelta(days=30),
+    )
+    with_plan = await assemble_recovery_findings(db_session, u.id, today=TODAY)
+
+    assert [f.kind for f in without_plan] == [f.kind for f in with_plan]

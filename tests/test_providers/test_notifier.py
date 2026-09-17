@@ -213,7 +213,9 @@ class TestNotifyDetectedActivityDeliveryGating:
         assert await sync_state_repo.is_reported(db_session, user.id, activity_id)
         assert bot.sent == []
 
-    async def test_no_active_plan_is_left_unreported_and_silent(self, db_session):
+    async def test_no_active_plan_is_reported_and_notified_as_freestyle(self, db_session):
+        """spec 009 US3 — freestyle mode gets real feedback now, not a silent skip
+        (the old "no_plan" outcome was retired; see research.md Decision 3)."""
         user = await _make_user(db_session, 906)
         payload = _load("activity_full.json")
         client = _FakeClient(payload)
@@ -223,5 +225,6 @@ class TestNotifyDetectedActivityDeliveryGating:
         await db_session.commit()
 
         activity_id = str(payload["id"])
-        assert not await sync_state_repo.is_reported(db_session, user.id, activity_id)
-        assert bot.sent == []
+        assert await sync_state_repo.is_reported(db_session, user.id, activity_id)
+        assert len(bot.sent) == 1
+        assert "hors plan" not in bot.sent[0]  # never implies a plan it didn't match

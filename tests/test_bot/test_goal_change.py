@@ -9,7 +9,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import func, select
 
-from app.bot.routers.goal import _regenerate
+from app.bot.routers.goal import _enter_freestyle_mode, _regenerate, cmd_goal, goal_type
 from app.bot.routers.setup import parse_goal_date
 from app.db.models.chat_message import ChatMessage
 from app.db.models.session_log import SessionLog
@@ -47,9 +47,25 @@ def test_parse_goal_date_flags_too_soon_and_too_far_but_keeps_the_date():
 class _Msg:
     def __init__(self):
         self.sent = []
+        self.markups = []
 
     async def answer(self, text, **kw):
         self.sent.append(text)
+        self.markups.append(kw.get("reply_markup"))
+
+    async def edit_text(self, text, **kw):
+        self.sent.append(text)
+        self.markups.append(kw.get("reply_markup"))
+
+
+class _Callback:
+    def __init__(self, data: str):
+        self.data = data
+        self.message = _Msg()
+        self.answered = 0
+
+    async def answer(self, *a, **kw):
+        self.answered += 1
 
 
 class _State:
@@ -68,6 +84,7 @@ class _State:
 
     async def clear(self):
         self._d.clear()
+        self.state = None  # matches real aiogram FSMContext.clear() semantics
 
 
 async def _populate(db_session) -> User:
@@ -160,3 +177,102 @@ async def test_goal_change_surfaces_stale_calendar_entries(db_session):
     msg, state = _Msg(), _State()
     await _regenerate(msg, state, db_session, u, "fitness", date.today() + timedelta(days=120))
     assert "calendrier" in msg.sent[-1] and "/publish" in msg.sent[-1]
+
+
+# ── Mode switch (spec 009 US2) ───────────────────────────────────────────────
+
+
+async def _make_user_no_plan(db_session, telegram_id: int = 42) -> User:
+    from datetime import UTC
+    from datetime import datetime as _datetime
+
+    u = User(
+        telegram_id=telegram_id, first_name="Gwen",
+        onboarding_completed_at=_datetime.now(UTC),
+    )
+    db_session.add(u)
+    await db_session.flush()
+    await profile_repo.create(
+        db_session, u.id, make_profile(goal_type="event").model_dump(mode="json")
+    )
+    return u
+
+
+async def test_goal_no_longer_blocks_without_an_active_plan(db_session):
+    """spec 009 research Decision 2 — /goal is also the entry point from freestyle mode."""
+    u = await _make_user_no_plan(db_session)
+    msg, state = _Msg(), _State()
+
+    await cmd_goal(msg, state, db_session, u)
+
+    assert "Aucun plan actif" not in msg.sent[-1]
+    assert state.state is not None
+    assert msg.markups[-1] is not None  # the (now five-option) keyboard was shown
+
+
+async def test_goal_freestyle_option_deactivates_plan_and_withdraws_calendar(
+    db_session, monkeypatch
+):
+    u = await _populate(db_session)
+    plan = await plan_repo.get_active_plan(db_session, u.id)
+    assert plan is not None
+
+    calls = []
+
+    async def _fake_withdraw(session, client, user, plan_):
+        calls.append(plan_.id)
+        return (2, 0)
+
+    monkeypatch.setattr(
+        "app.services.publication.withdraw_all_publications", _fake_withdraw
+    )
+
+    callback, state = _Callback("goal:type:freestyle"), _State()
+    await _enter_freestyle_mode(callback, state, db_session, u)
+
+    assert await plan_repo.get_active_plan(db_session, u.id) is None
+    assert calls == [plan.id]
+    assert "Mode libre" in callback.message.sent[-1]
+    assert "2 séance" in callback.message.sent[-1]
+    assert callback.answered == 1
+
+    # Nothing else was touched (FR-012).
+    logs_after = await session_log_repo.get_all_for_user(db_session, u.id)
+    assert len(logs_after) == 6
+
+
+async def test_goal_freestyle_option_is_idempotent_when_already_freestyle(db_session):
+    u = await _make_user_no_plan(db_session)
+    callback, state = _Callback("goal:type:freestyle"), _State()
+
+    await _enter_freestyle_mode(callback, state, db_session, u)
+
+    assert "Déjà en mode libre" in callback.message.sent[-1]
+    assert callback.answered == 1
+
+
+async def test_goal_type_dispatches_freestyle_without_asking_for_a_date(db_session):
+    u = await _make_user_no_plan(db_session)
+    callback, state = _Callback("goal:type:freestyle"), _State()
+    await state.set_state("GoalStates.GOAL")  # arbitrary — goal_type doesn't branch on it
+
+    await goal_type(callback, state, db_session, u)
+
+    assert state.state is None  # cleared, never advanced to GoalStates.DATE
+    assert "libre" in callback.message.sent[-1].lower()
+
+
+async def test_regenerate_from_freestyle_omits_the_old_plan_diff(db_session):
+    """spec 009 — entering goal mode from freestyle has no old plan to diff against;
+    'ce qui est gardé' still appears, 'ce qui change' does not."""
+    u = await _make_user_no_plan(db_session)
+    assert await plan_repo.get_active_plan(db_session, u.id) is None
+
+    msg, state = _Msg(), _State()
+    await _regenerate(msg, state, db_session, u, "fitness", date.today() + timedelta(days=120))
+
+    summary = msg.sent[-1]
+    assert "gardé" in summary
+    assert "change" not in summary
+    plan = await plan_repo.get_active_plan(db_session, u.id)
+    assert plan is not None

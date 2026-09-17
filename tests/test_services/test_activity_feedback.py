@@ -98,7 +98,10 @@ _MONDAY = date(2026, 1, 5)
 
 
 class TestNoActivePlan:
-    async def test_no_plan_returns_no_plan_outcome(self, db_session):
+    """spec 009 US3 — no active plan means freestyle mode, not a silent drop
+    (the old "no_plan" outcome retired; see research.md Decision 3)."""
+
+    async def test_no_plan_logs_and_returns_freestyle_outcome(self, db_session):
         user = await _make_user(db_session, 800)
 
         result = await assemble_activity_feedback(
@@ -110,8 +113,31 @@ class TestNoActivePlan:
             source_activity_id="i-test-1",
         )
 
-        assert result.outcome == "no_plan"
-        assert result.log is None
+        assert result.outcome == "freestyle"
+        assert result.log is not None
+        assert result.log.plan_id is None
+        assert result.log.week_number is None
+        assert result.log.day_of_week is None
+        assert result.log.status == "unplanned"
+        assert result.match_result is None
+        assert result.highlight is not None  # same variable-reward treatment as any ride
+
+    async def test_freestyle_retry_is_idempotent(self, db_session):
+        """The idempotency guard (a prior delivery that failed after ingestion) applies
+        to freestyle logs too, not only plan-matched ones."""
+        user = await _make_user(db_session, 806)
+
+        first = await assemble_activity_feedback(
+            db_session, user, _analyzed(), _MONDAY,
+            source="intervals_icu", source_activity_id="i-freestyle-retry",
+        )
+        second = await assemble_activity_feedback(
+            db_session, user, _analyzed(), _MONDAY,
+            source="intervals_icu", source_activity_id="i-freestyle-retry",
+        )
+
+        assert second.outcome == "freestyle"
+        assert second.log.id == first.log.id  # reused, not duplicated
 
 
 class TestMatchedActivity:

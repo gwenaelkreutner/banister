@@ -20,7 +20,7 @@ from app.db.models.user import User
 from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any, tsb_label
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
 from app.llm.chat_client import run_agentic_loop
-from app.llm.tools import TOOL_DEFINITIONS, build_context_messages, build_system_prompt
+from app.llm.tools import build_context_messages, build_system_prompt
 from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
@@ -204,11 +204,15 @@ async def run_chat(
             activities=pre_plan_acts, raw_message=user_message,
         )
 
-    # 4. Appel agentique
+    # 4. Appel agentique — outils filtrés par mode (spec 009 : pas d'outil plan en mode
+    # libre, pas d'outil mode libre quand un plan est actif).
+    from app.llm.tools import tools_for_mode
+    from app.services.coaching_mode import mode_from_plan
+
     response_text, tool_used, last_tool_result = await run_agentic_loop(
         system=system,
         messages=messages,
-        tools=TOOL_DEFINITIONS,
+        tools=tools_for_mode(mode_from_plan(plan)),
         tool_executor=tool_executor,
     )
 
@@ -217,6 +221,19 @@ async def run_chat(
         from app.services.coach_voice import VOICE_FALLBACK_NOTICE
 
         response_text = VOICE_FALLBACK_NOTICE + response_text
+
+    # La suggestion mode libre (spec 009) enregistre son TSS cible dans le même registre
+    # que CTL/ATL/TSB — un chiffre mal repris par le modèle est retiré comme n'importe
+    # quelle autre métrique (spec 006 US3). Durée et zone ne s'enregistrent PAS : le
+    # vérificateur les exclut déjà structurellement (durées/zones ne sont jamais des
+    # affirmations, contracts/guardrails.md §3 / CLAUDE.md R5) — les enregistrer serait
+    # mort code.
+    if (
+        tool_used == "get_freestyle_session_suggestion"
+        and last_tool_result
+        and last_tool_result.get("available")
+    ):
+        registry.register("tss", last_tool_result.get("target_tss"))
 
     # 4b. Vérification : chaque chiffre que la réponse avance sur une métrique doit
     # correspondre à ce qui a été retrouvé ; sinon la phrase est retirée et l'échec
@@ -337,6 +354,12 @@ async def _execute_tool(
 
     elif name == "update_coach_memory":
         return await _tool_update_coach_memory(args, user=user, session=session)
+
+    elif name == "get_freestyle_session_suggestion":
+        return await _tool_get_freestyle_session_suggestion(
+            user=user, session=session, profile=profile, logs=logs,
+            activities=activities or [],
+        )
 
     elif name == "log_meal":
         return await _tool_log_meal(args, user=user, session=session, raw_message=raw_message)
@@ -541,6 +564,90 @@ async def _tool_update_coach_memory(args: dict, user: User, session: AsyncSessio
         return {"ok": True, "action": "update_athlete_notes", "key": key}
 
     return {"ok": False, "error": f"action inconnue : {action}"}
+
+
+# ── Outil mode libre (spec 009) ─────────────────────────────────────────────────
+
+async def _tool_get_freestyle_session_suggestion(
+    *,
+    user: User,
+    session: AsyncSession,
+    profile: AthleteProfileSchema | None,
+    logs: list,
+    activities: list,
+) -> dict:
+    """Propose une séance sans référence à un plan (contracts/llm-tool-session-suggestion.md).
+    Tout le calcul est déterministe (app/engine/freestyle_selector.py, Constitution
+    Principe I) — cette fonction ne fait que rassembler ce que l'outil a besoin de lire
+    en DB et traduit le résultat dans les deux formes du contrat."""
+    from datetime import date as _date
+
+    from app.db.repositories import profile_repo
+    from app.engine.atl_ctl import compute_fitness_from_any
+    from app.engine.freestyle_selector import (
+        NoSuitableTemplateError,
+        build_freestyle_suggestion,
+        days_since_hard_effort,
+    )
+    from app.engine.session_library import SessionLibraryError
+    from app.engine.weekly_snapshot import compute_weekly_snapshot
+    from app.services.fitness import get_current_fitness
+
+    today = _date.today()
+    all_items = list(activities) + list(logs)
+
+    current = await get_current_fitness(session, user.id, today=today)
+    fitness = (
+        current.metrics if current is not None
+        else (compute_fitness_from_any(all_items) if all_items else None)
+    )
+    if fitness is None:
+        return {
+            "available": False,
+            "reason": (
+                "Pas encore assez de données de forme pour proposer une séance adaptée."
+            ),
+        }
+    if profile is None:
+        return {"available": False, "reason": "Profil athlète introuvable — lance /setup."}
+
+    snapshot = compute_weekly_snapshot(all_items, today)
+    hard_gap = days_since_hard_effort(all_items, today)
+
+    profile_orm = await profile_repo.get_by_user_id(session, user.id)
+    avoid_raw = (
+        (profile_orm.athlete_notes or {}).get("disliked_workout_types", "")
+        if profile_orm else ""
+    )
+    avoid_workout_types = frozenset(t.strip() for t in avoid_raw.split(",") if t.strip())
+
+    try:
+        suggestion = build_freestyle_suggestion(
+            fitness,
+            snapshot,
+            coaching_mode=profile.coaching_mode,
+            ftp=profile.equipment.ftp,
+            days_since_hard_effort=hard_gap,
+            avoid_workout_types=avoid_workout_types,
+            day_ordinal=today.toordinal(),
+        )
+    except (SessionLibraryError, NoSuitableTemplateError) as exc:
+        logger.warning("Suggestion mode libre indisponible : %s", exc)
+        return {
+            "available": False,
+            "reason": (
+                "Impossible de trouver une séance adaptée dans la bibliothèque pour le moment."
+            ),
+        }
+
+    return {
+        "available": True,
+        "workout_type": suggestion.workout_type,
+        "duration_minutes": suggestion.duration_minutes,
+        "target_tss": suggestion.target_tss,
+        "zone_code": suggestion.zone_code,
+        "reasoning_summary": suggestion.reasoning_summary,
+    }
 
 
 # ── Outils nutrition (spec 008) ────────────────────────────────────────────────

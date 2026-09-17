@@ -28,12 +28,17 @@ class SessionLog(Base, TimestampMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    plan_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("training_plans.id", ondelete="CASCADE"), nullable=False, index=True
+    # nullable (spec 009): a freestyle-mode log belongs to no plan at all — a NULL
+    # foreign key is simply not subject to ON DELETE CASCADE, so deleting a plan never
+    # touches these rows.
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("training_plans.id", ondelete="CASCADE"),
+        nullable=True, index=True,
     )
 
-    week_number: Mapped[int] = mapped_column(SmallInteger, nullable=False)
-    day_of_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)  # 0=Lun, 6=Dim
+    # nullable (spec 009): no periodization week/day exists outside a plan.
+    week_number: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    day_of_week: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)  # 0=Lun, 6=Dim
     logged_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
 
     status: Mapped[str] = mapped_column(String(16), nullable=False)  # "done" | "skipped" | "unplanned"

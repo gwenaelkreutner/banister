@@ -25,8 +25,10 @@ Reste hors specs, connu :
 - Écriture-retour d'une correction FTP vers intervals.icu (spec 007 FR-006) : différée derrière une sonde
   d'endpoint autorisée séparément. Défaut livré = FR-007 (l'athlète change sur intervals.icu, aucune
   valeur locale divergente).
-- `fit_template()` (spec 004) construit et testé mais pas branché à `generate_plan()` — le brancher mérite
-  sa propre spec (ne pas perturber le placement physiologique de `_assign_sessions_to_days()`).
+- `fit_template()` (spec 004) toujours pas branché à `generate_plan()` — le brancher mérite sa propre spec
+  (ne pas perturber le placement physiologique de `_assign_sessions_to_days()`). Il est en revanche
+  maintenant utilisé en production côté mode libre (spec 009, `app/engine/freestyle_selector.py`), donc
+  n'est plus « construit et testé mais jamais appelé » — juste pas câblé à la génération de plan.
 
 Mettre ce fichier à jour **au fil de** chaque migration, pas après coup.
 
@@ -101,14 +103,19 @@ app/
 │   ├── guardrail_service.py # spec 006 : assemble_workload/recovery_findings, recovery_insufficiency,
 │   │                        # décline/accepte via chemins existants — AUCUN chemin d'écriture propre
 │   ├── response_verification.py  # spec 006 : MetricRegistry + verify_response + apply_result (US3)
-│   └── nutrition_reminder.py # spec 008 : needs_reminder() — pur, testable sans importer app/main.py
+│   ├── nutrition_reminder.py # spec 008 : needs_reminder() — pur, testable sans importer app/main.py
+│   └── coaching_mode.py     # spec 009 : get_coaching_mode()/mode_from_plan() — mode dérivé de
+│                            # l'existence d'un plan actif, jamais stocké
 ├── engine/                  # Moteur déterministe — zéro LLM ici
 │   ├── schemas.py           # Pydantic : AthleteProfileSchema, TrainingPlanSchema, SessionSpec, Step, RepeatGroup
 │   ├── periodization.py     # Blocs Base/Build/Peak/Taper
 │   ├── plan_builder.py      # Génération plan complet — sélectionne depuis session_library.py
 │   ├── plan_modifier.py     # Modification plan (outil LLM) — préserve/adapte les steps
 │   ├── session_library.py   # Charge/valide sessions/*.yaml, sélection déterministe (spec 004)
-│   ├── fitting.py           # Adapte un template à une cible de charge (spec 004, pas encore branché à generate_plan())
+│   ├── fitting.py           # Adapte un template à une cible de charge (spec 004, pas encore branché à
+│   │                        # generate_plan() — mais utilisé par freestyle_selector.py, spec 009)
+│   ├── freestyle_selector.py # spec 009 : choose_workout_type()/build_freestyle_suggestion() — remplace
+│   │                        # la phase de périodisation par l'état de forme comme entrée de sélection
 │   ├── session_render.py    # Description dérivée des steps, paramétrée par langue (spec 004)
 │   ├── atl_ctl.py           # ATL/CTL/TSB (EMA τ=7j/42j) — calculé localement, la source ne le fournit pas
 │   ├── adherence_kpi.py     # Score KPI par séance (0–2.0 pts) + bloc KPI hebdo
@@ -121,7 +128,7 @@ app/
 │   ├── providers/           # anthropic.py, openrouter.py — interface commune generate()
 │   ├── chat_client.py       # run_agentic_loop() — max 2 itérations outils
 │   ├── chat.py              # run_chat() → (text, intent, tool_used, pending_proposal)
-│   ├── tools.py             # 8 outils LLM + build_system_prompt()
+│   ├── tools.py             # 9 outils LLM + build_system_prompt() + tools_for_mode() (spec 009)
 │   ├── prompts.py           # Contexte système (profil, plan, métriques)
 │   ├── activity_analysis.py # Feedback post-séance enrichi (5 blocs, tone TSB)
 │   └── narrator.py          # Résumé narratif semaine (texte pur)
@@ -318,7 +325,7 @@ doc (FR-016, SC-007). ⚠️ le ratio `ATL/CTL` est du 7j:42j (EWMA), la plage 0
 | `users` | Compte Telegram, flags onboarding (`onboarding_completed_at`), préférences rappels (`reminders_enabled`, `reminder_hour`, `reminder_minute`, `reminder_last_sent_at`) ; spec 007 : `coach_voice` (id persona choisi, NULL → `settings.persona`), `disclaimer_acknowledged_at` (disclaimer montré 1×). Ces deux-là survivent à `/reset` |
 | `athlete_profiles` | `profile` JSON → `AthleteProfileSchema` |
 | `training_plans` | `plan_technical` JSON → `TrainingPlanSchema`, `start_date`, `is_active` |
-| `session_logs` | `plan_id` NOT NULL, `tss_actual`, `rpe_emoji`, `logged_date`, `source_activity_id` (id intervals.icu) ; métriques qualité (`cardiac_drift_index`, `intervals_consistency_index`, `respect_zones_score`, `session_type_real`, `variability_index`, `intensity_factor`, `dominant_zone`) ; contexte (`elevation_gain_m`, `average_temp_c`, `athlete_count`) |
+| `session_logs` | `plan_id`/`week_number`/`day_of_week` **nullable depuis spec 009** (`NULL` = séance loggée en mode libre, sans plan — `status="unplanned"` par construction) ; `tss_actual`, `rpe_emoji`, `logged_date`, `source_activity_id` (id intervals.icu) ; métriques qualité (`cardiac_drift_index`, `intervals_consistency_index`, `respect_zones_score`, `session_type_real`, `variability_index`, `intensity_factor`, `dominant_zone`) ; contexte (`elevation_gain_m`, `average_temp_c`, `athlete_count`) |
 | `chat_messages` | Historique LLM (role, content, intent, tool_used) |
 | `activities` | Import historique (`source="intervals_icu"`, `source_activity_id`, `tss`, `tss_method`, `device_watts`) |
 | `weekly_adherence` | Taux d'adhérence hebdomadaire — upsert à chaque `/recap` ; clé `(user_id, week_start_date)` ; colonnes : `sessions_done`, `sessions_planned`, `compliance_pct`, `tss_7d`, `week_number`, `plan_id` |
@@ -608,6 +615,64 @@ l'heure — fixe pour cette version.
 
 **Script** : `scripts/nutrition_state.py --describe` (totaux récents, lecture seule).
 
+## Mode libre — coaching sans objectif (spec 009)
+
+Avant spec 009, le coach n'était vraiment utile qu'avec un plan actif : sans plan, une activité publiée
+sur intervals.icu était **silencieusement droppée** (`SessionLog.plan_id` était `NOT NULL`, donc rien
+n'était loggé — voir `app/providers/intervals/notifier.py`, ancien commentaire « SessionLog.plan_id is
+NOT NULL »). Spec 009 ajoute un second mode, symétrique au mode objectif existant.
+
+**Mode dérivé, jamais stocké** (`app/services/coaching_mode.py`) :
+```python
+mode = "goal" if plan_repo.get_active_plan(...) is not None else "freestyle"
+```
+Pas de nouvelle colonne ni de nouvel état FSM — `training_plans.is_active` porte déjà cette information.
+`mode_from_plan(plan)` évite une requête redondante quand l'appelant a déjà chargé le plan (`chat.py`).
+
+**Bascule** : une seule commande, `/goal`, dans les deux sens (pas de nouvelle commande) —
+`app/bot/routers/goal.py` :
+- Objectif → Libre : 5ᵉ option du clavier `_goal_kb()` (`goal:type:freestyle`) → désactive le plan
+  (`plan_repo.deactivate_all_for_user`) + retire automatiquement les séances futures publiées au
+  calendrier (réutilise `withdraw_all_publications()`, le chemin de `/unpublish`) + résumé de ce qui est
+  gardé. Idempotent — un athlète déjà en mode libre reçoit juste « Déjà en mode libre. ».
+- Libre → Objectif : flow `/goal` existant inchangé, sauf le blocage `if plan is None` retiré (c'était
+  exactement ce qui empêchait cette direction) ; `_regenerate()` saute le paragraphe « ce qui change » s'il
+  n'y a pas d'ancien plan à comparer.
+
+**Suggestion de séance à la demande** (`app/engine/freestyle_selector.py`, zéro LLM — Principe I) :
+`choose_workout_type()` remplace la phase de périodisation par l'état de forme (TSB, aligné sur les mêmes
+bandes que `atl_ctl.tsb_label()`) + `days_since_hard_effort()` (proxy TSS/heure ≥ 70, car `Activity`
+n'a pas de `session_type_real` contrairement à `SessionLog`) comme entrée de sélection. Respecte une
+préférence déclarée via `athlete_notes["disliked_workout_types"]` (liste séparée par virgules, écrite par
+l'outil `update_coach_memory` existant — pas de nouveau mécanisme de préférence). `build_freestyle_suggestion()`
+tourne ensuite le template choisi parmi ceux du type retenu (variété jour par jour, déterministe via
+`day_ordinal`) et appelle `fitting.fit_template()` — **sans le brancher à `generate_plan()`**, qui reste un
+chantier séparé. Exposé au chat via l'outil LLM `get_freestyle_session_suggestion` (aucun paramètre — tout
+vient du serveur), disponible uniquement en mode libre (`tools.py::tools_for_mode()`, symétrique pour les
+3 outils qui n'ont de sens qu'avec un plan). Le `target_tss` retourné est enregistré dans le
+`MetricRegistry` de la vérification de réponse (spec 006) comme n'importe quelle autre métrique — durée et
+zone ne le sont jamais (déjà exclues structurellement par `response_verification.py`, R5).
+
+**Feedback post-activité en mode libre** (`app/services/activity_feedback.py`) : l'outcome `"no_plan"` est
+retiré, remplacé par `"freestyle"` — `_assemble_freestyle_feedback()` logge la séance
+(`plan_id`/`week_number`/`day_of_week` à `NULL`, `status="unplanned"`), calcule forme + highlight comme le
+chemin « matched », mais ne prétend jamais avoir tenté un matching. `notifier.py` livre une vraie
+notification (« Activité enregistrée », jamais « hors plan »). Idempotence conservée : le garde-fou de
+relecture d'une activité déjà loggée s'applique aussi aux logs en mode libre.
+
+**Garde-fous et mémoire du coach : aucun changement** — `guardrail_service.py` était déjà tolérant à
+`plan is None` (`plan_start = plan.start_date if plan is not None else today`), vérifié par test de
+régression plutôt que supposé (`tests/test_services/test_guardrail_service.py`).
+
+**Migration** : `session_logs.plan_id`/`.week_number`/`.day_of_week` passés en `nullable=True`
+(`migrations/versions/ec93c120b7ab_*.py`). ⚠️ SQLite ne supporte pas `ALTER TABLE ... ALTER COLUMN`
+directement (même limite déjà rencontrée en spec 002, `b24778c0a229`) — la migration utilise
+`op.batch_alter_table()`, pas la forme autogénérée brute.
+
+**Non fait délibérément** : pas de rappel proactif en mode libre (à la demande uniquement — voir
+`specs/009-freestyle-coaching-mode/spec.md`, Hypothèses) ; pas de persistance de la suggestion (recalculée
+à chaque demande, comme `/forme`).
+
 ## Variables d'environnement
 
 ```
@@ -681,5 +746,10 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier le suivi calorique (`log_meal`, `undo_last_meal_entry`, `get_calorie_history`) | `app/llm/tools.py` (schémas) + `_tool_log_meal()`/`_tool_undo_last_meal_entry()`/`_tool_get_calorie_history()` dans `app/llm/chat.py` |
 | Modifier l'agrégation calorique (total du jour, historique) | `app/db/repositories/meal_entry_repo.py` — `daily_totals()` |
 | Modifier le rappel calorique du soir | `app/main.py` — `_nutrition_reminder_scheduler()` / `_run_nutrition_reminders()` ; sélection dans `app/services/nutrition_reminder.py` |
+| Modifier la dérivation du mode (libre/objectif) | `app/services/coaching_mode.py` — `get_coaching_mode()`, `mode_from_plan()` |
+| Modifier la bascule `/goal` (libre ↔ objectif) | `app/bot/routers/goal.py` — `_enter_freestyle_mode()`, `_goal_kb()` |
+| Modifier la sélection de séance en mode libre (type, TSS cible) | `app/engine/freestyle_selector.py` — `choose_workout_type()`, `build_freestyle_suggestion()` |
+| Modifier l'outil LLM de suggestion mode libre | `app/llm/tools.py` (schéma + `tools_for_mode()`) + `_tool_get_freestyle_session_suggestion()` dans `app/llm/chat.py` |
+| Modifier le feedback post-activité en mode libre | `app/services/activity_feedback.py` — `_assemble_freestyle_feedback()` ; copie de notification dans `app/providers/intervals/notifier.py` |
 | Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `alembic revision --autogenerate` |
 | Architecture complète | `docs/ARCHITECTURE.md` |
