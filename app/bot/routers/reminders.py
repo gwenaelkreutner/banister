@@ -19,7 +19,8 @@ from app.db.models.user import User
 logger = logging.getLogger(__name__)
 router = Router()
 
-# Créneaux disponibles (heure, minute) — UTC+1 (CET)
+# Créneaux disponibles (heure, minute) — heure de Paris (Europe/Paris, CET/CEST selon
+# la saison ; voir PARIS_TZ dans app/main.py)
 _TIME_SLOTS: list[tuple[int, int]] = [
     (6, 0),
     (7, 0),
@@ -62,7 +63,8 @@ def _build_keyboard(user: User) -> InlineKeyboardMarkup:
 def _build_text(user: User) -> str:
     if user.reminders_enabled:
         status = "✅ Activé"
-        heure = f"\nHeure  : <b>{_time_label(user.reminder_hour, user.reminder_minute)}</b> (UTC+1)"
+        label = _time_label(user.reminder_hour, user.reminder_minute)
+        heure = f"\nHeure  : <b>{label}</b> (heure de Paris)"
     else:
         status = "❌ Désactivé"
         heure = ""

@@ -2,8 +2,9 @@ import asyncio
 import logging
 import logging.config
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from html import escape
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -47,6 +48,12 @@ logger = logging.getLogger(__name__)
 
 bot = create_bot()
 dp = create_dispatcher()
+
+# Fuseau des rappels athlète (séance du matin, calories du soir) — un vrai fuseau IANA,
+# pas un décalage UTC+1 fixe, pour rester correct pendant l'heure d'été (fin mars-fin
+# octobre) sans dériver d'une heure. Athlète unique par instance (principe fondateur),
+# donc un seul fuseau pour toute l'app plutôt qu'une colonne par utilisateur.
+PARIS_TZ = ZoneInfo("Europe/Paris")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -255,7 +262,7 @@ def _format_reminder(session_spec, week_num: int, weeks_count: int) -> str:
 
 
 async def _session_reminder_scheduler(bot):
-    """Envoie les rappels de séance matinaux toutes les minutes (UTC+1)."""
+    """Envoie les rappels de séance matinaux toutes les minutes (heure de Paris)."""
     while True:
         await asyncio.sleep(60)
         try:
@@ -265,25 +272,25 @@ async def _session_reminder_scheduler(bot):
 
 
 async def _run_session_reminders(bot):
-    """Vérifie l'heure CET et envoie les rappels dus."""
-    from datetime import timedelta
-
+    """Vérifie l'heure de Paris et envoie les rappels dus."""
     from app.db import repositories as repo
     from app.db.client import AsyncSessionFactory
     from app.engine.schemas import TrainingPlanSchema
 
-    CET = timezone(timedelta(hours=1))
-    now_cet = datetime.now(CET)
-    today = now_cet.date()
+    now_paris = datetime.now(PARIS_TZ)
+    today = now_paris.date()
 
     async with AsyncSessionFactory() as session:
-        users = await repo.user_repo.get_users_to_remind(session, now_cet.hour, now_cet.minute)
+        users = await repo.user_repo.get_users_to_remind(session, now_paris.hour, now_paris.minute)
         pending = [(u.telegram_id, u.id) for u in users]
 
     if not pending:
         return
 
-    logger.info(f"Rappels séance {now_cet.hour:02d}:{now_cet.minute:02d} CET : {len(pending)} utilisateur(s)")
+    logger.info(
+        f"Rappels séance {now_paris.hour:02d}:{now_paris.minute:02d} "
+        f"{now_paris.tzname()} : {len(pending)} utilisateur(s)"
+    )
 
     for telegram_id, user_id in pending:
         try:
@@ -328,21 +335,21 @@ def _format_nutrition_reminder() -> str:
 
 
 async def _nutrition_reminder_scheduler(bot):
-    """Envoie un rappel calorique quotidien à 22h00 si rien n'a été loggé ce jour-là
-    (spec 008 US5). Même convention UTC+1 fixe ("CET") que _run_session_reminders,
-    délibérément pas une ZoneInfo Europe/Paris — voir research R4 : un vrai fix DST
-    toucherait les deux rappels à la fois, hors périmètre de cette feature."""
-    CET = timezone(timedelta(hours=1))
+    """Envoie un rappel calorique quotidien à 22h00 heure de Paris si rien n'a été
+    loggé ce jour-là (spec 008 US5). Anciennement un décalage UTC+1 fixe (voir
+    research R4 de spec 008) — dérivait d'une heure pendant l'heure d'été (fin
+    mars-fin octobre) ; corrigé ici en même temps que `_run_session_reminders`
+    puisque le fix touche forcément les deux rappels à la fois (backlog)."""
     while True:
-        now_cet = datetime.now(CET)
-        next_run = now_cet.replace(hour=22, minute=0, second=0, microsecond=0)
-        if next_run <= now_cet:
+        now_paris = datetime.now(PARIS_TZ)
+        next_run = now_paris.replace(hour=22, minute=0, second=0, microsecond=0)
+        if next_run <= now_paris:
             next_run += timedelta(days=1)
 
-        wait_seconds = (next_run - now_cet).total_seconds()
+        wait_seconds = (next_run - now_paris).total_seconds()
         logger.info(
             f"Prochain rappel calories dans {wait_seconds / 3600:.1f}h "
-            f"({next_run.strftime('%Y-%m-%d %H:%M')} CET)"
+            f"({next_run.strftime('%Y-%m-%d %H:%M')} {next_run.tzname()})"
         )
         await asyncio.sleep(wait_seconds)
 

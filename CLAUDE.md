@@ -470,7 +470,9 @@ points d'écart, pas une nuance.
 
 **Scheduler** (`_session_reminder_scheduler` dans `main.py`) :
 - Tourne toutes les 60 secondes via `asyncio.sleep(60)` dans `lifespan`
-- À chaque tick : `now_cet = utcnow + 1h` → `get_users_to_remind(hour, minute)`
+- À chaque tick : `now_paris = datetime.now(PARIS_TZ)` (`ZoneInfo("Europe/Paris")`, constante module) →
+  `get_users_to_remind(hour, minute)`. Corrigé (2026-09-18) : c'était un décalage UTC+1 fixe, donc décalé
+  d'une heure pendant l'heure d'été (fin mars-fin octobre) — `ZoneInfo` gère CET/CEST automatiquement
 - Filtre : `reminders_enabled=True AND reminder_hour=H AND reminder_minute=M AND reminder_last_sent_at < today`
 - Pour chaque user : charge le plan actif → cherche `SessionSpec.day_of_week == today.weekday()`
 - Si séance trouvée → envoie le message ; jour de repos = silence
@@ -490,12 +492,13 @@ Objectif : X min en Zx
 **Colonnes `users`** (migration `011`) :
 ```
 reminders_enabled    BOOLEAN  DEFAULT TRUE
-reminder_hour        SMALLINT DEFAULT 7      ← UTC+1 (CET)
+reminder_hour        SMALLINT DEFAULT 7      ← heure de Paris (Europe/Paris, PARIS_TZ dans main.py)
 reminder_minute      SMALLINT DEFAULT 30
 reminder_last_sent_at DATE    NULL
 ```
 
-**Défaut** : activé à 7h30 CET dès la fin de l'onboarding (colonnes initialisées avec `server_default`).
+**Défaut** : activé à 7h30 heure de Paris dès la fin de l'onboarding (colonnes initialisées avec
+`server_default`).
 
 ### Variable Reward — notification post-ride (`app/providers/analysis/highlight.py`)
 - `select_highlight(analyzed, fitness, weekly_snap)` → `HighlightResult` — tirage pondéré parmi 6 catégories
@@ -596,11 +599,12 @@ Trois outils LLM de plus (8 au total) dans `app/llm/tools.py` / `app/llm/chat.py
 d'entraînement (CTL/ATL/TSB/FTP/ACWR/monotonie/VFC/FC repos) et le rester tant que le suivi calorique reste
 standalone. Aucun changement à `/recap` ni au system prompt du chat — intégration explicitement différée.
 
-**Rappel du soir** — `app/main.py::_nutrition_reminder_scheduler` envoie un message vers 22h00 (convention
-UTC+1 fixe, identique à `_run_session_reminders` — pas de `ZoneInfo`) si rien n'a été loggé ce jour-là.
-Pas de nouvelle colonne : l'absence de ligne `meal_entries` pour aujourd'hui **est** l'état « pas encore
-fait » (`app/services/nutrition_reminder.py::needs_reminder`). Pas de `/commande` pour changer l'heure —
-fixe pour cette version.
+**Rappel du soir** — `app/main.py::_nutrition_reminder_scheduler` envoie un message vers 22h00 heure de
+Paris (`PARIS_TZ`, même `ZoneInfo("Europe/Paris")` que `_run_session_reminders` depuis la correction du
+2026-09-18 — c'était un décalage UTC+1 fixe avant, voir research R4 de spec 008) si rien n'a été loggé ce
+jour-là. Pas de nouvelle colonne : l'absence de ligne `meal_entries` pour aujourd'hui **est** l'état « pas
+encore fait » (`app/services/nutrition_reminder.py::needs_reminder`). Pas de `/commande` pour changer
+l'heure — fixe pour cette version.
 
 **Script** : `scripts/nutrition_state.py --describe` (totaux récents, lecture seule).
 
