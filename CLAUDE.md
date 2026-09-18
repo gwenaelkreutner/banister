@@ -400,6 +400,21 @@ flag_modified(plan, "plan_technical")
 await session.flush()
 ```
 
+### Semaine de course (`app/engine/plan_builder.py::_build_race_week`)
+Le marqueur "jour de course" (`day_of_week=race_dow`, la vraie date de l'événement) est **volontairement**
+en dehors de `preferred_days` — on ne déplace pas une course pour coller aux jours d'entraînement préférés.
+Toute règle/test qui vérifie "toutes les séances sont dans `preferred_days`" doit exclure ce marqueur
+(reconnaissable à `"JOUR DE COURSE"` dans `description_fr`) — trouvé le 2026-09-18 après qu'un test l'ait
+raté et fait un faux positif de bug moteur (le test échouait ~3 jours sur 7 selon le jour d'exécution,
+`tests/test_engine/test_plan_builder.py::test_sessions_on_available_days_only`, jamais figé sur une date).
+
+⚠️ Connu et pas corrigé (trouvé le 2026-09-18, même investigation) : quand `target_date` tombe exactement
+sur un lundi (jour de début de semaine), `weeks_total = (target_date - week_start).days // 7` sous-compte
+d'une semaine — la dernière semaine générée s'arrête la veille du lundi de la course au lieu de l'inclure,
+donc `_build_race_week` ne se déclenche jamais et le marqueur de course disparaît silencieusement. Rare
+(1 date cible sur 7 selon le jour de la semaine), pas encore scopé en fix — touche le calcul de
+`weeks_total` dans `generate_plan()`, zone à traiter avec soin (periodization/phases en dépendent).
+
 ### Telegram / parse_mode
 - `parse_mode="HTML"` partout où les messages contiennent des underscores (identifiants, chemins)
 - `parse_mode="Markdown"` uniquement si le texte est garanti sans underscore hors italique

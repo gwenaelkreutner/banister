@@ -77,14 +77,46 @@ def test_plan_has_6_zones_hr():
 
 
 def test_sessions_on_available_days_only():
+    """Found 2026-09-18: this test was flaky, not the engine. `make_profile()` anchors
+    `target_date` on `date.today() + 12 weeks`, which lands on the same weekday as
+    today — so the race week's day-of-week-of-the-race marker session
+    (`_build_race_week`, `day_of_week=race_dow`) fell outside `allowed_days` on any day
+    the suite happened to run on a Monday/Wednesday/Friday (3 days out of 7), and passed
+    on the other 4 purely by luck. That marker is deliberately anchored to the real race
+    date regardless of `preferred_days` — you can't move a race to Tuesday because
+    that's a training day — so it's the one legitimate exception, not a bug to chase in
+    `plan_builder.py`. Verified deterministic post-fix by checking all 7 possible race
+    weekdays directly (not just whatever weekday happened to be today when this was
+    written)."""
     profile = make_profile()
     plan = generate_plan(profile)
     allowed_days = {1, 3, 5, 6}  # Tue, Thu, Sat, Sun
     for week in plan.weeks:
         for session in week.sessions:
+            if "JOUR DE COURSE" in session.description_fr:
+                continue  # race-day marker: anchored to the real date, not preferred_days
             assert session.day_of_week in allowed_days, (
                 f"Séance sur jour non disponible: {session.day_of_week}"
             )
+
+
+def test_sessions_on_available_days_only_is_stable_across_every_race_weekday():
+    """The version of the test above without the fix would only fail 3 days out of 7 —
+    prove the fix holds for all 7, not just whichever weekday happens to be 'today'."""
+    allowed_days = {1, 3, 5, 6}
+    base = date.today() + timedelta(weeks=12)
+    for offset in range(7):
+        profile = make_profile()
+        profile.objective.target_date = base + timedelta(days=offset)
+        plan = generate_plan(profile)
+        for week in plan.weeks:
+            for session in week.sessions:
+                if "JOUR DE COURSE" in session.description_fr:
+                    continue
+                assert session.day_of_week in allowed_days, (
+                    f"race weekday offset={offset}: séance sur jour non disponible "
+                    f"{session.day_of_week}"
+                )
 
 
 def test_tss_target_positive_for_all_weeks():
