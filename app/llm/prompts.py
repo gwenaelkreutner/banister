@@ -263,6 +263,27 @@ GUARDRAIL_LOAD_REDUCTION_RULE = (
     "charge, et tu expliques pourquoi en citant le chiffre du signal."
 )
 
+# spec 010 — appended to the system prompt only in freestyle mode (no active plan).
+# Found live (2026-09-18) : sans cette règle, seule la toute première demande de séance
+# d'une conversation neuve déclenche fiablement l'outil ; dès qu'une négociation suit
+# ("plus dur", "moins dur", "publie-la"), le modèle décrit une séance de sa propre
+# initiative — l'historique ne rejoue jamais les appels d'outils passés (seulement le
+# texte final), donc rien dans le contexte visible ne rappelle au modèle qu'un outil
+# existe pour ça, tour après tour. Cette règle est réinjectée en entier à chaque tour
+# (contrairement à l'historique qui s'érode), donc elle ne dépend pas de ce que le
+# modèle a "vu" plus tôt dans la conversation.
+FREESTYLE_SESSION_TOOL_RULE = (
+    "RÈGLE MODE LIBRE : à chaque fois que l'athlète demande une séance, en discute, ou "
+    "demande d'en changer (plus dur, moins dur, différente, une alternative...), tu DOIS "
+    "appeler l'outil get_freestyle_session_suggestion avant de répondre — y compris si "
+    "tu l'as déjà appelé plus tôt dans cette même conversation. Ne décris jamais "
+    "toi-même le contenu d'une séance (durée, structure, zones) sans être passé par cet "
+    "outil. Il n'existe aucun outil pour publier directement sur le calendrier de "
+    "l'athlète : la publication se fait uniquement via le bouton affiché sous la "
+    "proposition de l'outil — si l'athlète demande de publier depuis le chat, dis-lui "
+    "d'utiliser ce bouton, ne prétends jamais ne pas pouvoir le faire du tout."
+)
+
 # spec 006 FR-028 / SC-009 — shown before the first coaching interaction (end of /setup)
 # and in the README. A single constant so spec 007's first-run flow relocates it rather
 # than rewriting it (research R7).

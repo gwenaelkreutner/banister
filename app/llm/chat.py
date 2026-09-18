@@ -171,6 +171,13 @@ async def run_chat(
 
         system = f"{system}\n\n{GUARDRAIL_LOAD_REDUCTION_RULE}"
 
+    # spec 010 : réinjectée en entier à chaque tour (contrairement à l'historique, qui ne
+    # rejoue jamais les appels d'outils passés — trouvé en live, voir prompts.py).
+    if plan is None:
+        from app.llm.prompts import FREESTYLE_SESSION_TOOL_RULE
+
+        system = f"{system}\n\n{FREESTYLE_SESSION_TOOL_RULE}"
+
     # Registre des métriques mises devant le modèle — définit ce qui est « retrouvé »
     # pour la vérification de réponse (spec 006 US3, FR-018).
     from app.services.response_verification import (
