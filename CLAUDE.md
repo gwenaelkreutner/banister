@@ -344,10 +344,15 @@ Migrations : Alembic (`migrations/versions/`), appliquées automatiquement au d�
 la baseline Alembic (`ecd6f700779f`) le remplace intégralement. Nouveau champ DB → `alembic revision
 --autogenerate`, jamais un fichier SQL écrit à la main.
 
-⚠️ Connu et accepté : une migration Alembic qui échoue en cours de route sur SQLite **ne s'annule pas**
-automatiquement (contrairement à PostgreSQL) — SQLite ne supporte pas les DDL transactionnelles de la même
-façon. En mono-utilisateur avec `scripts/backup.py` disponible, ce risque est accepté tel quel plutôt que
-compensé par un mécanisme de sauvegarde automatique avant chaque migration.
+Une migration Alembic qui échoue en cours de route sur SQLite **ne s'annule pas** automatiquement
+(contrairement à PostgreSQL) — SQLite ne supporte pas les DDL transactionnelles de la même façon. Depuis
+2026-09-18, ce risque n'est plus seulement "accepté" : `app/services/backup.py::run_startup_backup()` prend
+un snapshot (`VACUUM INTO`, même mécanisme que `scripts/backup.py`) juste avant `run_migrations()` dans
+`lifespan` (`app/main.py`), donc une migration cassée reste récupérable via le backup pris quelques secondes
+plus tôt. Auto-géré : dossier `data/backups/`, garde les 7 derniers, ignore les backends non-SQLite (URL
+`DATABASE_URL` explicite), et un throttle de 20h évite l'accumulation lors des redémarrages répétés
+(`--reload` en dev). Ne bloque jamais le démarrage — une erreur de backup est loggée puis ignorée, puisque
+le risque qu'elle protège ne s'est pas encore matérialisé.
 
 ## Schémas Pydantic clés
 
@@ -752,4 +757,5 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier l'outil LLM de suggestion mode libre | `app/llm/tools.py` (schéma + `tools_for_mode()`) + `_tool_get_freestyle_session_suggestion()` dans `app/llm/chat.py` |
 | Modifier le feedback post-activité en mode libre | `app/services/activity_feedback.py` — `_assemble_freestyle_feedback()` ; copie de notification dans `app/providers/intervals/notifier.py` |
 | Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `alembic revision --autogenerate` |
+| Modifier le backup automatique au démarrage (rotation, throttle) | `app/services/backup.py` — `run_startup_backup()` |
 | Architecture complète | `docs/ARCHITECTURE.md` |

@@ -19,6 +19,7 @@ from app.db.lifecycle import (
     verify_intervals_credential,
 )
 from app.providers.intervals.poller import run_poller_scheduler
+from app.services.backup import run_startup_backup
 
 logging.config.dictConfig({
     "version": 1,
@@ -67,6 +68,16 @@ async def lifespan(app: FastAPI):
     # error rather than the clear startup failure this ordering is meant to produce.
     ensure_data_dir()
     instance_lock = acquire_instance_lock()
+
+    # Snapshot right before migrations run — a failed Alembic migration on SQLite does
+    # not roll back automatically the way it would on PostgreSQL (see CLAUDE.md), so a
+    # backup taken seconds earlier is what makes that risk recoverable rather than
+    # merely "accepted". Blocking sqlite3 call, hence to_thread; never raises — a
+    # backup failure must not block startup for a risk that hasn't materialized yet.
+    await asyncio.to_thread(
+        run_startup_backup, settings.resolved_database_url, settings.data_dir
+    )
+
     await run_migrations()
 
     # spec 002 FR-002/FR-003: verify the training data source credential before anything
