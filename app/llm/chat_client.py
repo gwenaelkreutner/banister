@@ -117,6 +117,16 @@ async def run_agentic_loop(
                 tools=tools,
                 tool_choice="auto",
                 max_tokens=4096,
+                # Found live (2026-09-18): with reasoning left on, deepseek-v4-flash
+                # burns 1000-2000+ hidden reasoning tokens on this exact production
+                # context (long system prompt, real history, 6-8 tools) and then
+                # answers in plain text with finish_reason="stop" and NO tool call at
+                # all — confirmed by replaying the real request both ways. Disabling
+                # reasoning only for this tool-decision call restores tool_calls
+                # reliably and costs far fewer tokens; OpenRouter's `reasoning` field
+                # is a unified param other providers/models simply ignore, so this is
+                # safe to apply unconditionally here.
+                extra_body={"reasoning": {"enabled": False}},
             )
         except Exception:
             logger.exception("Erreur appel LLM agentique")
