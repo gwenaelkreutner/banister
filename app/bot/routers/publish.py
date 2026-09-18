@@ -72,7 +72,34 @@ async def cmd_unpublish(message: Message, session: AsyncSession, user: User):
         return
     plan = await plan_repo.get_active_plan(session, user.id)
     if plan is None:
-        await message.answer("Aucun plan actif.")
+        # spec 010 US3 — mode libre : proposer de retirer les publications mode libre
+        # au lieu de "Aucun plan actif", symétrique de la même bascule que /goal a déjà.
+        from app.db.repositories import freestyle_publication_repo
+
+        active_freestyle = await freestyle_publication_repo.get_active_for_user(
+            session, user.id
+        )
+        if not active_freestyle:
+            await message.answer("Rien n'est actuellement publié dans ton calendrier.")
+            return
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"🗑 Tout retirer ({len(active_freestyle)})",
+                        callback_data="pub:withdrawall_freestyle",
+                    ),
+                    InlineKeyboardButton(text="Annuler", callback_data="pub:withdrawcancel"),
+                ]
+            ]
+        )
+        await message.answer(
+            f"Retirer les <b>{len(active_freestyle)}</b> séance(s) mode libre que j'ai "
+            "publiées dans ton calendrier intervals.icu ? Tes propres entrées et celles "
+            "d'autres outils ne sont pas touchées.",
+            reply_markup=kb,
+            parse_mode="HTML",
+        )
         return
     active = await publication_repo.get_active_entries_for_plan(session, user.id, plan.id)
     if not active:
@@ -113,6 +140,29 @@ async def cb_withdraw_all(callback: CallbackQuery, session: AsyncSession, user: 
     await callback.message.edit_text("⏳ Retrait des séances…", parse_mode="HTML")
     withdrawn, failed = await publication.withdraw_all_publications(
         session, _client(), user, plan
+    )
+    if failed:
+        await callback.message.edit_text(
+            f"⚠️ {withdrawn} retirées, {failed} échec(s). Relance /unpublish pour réessayer.",
+            parse_mode="HTML",
+        )
+    else:
+        await callback.message.edit_text(
+            f"✅ {withdrawn} séance(s) retirée(s). Ton calendrier ne contient "
+            "plus rien de ma part.",
+            parse_mode="HTML",
+        )
+
+
+@router.callback_query(F.data == "pub:withdrawall_freestyle")
+async def cb_withdraw_all_freestyle(callback: CallbackQuery, session: AsyncSession, user: User):
+    """spec 010 US3 — retire uniquement les publications mode libre, jamais les entrées
+    d'un plan (une table à part, pas un filtre qui pourrait se tromper — research.md
+    Decision 4)."""
+    await callback.answer("Retrait en cours…")
+    await callback.message.edit_text("⏳ Retrait des séances…", parse_mode="HTML")
+    withdrawn, failed = await publication.withdraw_freestyle_publications(
+        session, _client(), user
     )
     if failed:
         await callback.message.edit_text(

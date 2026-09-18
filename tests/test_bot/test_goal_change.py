@@ -276,3 +276,32 @@ async def test_regenerate_from_freestyle_omits_the_old_plan_diff(db_session):
     assert "change" not in summary
     plan = await plan_repo.get_active_plan(db_session, u.id)
     assert plan is not None
+
+
+async def test_regenerate_from_freestyle_withdraws_pending_freestyle_publications(
+    db_session, monkeypatch
+):
+    """spec 010 FR-011 — leaving freestyle mode withdraws still-future freestyle
+    publications, symmetric with spec 009's plan-entry withdrawal in the other direction."""
+    from app.db.repositories import freestyle_publication_repo
+
+    u = await _make_user_no_plan(db_session)
+    await freestyle_publication_repo.create(
+        db_session, user_id=u.id,
+        external_id="banister:freestyle:2026-09-20:endurance-55556666",
+        intervals_event_id="e1", session_date=date(2026, 9, 20),
+        workout_type="endurance", content_hash="h1",
+    )
+
+    class _NoopClient:
+        async def delete_event(self, event_id):
+            pass
+
+    monkeypatch.setattr("app.bot.routers.goal._client", lambda: _NoopClient())
+
+    msg, state = _Msg(), _State()
+    await _regenerate(msg, state, db_session, u, "fitness", date.today() + timedelta(days=120))
+
+    assert "mode libre retirée" in msg.sent[-1]
+    active = await freestyle_publication_repo.get_active_for_user(db_session, u.id)
+    assert active == []

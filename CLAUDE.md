@@ -725,6 +725,51 @@ directement (même limite déjà rencontrée en spec 002, `b24778c0a229`) — la
 `specs/009-freestyle-coaching-mode/spec.md`, Hypothèses) ; pas de persistance de la suggestion (recalculée
 à chaque demande, comme `/forme`).
 
+## Publier une séance mode libre (spec 010)
+
+Le mode libre (spec 009) proposait une séance en chat mais rien ne permettait de l'exécuter réellement
+(Garmin, home trainer) — la suggestion n'était jamais écrite nulle part. Spec 010 ajoute la publication
+d'une séance ponctuelle une fois que l'athlète l'a négociée en chat et confirmée.
+
+**Confirmation = bouton, pas un outil LLM de plus** (décidé après avoir pesé le compromis avec
+l'utilisateur) : `_tool_get_freestyle_session_suggestion` (spec 009) tague désormais son résultat
+`"type": "freestyle_publish"` + un `"id"` court (`uuid4().hex[:8]`), qui rejoint le mécanisme
+`pending_proposal` déjà existant pour `propose_plan_modification`/`propose_session_adjustment`
+(`app/llm/chat.py`). **Différence volontaire avec ce mécanisme** : `app/bot/routers/chat.py` stocke
+`pending_freestyle_id`/`pending_freestyle_suggestion` en **données FSM**, sans jamais passer par
+`PlanStates.PENDING_MODIFICATION` — cet état-là bloque le chat tant que l'athlète n'a pas tranché, ce qui
+casserait la négociation ("propose-moi autre chose", spec 010 US2). Le clavier attaché au message
+(`freestyle:publish:<id>`) reste donc utilisable pendant que la conversation continue normalement.
+
+**`freestyle:publish:<id>` callback** (`app/bot/routers/chat.py::cb_publish_freestyle`, non scopé à un
+`StateFilter` — volontaire) : compare l'id tapé à `pending_freestyle_id` ; différent ou absent (une suggestion
+plus récente l'a remplacée) → alerte « n'est plus la plus récente », rien n'est écrit. Sinon : calcule les
+zones depuis le profil (`compute_power_zones`/`compute_hr_zones` — pas de plan pour les fournir, contrairement
+au mode objectif), rend le DSL, publie via `publish_freestyle_session()`. Échec → message d'échec explicite,
+`pending_freestyle_id` **conservé** (retaper est une vraie relance) ; succès → effacé (retaper n'a plus rien
+à matcher).
+
+**Écriture calendrier — nouvelles fonctions, pas de modification du chemin `/publish` existant**
+(`app/services/publication.py`) :
+- `publish_freestyle_session()` — toujours une création, jamais un diff (une séance mode libre n'a rien à
+  réconcilier, contrairement à `publish_sessions()` sur l'horizon d'un plan) ; réutilise `render_dsl()` et
+  la gestion `push_errors` telle quelle.
+- `withdraw_freestyle_publications()` — miroir de `withdraw_all_publications()`, appelé par `/unpublish`
+  quand il n'y a pas de plan actif (`app/bot/routers/publish.py`, callback `pub:withdrawall_freestyle`) et
+  automatiquement par `app/bot/routers/goal.py::_regenerate()` en quittant le mode libre (FR-011,
+  symétrique du retrait des séances de plan à l'entrée en mode libre, spec 009 FR-013).
+
+**Nouvelle table plutôt que retrofit** : `freestyle_published_entries`
+(`app/db/models/publication.py::FreestylePublishedEntry`, `app/db/repositories/freestyle_publication_repo.py`)
+— **pas** `PublishedEntry` (spec 005), qui a `plan_id`/`approval_id` NOT NULL. Même raisonnement que
+`SessionLog.plan_id` en spec 009 : forcer une séance mode libre dans un schéma pensé pour un plan/une
+approbation par lot serait une fiction silencieuse (Principe IV). Préfixe `banister:freestyle:` (via
+`calendar.py::build_freestyle_external_id()`), garantie de propriété identique à `PublishedEntry`.
+
+**Non fait délibérément** : pas de chemin de confirmation en langage naturel ("publie-la" tapé en chat) —
+le bouton a été choisi précisément pour rendre la confirmation sans ambiguïté par construction ; pas de
+diff/mise à jour d'une séance déjà publiée (toujours une nouvelle création, jamais un `update_event`).
+
 ## Variables d'environnement
 
 ```
@@ -805,6 +850,9 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier la sélection de séance en mode libre (type, TSS cible) | `app/engine/freestyle_selector.py` — `choose_workout_type()`, `build_freestyle_suggestion()` |
 | Modifier l'outil LLM de suggestion mode libre | `app/llm/tools.py` (schéma + `tools_for_mode()`) + `_tool_get_freestyle_session_suggestion()` dans `app/llm/chat.py` |
 | Modifier le feedback post-activité en mode libre | `app/services/activity_feedback.py` — `_assemble_freestyle_feedback()` ; copie de notification dans `app/providers/intervals/notifier.py` |
+| Modifier la publication d'une séance mode libre (bouton, callback) | `app/bot/routers/chat.py` — `cb_publish_freestyle()` ; tagging dans `app/llm/chat.py::_tool_get_freestyle_session_suggestion` |
+| Modifier l'écriture/retrait calendrier d'une séance mode libre | `app/services/publication.py` — `publish_freestyle_session()`, `withdraw_freestyle_publications()` |
+| Modifier `/unpublish` en mode libre | `app/bot/routers/publish.py` — `cmd_unpublish()` (branche sans plan actif), `cb_withdraw_all_freestyle()` |
 | Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `alembic revision --autogenerate` |
 | Modifier le backup automatique au démarrage (rotation, throttle) | `app/services/backup.py` — `run_startup_backup()` |
 | Architecture complète | `docs/ARCHITECTURE.md` |

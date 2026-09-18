@@ -92,6 +92,25 @@ async def handle_chat_message(
         tokens_output=usage.get("completion_tokens"),
     )
 
+    # spec 010 : une suggestion mode libre confirmable par bouton — volontairement SANS
+    # changer l'état FSM (research.md Decision 2) : la négociation ("propose-moi autre
+    # chose") doit rester du chat normal, contrairement à PENDING_MODIFICATION ci-dessous
+    # qui bloque exprès le chat tant que l'athlète n'a pas tranché.
+    if pending_proposal and pending_proposal.get("type") == "freestyle_publish":
+        await state.update_data(
+            pending_freestyle_id=pending_proposal["id"],
+            pending_freestyle_suggestion=pending_proposal,
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="📅 Publier sur intervals.icu",
+                callback_data=f"freestyle:publish:{pending_proposal['id']}",
+            ),
+        ]])
+        proposal_text = escape(_strip_cjk(response_text)).strip() or _FALLBACK_ERROR
+        await message.answer(proposal_text, reply_markup=kb, parse_mode="HTML")
+        return
+
     # Si une proposition de modification a été faite → stocker en FSM + afficher les boutons
     if pending_proposal:
         await state.update_data(pending_modification=pending_proposal)
@@ -194,4 +213,96 @@ async def cb_cancel_modification(
     await state.update_data(pending_modification=None)
     await state.set_state(PlanStates.ACTIVE)
     await callback.message.edit_text("❌ Modification annulée. Le plan reste inchangé.")
+    await callback.answer()
+
+
+# ── Publication d'une suggestion mode libre (spec 010) ──────────────────────────
+#
+# Volontairement PAS scopé à un StateFilter particulier (research.md Decision 2) :
+# la négociation d'une séance ne fait jamais changer l'état FSM, donc ce callback doit
+# pouvoir être tapé à tout moment, quel que soit l'état courant.
+
+@router.callback_query(F.data.startswith("freestyle:publish:"))
+async def cb_publish_freestyle(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+    user: User,
+) -> None:
+    tapped_id = callback.data.rsplit(":", 1)[1]
+    data = await state.get_data()
+    pending_id = data.get("pending_freestyle_id")
+    suggestion = data.get("pending_freestyle_suggestion")
+
+    # FR-005 : une proposition manquante ou remplacée par une plus récente (l'athlète a
+    # redemandé autre chose) n'est jamais publiée sous silence.
+    if pending_id is None or pending_id != tapped_id or suggestion is None:
+        await callback.answer(
+            "Cette proposition n'est plus la plus récente — redemande une séance.",
+            show_alert=True,
+        )
+        return
+
+    profile_row = await repo.profile_repo.get_by_user_id(session, user.id)
+    if profile_row is None:
+        await callback.answer("Profil introuvable — relance /setup.", show_alert=True)
+        return
+
+    from datetime import date as _date
+
+    from pydantic import TypeAdapter
+
+    from app.config import settings
+    from app.db.repositories import freestyle_publication_repo
+    from app.engine.schemas import AthleteProfileSchema, RepeatGroup, Step
+    from app.engine.session_render import render_description
+    from app.engine.zones import compute_hr_zones, compute_power_zones
+    from app.providers.intervals.client import IntervalsClient
+    from app.services.publication import publish_freestyle_session
+
+    profile = AthleteProfileSchema.model_validate(profile_row.profile)
+    if profile.coaching_mode == "power":
+        zones = compute_power_zones(profile.equipment.ftp or 200)
+    else:
+        zones = compute_hr_zones(profile.physio.hr_max, profile.physio.hr_rest)
+
+    workout_type = suggestion["workout_type"]
+    steps = TypeAdapter(list[Step | RepeatGroup]).validate_python(suggestion["steps"])
+    name = render_description(workout_type, steps, coaching_mode=profile.coaching_mode)
+    session_date = _date.today()
+
+    client = IntervalsClient(
+        settings.intervals_api_key.get_secret_value(), athlete_id=settings.intervals_athlete_id
+    )
+    outcome = await publish_freestyle_session(
+        client, session_date, name, workout_type, steps, zones
+    )
+
+    if outcome.status != "created":
+        # FR-008 : jamais laisser croire que ça a marché ; pending_freestyle_id n'est
+        # PAS effacé — retaper est une vraie tentative de nouveau, pas un id périmé.
+        await callback.message.edit_text(
+            f"❌ La publication n'a pas abouti ({outcome.detail or outcome.status}). "
+            "Retente dans un instant."
+        )
+        await callback.answer()
+        return
+
+    await freestyle_publication_repo.create(
+        session,
+        user_id=user.id,
+        external_id=outcome.external_id,
+        intervals_event_id=outcome.intervals_event_id,
+        session_date=session_date,
+        workout_type=workout_type,
+        content_hash=outcome.content_hash,
+    )
+    # FR-010 : effacé seulement après succès — un deuxième tap n'a plus rien à matcher.
+    await state.update_data(pending_freestyle_id=None, pending_freestyle_suggestion=None)
+
+    await callback.message.edit_text(
+        f"✅ <b>Séance publiée</b> sur ton calendrier intervals.icu pour aujourd'hui "
+        f"({session_date:%d/%m}).\nCe n'est pas rattaché à un plan — une séance ponctuelle.",
+        parse_mode="HTML",
+    )
     await callback.answer()

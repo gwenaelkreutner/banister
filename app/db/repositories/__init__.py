@@ -1,6 +1,7 @@
 from app.db.repositories import (
     activity_repo,
     chat_repo,
+    freestyle_publication_repo,
     guardrail_repo,
     meal_entry_repo,
     plan_repo,
@@ -16,6 +17,7 @@ from app.db.repositories import (
 __all__ = [
     "activity_repo",
     "chat_repo",
+    "freestyle_publication_repo",
     "guardrail_repo",
     "meal_entry_repo",
     "plan_repo",

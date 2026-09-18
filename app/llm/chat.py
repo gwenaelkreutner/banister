@@ -270,13 +270,21 @@ async def run_chat(
     # 5. Déduire l'intent depuis l'outil appelé
     intent = _intent_from_tool(tool_used)
 
-    # 6. Extraire la proposition de modification si applicable
+    # 6. Extraire la proposition de modification si applicable — spec 010 : une suggestion
+    # mode libre disponible devient elle aussi une pending_proposal (bouton de
+    # publication), au même titre qu'une modification de plan.
     pending_proposal: dict | None = None
     if (
         tool_used in ("propose_plan_modification", "propose_session_adjustment")
         and last_tool_result
         and "error" not in last_tool_result
         and "no_session" not in last_tool_result
+    ):
+        pending_proposal = last_tool_result
+    elif (
+        tool_used == "get_freestyle_session_suggestion"
+        and last_tool_result
+        and last_tool_result.get("available")
     ):
         pending_proposal = last_tool_result
 
@@ -609,13 +617,19 @@ async def _tool_get_freestyle_session_suggestion(
             ),
         }
 
+    # spec 010: tagged so app/bot/routers/chat.py can offer a "publish this" button —
+    # "id" identifies exactly this suggestion so a later, superseded button can be told
+    # apart from the current one (contracts/confirmation-button.md).
     return {
         "available": True,
+        "type": "freestyle_publish",
+        "id": uuid.uuid4().hex[:8],
         "workout_type": suggestion.workout_type,
         "duration_minutes": suggestion.duration_minutes,
         "target_tss": suggestion.target_tss,
         "zone_code": suggestion.zone_code,
         "reasoning_summary": suggestion.reasoning_summary,
+        "steps": [step.model_dump(mode="json") for step in suggestion.steps],
     }
 
 

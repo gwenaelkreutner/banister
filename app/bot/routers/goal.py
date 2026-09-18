@@ -217,6 +217,24 @@ async def _regenerate(message, state, session, user, goal: str, target_date: dat
         except Exception:
             logger.warning("check calendrier périmé impossible après /goal")
 
+    # spec 010 FR-011 : venir du mode libre retire aussi les séances mode libre encore
+    # publiées, symétrique du retrait des séances de plan à l'entrée en mode libre
+    # (spec 009 FR-013) — jamais les deux types de séances périmées à la fois.
+    freestyle_withdrawn_note = ""
+    if old_plan is None:
+        try:
+            from app.services.publication import withdraw_freestyle_publications
+
+            withdrawn, _failed = await withdraw_freestyle_publications(
+                session, _client(), user
+            )
+            if withdrawn:
+                freestyle_withdrawn_note = (
+                    f"\n📅 {withdrawn} séance(s) mode libre retirée(s) de ton calendrier."
+                )
+        except Exception:
+            logger.warning("retrait des publications mode libre impossible après /goal")
+
     # Ce qui change / ce qui est gardé (FR-016). "Ce qui change" n'a de sens que s'il y
     # avait un ancien plan à comparer (spec 009 : entrée depuis mode libre = rien à diffé).
     logs = await repo.session_log_repo.get_all_for_user(session, user.id)
@@ -233,6 +251,7 @@ async def _regenerate(message, state, session, user, goal: str, target_date: dat
         + f"\nCe qui est gardé : {len(logs)} séances loggées, ton historique d'adhérence, "
         f"tes réglages — rien n'a bougé."
         f"{stale_note}"
+        f"{freestyle_withdrawn_note}"
     )
     await state.set_state(PlanStates.ACTIVE)
     await state.clear()

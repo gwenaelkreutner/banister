@@ -471,3 +471,93 @@ async def withdraw_all_publications(
         await publication_repo.mark_withdrawn(session, entry.id)
         withdrawn += 1
     return withdrawn, failed
+
+
+@dataclass
+class FreestylePublishOutcome:
+    """spec 010 — deliberately not calendar.SessionOutcome: that dataclass requires
+    week_number/day_of_week, which don't exist for a session outside any plan (research.md
+    Decision 4's reasoning applied to the outcome shape too, not just the DB table)."""
+
+    status: str  # "created" | "refused" | "failed"
+    external_id: str | None = None
+    intervals_event_id: str | None = None
+    content_hash: str | None = None
+    detail: str | None = None
+
+
+async def publish_freestyle_session(
+    client: IntervalsClient,
+    session_date: date,
+    name: str,
+    workout_type: str,
+    steps: list,
+    zones: dict,
+) -> FreestylePublishOutcome:
+    """Write one freestyle session to the calendar — always a create, never a diff
+    against a remote event (research.md Decision 6: a freestyle publish has nothing to
+    reconcile against, unlike publish_sessions()'s plan-horizon convergence)."""
+    from app.providers.intervals.calendar import (
+        build_event_payload,
+        build_freestyle_external_id,
+    )
+
+    try:
+        rendered = render_dsl(steps, zones)
+    except EmptySessionError as exc:
+        return FreestylePublishOutcome(status="refused", detail=str(exc))
+
+    content_hash = hash_session_content(session_date, name, rendered)
+    external_id = build_freestyle_external_id(session_date, workout_type)
+    payload = build_event_payload(session_date, name, external_id, rendered)
+
+    try:
+        event = await client.create_event(payload)
+    except Exception as exc:  # noqa: BLE001 — mirrors publish_sessions()'s per-item handling
+        return FreestylePublishOutcome(
+            status="failed", detail=f"{type(exc).__name__}: {exc}"
+        )
+
+    event_id = str(event.get("id"))
+
+    # Same push_errors handling publish_sessions() already has (research.md Decision 6:
+    # reuse, don't reinvent) — the write "succeeded" but the structure can't reach a
+    # device, so clean up the useless event and report a refusal.
+    push_errors = (event or {}).get("push_errors")
+    if push_errors:
+        try:
+            await client.delete_event(event_id)
+        except Exception:  # noqa: BLE001
+            pass
+        return FreestylePublishOutcome(
+            status="refused", detail=f"structure refusée par le calendrier : {push_errors}"
+        )
+
+    return FreestylePublishOutcome(
+        status="created",
+        external_id=external_id,
+        intervals_event_id=event_id,
+        content_hash=content_hash,
+    )
+
+
+async def withdraw_freestyle_publications(
+    session: AsyncSession, client: IntervalsClient, user: User,
+) -> tuple[int, int]:
+    """Every still-active freestyle publication for this user (US3, FR-011) — mirrors
+    withdraw_all_publications() but over freestyle_publication_repo's own table, never
+    touching a plan-published entry (a different table, not a filter that could be
+    gotten wrong — research.md Decision 4)."""
+    from app.db.repositories import freestyle_publication_repo
+
+    active = await freestyle_publication_repo.get_active_for_user(session, user.id)
+    withdrawn = failed = 0
+    for entry in active:
+        try:
+            await withdraw_event(client, entry.intervals_event_id)
+        except Exception:  # noqa: BLE001
+            failed += 1
+            continue
+        await freestyle_publication_repo.mark_withdrawn(session, entry.id)
+        withdrawn += 1
+    return withdrawn, failed

@@ -44,6 +44,16 @@ def build_external_id(
     return f"{EXTERNAL_ID_PREFIX}{plan_short}:{session_date.isoformat()}:{slug}"
 
 
+def build_freestyle_external_id(session_date: date, workout_type: str) -> str:
+    """`banister:freestyle:<yyyy-MM-dd>:<workout_type>-<id8>` (spec 010,
+    specs/010-publish-freestyle-session/data-model.md). No plan id — a freestyle session
+    belongs to no plan — but the same `banister:` ownership prefix as `build_external_id`,
+    so a withdrawal action never touches an entry we did not create, for the same reason
+    it already doesn't for plan-published entries."""
+    suffix = uuid.uuid4().hex[:8]
+    return f"{EXTERNAL_ID_PREFIX}freestyle:{session_date.isoformat()}:{workout_type}-{suffix}"
+
+
 def build_event_payload(
     session_date: date, name: str, external_id: str, rendered_dsl: str
 ) -> dict:

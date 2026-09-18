@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 import pytest
 from sqlalchemy.orm.attributes import flag_modified
@@ -391,6 +392,117 @@ def test_detect_athlete_edit_is_false_for_a_clean_roundtrip():
     assert publication.detect_athlete_edit(remote, entry) is False
     remote["description"] = "- 90m 90-99%"
     assert publication.detect_athlete_edit(remote, entry) is True
+
+
+# ── Freestyle publish/withdraw (spec 010) ───────────────────────────────────────
+
+
+def _z2_zones() -> dict:
+    from app.engine.schemas import Zone
+
+    return {
+        "Z2": Zone(
+            name="Endurance", code="Z2", lower_pct=0.56, upper_pct=0.75,
+            lower_watts=140, upper_watts=185, description_fr="Endurance aérobie",
+        )
+    }
+
+
+def _steady_steps():
+    from app.engine.schemas import Step
+
+    return [Step(kind="steady", duration_minutes=90, zone_code="Z2")]
+
+
+async def test_publish_freestyle_session_creates_one_event():
+    client = FakeCalendarClient()
+
+    outcome = await publication.publish_freestyle_session(
+        client, date(2026, 9, 20), "Endurance Z2", "endurance", _steady_steps(), _z2_zones(),
+    )
+
+    assert outcome.status == "created"
+    assert outcome.intervals_event_id is not None
+    assert outcome.external_id.startswith(f"{EXTERNAL_ID_PREFIX}freestyle:")
+    assert client.create_calls == 1
+    written = client.find(outcome.external_id)
+    assert written["category"] == "WORKOUT"
+
+
+async def test_publish_freestyle_session_push_errors_is_refused_and_cleaned_up():
+    client = FakeCalendarClient()
+    real_create = client.create_event
+
+    async def _create_with_push_error(payload):
+        event = await real_create(payload)
+        event["push_errors"] = ["step 1: power target out of range"]
+        return event
+
+    client.create_event = _create_with_push_error
+
+    outcome = await publication.publish_freestyle_session(
+        client, date(2026, 9, 20), "Endurance Z2", "endurance", _steady_steps(), _z2_zones(),
+    )
+
+    assert outcome.status == "refused"
+    assert "structure refusée" in outcome.detail
+    assert client.delete_calls == 1  # the useless event was cleaned up
+
+
+async def test_publish_freestyle_session_client_failure_is_reported_not_raised():
+    client = FakeCalendarClient()
+
+    async def _boom(payload):
+        raise RuntimeError("simulated outage")
+
+    client.create_event = _boom
+
+    outcome = await publication.publish_freestyle_session(
+        client, date(2026, 9, 20), "Endurance Z2", "endurance", _steady_steps(), _z2_zones(),
+    )
+
+    assert outcome.status == "failed"
+    assert "simulated outage" in outcome.detail
+
+
+async def test_withdraw_freestyle_publications_removes_only_freestyle_rows(db_session):
+    from app.db.repositories import freestyle_publication_repo
+
+    user = await _make_user(db_session)
+    plan = await _make_plan(db_session, user.id)
+    client = FakeCalendarClient()
+
+    # A plan-mode publication, to prove it is never touched.
+    plan_request = await publication.request_publication(db_session, user, plan)
+    await publication_repo.mark_approved(db_session, plan_request.approval.id)
+    await publication.execute_publication(db_session, client, user, plan, plan_request.approval)
+    plan_entries_before = await publication_repo.get_active_entries_for_plan(
+        db_session, user.id, plan.id
+    )
+    assert plan_entries_before  # sanity: the plan path actually wrote something
+
+    # Two freestyle publications.
+    for _ in range(2):
+        outcome = await publication.publish_freestyle_session(
+            client, date(2026, 9, 20), "Endurance Z2", "endurance", _steady_steps(), _z2_zones(),
+        )
+        await freestyle_publication_repo.create(
+            db_session, user_id=user.id, external_id=outcome.external_id,
+            intervals_event_id=outcome.intervals_event_id, session_date=date(2026, 9, 20),
+            workout_type="endurance", content_hash=outcome.content_hash,
+        )
+
+    withdrawn, failed = await publication.withdraw_freestyle_publications(
+        db_session, client, user
+    )
+
+    assert (withdrawn, failed) == (2, 0)
+    assert await freestyle_publication_repo.get_active_for_user(db_session, user.id) == []
+    # Plan-mode entries are a completely different table — untouched.
+    plan_entries_after = await publication_repo.get_active_entries_for_plan(
+        db_session, user.id, plan.id
+    )
+    assert len(plan_entries_after) == len(plan_entries_before)
 
 
 async def test_declining_writes_nothing_and_records_the_no(db_session):

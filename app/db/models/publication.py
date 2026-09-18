@@ -100,3 +100,36 @@ class PublishedEntry(Base):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     published_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     withdrawn_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
+class FreestylePublishedEntry(Base):
+    """One freestyle-mode session written to the athlete's calendar (spec 010). No
+    plan_id/approval_id/week_number/day_of_week — a freestyle session belongs to no plan
+    and was never batch-approved, so forcing it into PublishedEntry's shape would mean
+    nullable columns pretending a plan or an approval exists (research.md Decision 4,
+    the same reasoning spec 009 already applied to SessionLog.plan_id).
+
+    Withdrawn rows are kept, not deleted — same rationale as PublishedEntry.withdrawn_at.
+    """
+
+    __tablename__ = "freestyle_published_entries"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "external_id", name="uq_freestyle_published_entries_user_external_id"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    external_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    intervals_event_id: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    workout_type: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    published_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    withdrawn_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)

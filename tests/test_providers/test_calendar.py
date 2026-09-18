@@ -15,6 +15,7 @@ from app.providers.intervals.calendar import (
     KnownEntry,
     build_event_payload,
     build_external_id,
+    build_freestyle_external_id,
     iter_horizon_sessions,
     publish_sessions,
 )
@@ -82,6 +83,20 @@ def test_build_event_payload_fields():
     }
     for derived in ("workout_doc", "moving_time", "icu_training_load", "id", "uid"):
         assert derived not in payload
+
+
+def test_build_freestyle_external_id_shape_and_prefix():
+    """spec 010 — no plan_id (there is no plan), but the same banister: ownership prefix
+    every withdrawal path already relies on (research.md Decision 6)."""
+    ext = build_freestyle_external_id(date(2026, 9, 20), "endurance")
+    assert ext.startswith(EXTERNAL_ID_PREFIX)
+    assert ext.startswith(f"{EXTERNAL_ID_PREFIX}freestyle:2026-09-20:endurance-")
+
+
+def test_build_freestyle_external_id_is_unique_across_calls():
+    a = build_freestyle_external_id(date(2026, 9, 20), "endurance")
+    b = build_freestyle_external_id(date(2026, 9, 20), "endurance")
+    assert a != b
 
 
 async def test_publish_sessions_writes_one_workout_event_per_structured_session():
