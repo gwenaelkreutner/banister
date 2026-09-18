@@ -54,6 +54,8 @@ async def cmd_help(message: Message) -> None:
         "• /voice — Choisir la voix de ton coach\n"
         "• /reset — Effacer profil + historique local (garde intervals.icu)\n"
         "• /cancel — Interrompre /setup, /goal ou /reset en cours\n\n"
-        "Tu peux aussi me poser des questions librement ! 💬",
+        "Tu peux aussi me poser des questions librement ! 💬\n"
+        "🍽️ Et me dire ce que tu manges — je note et j'estime les calories, "
+        "sans commande particulière.",
         parse_mode="HTML",
     )

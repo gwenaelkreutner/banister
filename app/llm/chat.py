@@ -378,39 +378,6 @@ async def _execute_tool(
 
 # ── Implémentations des outils ────────────────────────────────────────────────
 
-def _tool_get_fitness_data(logs: list, activities: list) -> dict:
-    all_items = activities + logs
-    if not all_items:
-        return {"atl": 0, "ctl": 0, "tsb": 0, "tsb_label": "Pas de données", "recent_logs": []}
-
-    from app.engine.atl_ctl import compute_fitness_from_any, tsb_label
-    metrics = compute_fitness_from_any(all_items)
-    label = tsb_label(metrics.tsb)
-
-    # 7 items les plus récents (SessionLog ou Activity, duck-typed)
-    def _date(it):
-        return getattr(it, "logged_date", None) or getattr(it, "activity_date", None)
-
-    def _tss(it):
-        return getattr(it, "tss_actual", None) or getattr(it, "tss", None)
-
-    recent = []
-    for it in sorted(all_items, key=_date)[-7:]:
-        recent.append({
-            "date": str(_date(it)),
-            "tss": _tss(it),
-            "source": "plan" if hasattr(it, "rpe_emoji") else "intervals_icu",
-        })
-
-    return {
-        "atl": round(metrics.atl, 1),
-        "ctl": round(metrics.ctl, 1),
-        "tsb": round(metrics.tsb, 1),
-        "tsb_label": label,
-        "recent_sessions": recent,
-    }
-
-
 def _tool_get_upcoming_sessions(plan, days: int) -> dict:
     if plan is None:
         return {"sessions": [], "message": "Aucun plan actif trouvé."}
@@ -788,7 +755,6 @@ def _intent_from_tool(tool_used: str | None) -> str:
         "update_injury_status": "injury_report",
         "propose_plan_modification": "plan_modification",
         "propose_session_adjustment": "plan_modification",
-        "get_fitness_data": "question",
         "get_upcoming_sessions": "question",
     }
     return mapping.get(tool_used or "", "other")
