@@ -73,11 +73,18 @@ async def run_agentic_loop(
     tool_executor,  # callable(name: str, args: dict) -> dict
     model: str | None = None,
     max_iterations: int = 3,
-) -> tuple[str, str | None, dict | None]:
+) -> tuple[str, str | None, dict | None, dict]:
     """
     Exécute la boucle agentique tool_use → tool_result jusqu'à end_turn.
 
-    Retourne (response_text, tool_used_name | None, last_tool_result | None).
+    Un tour de chat peut déclencher plusieurs appels API (itération avec tool call,
+    fallback sur contenu vide, appel final après tool call en texte, fallback de fin de
+    boucle) — `usage` cumule les tokens de TOUS ces appels, pas juste le dernier.
+
+    Retourne (response_text, tool_used_name | None, last_tool_result | None, usage).
+    `usage` = {"prompt_tokens", "completion_tokens", "total_tokens", "calls"} — tous à 0
+    si l'API n'a jamais renvoyé de champ `usage` (ne devrait pas arriver avec OpenRouter/
+    OpenAI, mais mieux vaut 0 que planter sur un provider qui l'omettrait).
     """
     client = _get_client()
     effective_model = model or settings.chat_model
@@ -85,6 +92,16 @@ async def run_agentic_loop(
     all_messages = list(messages)
     tool_used = None
     last_tool_result: dict | None = None
+    usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
+
+    def _track_usage(response) -> None:
+        u = getattr(response, "usage", None)
+        if u is None:
+            return
+        usage_total["prompt_tokens"] += getattr(u, "prompt_tokens", 0) or 0
+        usage_total["completion_tokens"] += getattr(u, "completion_tokens", 0) or 0
+        usage_total["total_tokens"] += getattr(u, "total_tokens", 0) or 0
+        usage_total["calls"] += 1
 
     for iteration in range(max_iterations):
         logger.info("[LLM →] agentic iter=%d/%d | model=%s | messages=%d | tools=%d",
@@ -104,6 +121,7 @@ async def run_agentic_loop(
         except Exception:
             logger.exception("Erreur appel LLM agentique")
             raise
+        _track_usage(response)
 
         choice = response.choices[0]
         logger.info("[LLM ←] agentic | finish=%s | model=%s", choice.finish_reason, effective_model)
@@ -127,6 +145,7 @@ async def run_agentic_loop(
                         messages=[{"role": "system", "content": system}] + all_messages[-4:],
                         max_tokens=400,
                     )
+                    _track_usage(fb_resp)
                     content = (fb_resp.choices[0].message.content or "").strip()
                     if content:
                         logger.info("[LLM FALLBACK OK] contenu récupéré | iter=%d", iteration + 1)
@@ -175,22 +194,26 @@ async def run_agentic_loop(
                     messages=[{"role": "system", "content": system}] + final_messages,
                     max_tokens=settings.llm_max_tokens,
                 )
+                _track_usage(final_resp)
                 final_content = (final_resp.choices[0].message.content or "").strip()
                 if not final_content:
                     raise RuntimeError("LLM final response empty after text tool call")
                 logger.info("[LLM REPLY] %.300s", final_content)
                 logger.debug("[LLM FULL REPLY]\n%s", final_content)
-                return final_content, tool_used, last_tool_result
+                logger.info("[LLM USAGE] %s", usage_total)
+                return final_content, tool_used, last_tool_result, usage_total
 
             # Réponse texte normale
             logger.info("[LLM REPLY] %.300s", content)
             logger.debug("[LLM FULL REPLY]\n%s", content)
-            return content, tool_used, last_tool_result
+            logger.info("[LLM USAGE] %s", usage_total)
+            return content, tool_used, last_tool_result, usage_total
 
         # Traiter les tool calls natifs
         tool_calls = choice.message.tool_calls or []
         if not tool_calls:
-            return choice.message.content or "", tool_used, last_tool_result
+            logger.info("[LLM USAGE] %s", usage_total)
+            return choice.message.content or "", tool_used, last_tool_result, usage_total
 
         # Ajouter le message assistant avec les tool calls
         all_messages.append({
@@ -233,8 +256,10 @@ async def run_agentic_loop(
         messages=[{"role": "system", "content": system}] + all_messages,
         max_tokens=settings.llm_max_tokens,
     )
+    _track_usage(response)
     content = (response.choices[0].message.content or "").strip()
     if not content:
         raise RuntimeError("LLM fallback response empty after max iterations")
     logger.info("[LLM REPLY] %.300s", content)
-    return content, tool_used, last_tool_result
+    logger.info("[LLM USAGE] %s", usage_total)
+    return content, tool_used, last_tool_result, usage_total

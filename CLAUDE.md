@@ -595,6 +595,32 @@ spécial pour `coach_memory`/`athlete_notes`).
 Lecture manuelle (hors Telegram) : `python -m scripts.coach_memory_state --describe` — lit directement
 `athlete_profiles.coach_memory`/`.athlete_notes`, même chemin que `build_system_prompt()`.
 
+## Mesure du coût LLM (hors spec — construit le 2026-09-18)
+
+Chaque appel API renvoie ses tokens (`usage.prompt_tokens`/`.completion_tokens`), mais rien ne les gardait
+avant ça — juste un log debug perdu. Un tour de chat peut déclencher plusieurs appels API (tool call,
+fallback sur contenu vide, appel final après tool call en texte, fallback de fin de boucle) —
+`app/llm/chat_client.py::run_agentic_loop()` les cumule tous (`usage_total`, 4ᵉ élément du tuple retourné)
+plutôt que de ne garder que le dernier. Propagé par `run_chat()` (`app/llm/chat.py`) jusqu'à
+`app/bot/routers/chat.py`, qui l'écrit sur la ligne `role="assistant"` de `chat_messages`
+(`tokens_input`/`tokens_output`, colonnes nullable — `NULL` sur les messages `role="user"` et sur tout ce
+qui a été créé avant cette migration).
+
+**Portée volontairement limitée** : seule la boucle agentique du chat est mesurée. Les appels
+générationnels "one-shot" (narratif de plan `app/llm/narrator.py`, feedback post-activité
+`app/llm/activity_analysis.py`) passent par l'interface plus fine `app/llm/providers/*.py`
+(`LLMProvider.generate() -> str`) qui ne renvoie pas `usage` à l'appelant — étendre ça n'était pas
+nécessaire pour répondre à la question posée (le chat reconstruit le system prompt complet à chaque
+message, donc c'est là que le gros du coût récurrent se trouve).
+
+**Lecture** : `python -m scripts.token_usage_state --describe [--days N]` — totaux et moyenne par jour,
+lecture seule (`app/db/repositories/chat_repo.py::token_usage_by_day()`, un jour sans tour de chat est
+absent du résultat, jamais affiché à 0 token — même convention que `meal_entry_repo.daily_totals`).
+
+**Étape suivante, pas encore faite** : ces chiffres sont ce qu'il faut pour juger si le prompt caching
+(préfixe stable du system prompt devant, volatile derrière) vaut le coût de l'implémenter — pas fait ici,
+volontairement, cette tâche ne visait que la mesure.
+
 ## Suivi calorique (spec 008)
 
 L'athlète décrit ce qu'il a mangé en langage naturel dans le chat — pas de commande dédiée, pas de FSM.
@@ -738,6 +764,7 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier fenêtre de matching / candidats | `app/providers/analysis/matching.py` — `find_plan_candidate()` |
 | Modifier vue plan+réalisé pour le LLM (system prompt) | `app/llm/tools.py` — `build_activity_session_pairs()` + `_format_week_pairs()` |
 | Ajouter outil LLM | `app/llm/tools.py` (définition JSON Schema) + `_execute_tool()` dans `app/llm/chat.py` |
+| Modifier la mesure du coût LLM (tokens) | `app/llm/chat_client.py::run_agentic_loop()` (cumul) + `app/db/repositories/chat_repo.py::token_usage_by_day()` (lecture) |
 | Modifier le rendu DSL d'une séance (texte envoyé à intervals.icu) | `app/providers/intervals/workout_dsl.py` — `render_dsl()` |
 | Modifier le diff idempotent de publication (create/update/conflict) | `app/providers/intervals/calendar.py` — `publish_sessions()` |
 | Modifier la barrière de consentement / le hash de plan | `app/services/publication.py` — `authorize_publication()`, `plan_content_hash()` |

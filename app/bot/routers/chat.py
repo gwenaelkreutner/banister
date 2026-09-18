@@ -63,7 +63,7 @@ async def handle_chat_message(
 
     try:
         from app.llm.chat import run_chat
-        response_text, intent, tool_used, pending_proposal = await run_chat(
+        response_text, intent, tool_used, pending_proposal, usage = await run_chat(
             user_message=message.text,
             user=user,
             session=session,
@@ -88,6 +88,8 @@ async def handle_chat_message(
         content=response_text,
         intent=intent,
         tool_used=tool_used,
+        tokens_input=usage.get("prompt_tokens"),
+        tokens_output=usage.get("completion_tokens"),
     )
 
     # Si une proposition de modification a été faite → stocker en FSM + afficher les boutons

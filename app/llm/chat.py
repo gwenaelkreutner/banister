@@ -38,12 +38,14 @@ async def run_chat(
     user_message: str,
     user: User,
     session: AsyncSession,
-) -> tuple[str, str | None, str | None, dict | None]:
+) -> tuple[str, str | None, str | None, dict | None, dict]:
     """
     Exécute le cycle de chat agentique pour un message utilisateur.
 
-    Retourne (response_text, intent, tool_used_name).
-    intent est déterminé a posteriori selon l'outil appelé.
+    Retourne (response_text, intent, tool_used_name, pending_proposal, usage).
+    intent est déterminé a posteriori selon l'outil appelé. `usage` (tokens
+    prompt/completion/total, nombre d'appels API) sert à mesurer le coût réel d'un tour
+    de chat — voir app/services/token_usage.py et scripts/token_usage_state.py.
     """
     # 1. Charger le contexte
     profile_row = await repo.profile_repo.get_by_user_id(session, user.id)
@@ -209,7 +211,7 @@ async def run_chat(
     from app.llm.tools import tools_for_mode
     from app.services.coaching_mode import mode_from_plan
 
-    response_text, tool_used, last_tool_result = await run_agentic_loop(
+    response_text, tool_used, last_tool_result, usage = await run_agentic_loop(
         system=system,
         messages=messages,
         tools=tools_for_mode(mode_from_plan(plan)),
@@ -306,7 +308,7 @@ async def run_chat(
         except Exception:
             logger.warning("Impossible d'enregistrer la décision garde-fou")
 
-    return response_text, intent, tool_used, pending_proposal
+    return response_text, intent, tool_used, pending_proposal, usage
 
 
 _DECLINE_PHRASES = (

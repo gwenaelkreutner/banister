@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, Index, String, Text, Uuid
+from sqlalchemy import ForeignKey, Index, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models.base import Base, TimestampMixin
@@ -29,5 +29,10 @@ class ChatMessage(Base, TimestampMixin):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     intent: Mapped[str | None] = mapped_column(String(64), nullable=True)   # "injury_report" | "plan_modification" | "question" | "other"
     tool_used: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Coût réel du tour de chat (found 2026-09-18 : renvoyé par l'API à chaque appel
+    # mais jamais gardé nulle part avant ça). NULL sur les messages "user" (rien à
+    # mesurer) et sur tout message créé avant cette colonne.
+    tokens_input: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_output: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="chat_messages")  # noqa: F821
