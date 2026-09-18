@@ -152,3 +152,114 @@ async def test_correction_with_no_field_selected_is_a_noop():
     msg = _FakeMessage("305")
     await correct_value(msg, state)
     assert (await state.get_data()).get("corrections_deferred") in (None, {})
+
+
+# ── AVAILABLE_DAYS (found 2026-09-18: preferred_days was hardcoded, never asked) ──
+
+
+class _FakeCallbackMessage:
+    def __init__(self):
+        self.texts: list[str] = []
+        self.markups: list = []
+
+    async def edit_text(self, text, **kw):
+        self.texts.append(text)
+        self.markups.append(kw.get("reply_markup"))
+
+    async def edit_reply_markup(self, reply_markup=None, **kw):
+        self.markups.append(reply_markup)
+
+
+class _FakeCallback:
+    def __init__(self, data: str):
+        self.data = data
+        self.message = _FakeCallbackMessage()
+        self.answered: list[dict] = []
+
+    async def answer(self, text: str | None = None, **kw):
+        self.answered.append({"text": text, **kw})
+
+
+def _markup_data(markup) -> list[str]:
+    return [btn.callback_data for row in markup.inline_keyboard for btn in row]
+
+
+async def test_setup_volume_preselects_the_legacy_default_days():
+    from app.bot.routers.setup import _DEFAULT_AVAILABLE_DAYS, setup_volume
+    from app.bot.states import SetupStates
+
+    state = _FakeState({})
+    cb = _FakeCallback("setup:vol:7")
+    await setup_volume(cb, state)
+
+    data = await state.get_data()
+    assert data["available_days"] == _DEFAULT_AVAILABLE_DAYS
+    assert data["hours_per_week"] == 7.0
+    assert state.state == SetupStates.AVAILABLE_DAYS
+
+
+async def test_days_toggle_adds_and_removes():
+    from app.bot.routers.setup import setup_days_toggle
+
+    state = _FakeState({"available_days": ["tuesday", "thursday"]})
+    await setup_days_toggle(_FakeCallback("setup:day:monday"), state)
+    assert set((await state.get_data())["available_days"]) == {"tuesday", "thursday", "monday"}
+
+    await setup_days_toggle(_FakeCallback("setup:day:tuesday"), state)
+    assert set((await state.get_data())["available_days"]) == {"thursday", "monday"}
+
+
+async def test_days_confirm_blocks_below_minimum():
+    from app.bot.routers.setup import setup_days_confirm
+
+    state = _FakeState({"available_days": ["monday"]})
+    cb = _FakeCallback("setup:days:confirm")
+    await setup_days_confirm(cb, state)
+
+    assert state.state is None  # never advanced past AVAILABLE_DAYS
+    assert cb.answered[-1]["show_alert"] is True
+
+
+async def test_days_confirm_advances_to_constraints_when_enough_days():
+    from app.bot.routers.setup import setup_days_confirm
+    from app.bot.states import SetupStates
+
+    state = _FakeState({"available_days": ["monday", "wednesday"]})
+    cb = _FakeCallback("setup:days:confirm")
+    await setup_days_confirm(cb, state)
+
+    assert state.state == SetupStates.CONSTRAINTS
+    assert "contrainte santé" in cb.message.texts[-1]
+
+
+def test_build_profile_uses_the_athletes_chosen_days():
+    from app.bot.routers.setup import _build_profile
+
+    fsm = {
+        "goal": "fitness", "hours_per_week": 6, "health_constraints": False,
+        "available_days": ["monday", "wednesday", "friday"],
+    }
+    profile = _build_profile(fsm)
+    assert profile.availability.preferred_days == ["monday", "wednesday", "friday"]
+
+
+def test_build_profile_falls_back_to_default_when_days_missing():
+    """Safety net only — the live flow always sets available_days via AVAILABLE_DAYS."""
+    from app.bot.routers.setup import _DEFAULT_AVAILABLE_DAYS, _build_profile
+
+    fsm = {"goal": "fitness", "hours_per_week": 6, "health_constraints": False}
+    profile = _build_profile(fsm)
+    assert profile.availability.preferred_days == _DEFAULT_AVAILABLE_DAYS
+
+
+def test_recap_lists_the_chosen_days_in_french():
+    from app.bot.routers.setup import _build_profile, _built_from_recap
+
+    fsm = {
+        "goal": "fitness", "hours_per_week": 6, "health_constraints": False,
+        "available_days": ["sunday", "monday"],
+    }
+    profile = _build_profile(fsm)
+    recap = _built_from_recap(profile, fsm, seeded=False)
+    assert "Lundi" in recap and "Dimanche" in recap
+    assert recap.index("Lundi") < recap.index("Dimanche")  # chronological, not insertion order

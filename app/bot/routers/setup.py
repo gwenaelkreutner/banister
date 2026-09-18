@@ -3,11 +3,20 @@ Commande /setup — configuration initiale et régénération du plan (spec 007)
 
 Flow FSM (SetupStates) :
   lecture de la source → CONFIRM_PROFILE → [CORRECT_VALUE] → GOAL → DATE → VOLUME
-  → CONSTRAINTS → génération du plan
+  → AVAILABLE_DAYS → CONSTRAINTS → génération du plan
 
 Setup lit tout ce qu'intervals.icu sait de l'athlète (FTP, FC, poids, âge, forme,
 volume réel), le fait confirmer, puis ne demande que ce qui ne peut pas être lu :
-l'objectif, sa date, le volume voulu, les contraintes santé.
+l'objectif, sa date, le volume voulu, les jours disponibles, les contraintes santé.
+
+AVAILABLE_DAYS (ajouté 2026-09-18) : avant ça, `_build_profile` hardcodait
+["tuesday", "thursday", "saturday", "sunday"] pour tout le monde, sans jamais demander —
+`app/engine/plan_builder.py` a un vrai fallback pour une liste vide, mais elle n'était
+jamais vide en pratique. Pré-sélectionne ces 4 jours comme point de départ (même
+philosophie que CONFIRM_PROFILE : montrer une valeur plausible et la faire confirmer/
+corriger plutôt que poser une question à froid), athlète libre de tout changer avant de
+valider. Minimum 2 jours — c'est le plancher réel du moteur (`_build_sessions` :
+`n_sessions = max(2, min(...))`), en dessous ça n'a aucun effet observable.
 """
 
 import logging
@@ -24,7 +33,7 @@ from app.config import settings
 from app.db import repositories as repo
 from app.db.repositories import activity_repo
 from app.engine.atl_ctl import compute_fitness_from_any, estimate_initial_ctl
-from app.engine.plan_builder import generate_plan
+from app.engine.plan_builder import DAY_NAMES, generate_plan
 from app.engine.schemas import (
     AthleteProfileSchema,
     AvailabilityProfile,
@@ -33,9 +42,17 @@ from app.engine.schemas import (
     PhysioProfile,
 )
 from app.engine.tss import tss_from_weekly_hours
+from app.llm.tools import DAY_NAMES_FR
 from app.providers.intervals.athlete_profile import ReadProfile, read_athlete_profile, stamp
 from app.providers.intervals.client import IntervalsClient
 from app.services.fitness import get_current_fitness
+
+# Point de départ pré-sélectionné pour AVAILABLE_DAYS — même 4 jours que l'ancien défaut
+# hardcodé, mais maintenant modifiable par l'athlète avant validation, jamais silencieux.
+_DEFAULT_AVAILABLE_DAYS = ["tuesday", "thursday", "saturday", "sunday"]
+# Plancher réel du moteur (app/engine/plan_builder.py::_build_sessions) — en dessous,
+# aucun effet observable sur le plan généré.
+_MIN_AVAILABLE_DAYS = 2
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -100,6 +117,35 @@ def volume_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="15h", callback_data="setup:vol:15"),
         ],
     ])
+
+
+def available_days_keyboard(selected: list[str]) -> InlineKeyboardMarkup:
+    """Grille de jours à cocher/décocher (toggle), + un bouton de validation qui
+    affiche le compte courant pour rendre le minimum de 2 visible sans texte d'erreur
+    à part si l'athlète essaie de valider en dessous."""
+    day_buttons = [
+        InlineKeyboardButton(
+            text=f"{'✅ ' if en in selected else ''}{fr}",
+            callback_data=f"setup:day:{en}",
+        )
+        for en, fr in zip(DAY_NAMES, DAY_NAMES_FR)
+    ]
+    rows = [day_buttons[i:i + 2] for i in range(0, len(day_buttons), 2)]
+    rows.append([
+        InlineKeyboardButton(
+            text=f"➡️ Valider ({len(selected)} jour{'s' if len(selected) > 1 else ''})",
+            callback_data="setup:days:confirm",
+        )
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+_AVAILABLE_DAYS_TEXT = (
+    "\U0001f4c6 Sur quels jours peux-tu t'entraîner ? Coche/décoche, puis valide "
+    "(2 minimum).\n\n"
+    "Point de départ suggéré ci-dessous — change-le si ça ne colle pas à ton emploi "
+    "du temps."
+)
 
 
 # ── Entry point : read the source, then confirm ───────────────────────────────
@@ -350,7 +396,43 @@ async def setup_date(message: Message, state: FSMContext) -> None:
 @router.callback_query(SetupStates.VOLUME, F.data.startswith("setup:vol:"))
 async def setup_volume(callback: CallbackQuery, state: FSMContext) -> None:
     hours = float(callback.data.split(":")[2])
-    await state.update_data(hours_per_week=hours)
+    selected = list(_DEFAULT_AVAILABLE_DAYS)
+    await state.update_data(hours_per_week=hours, available_days=selected)
+    await state.set_state(SetupStates.AVAILABLE_DAYS)
+    await callback.message.edit_text(
+        _AVAILABLE_DAYS_TEXT,
+        parse_mode="HTML",
+        reply_markup=available_days_keyboard(selected),
+    )
+    await callback.answer()
+
+
+# ── AVAILABLE_DAYS ───────────────────────────────────────────────────────────
+
+@router.callback_query(SetupStates.AVAILABLE_DAYS, F.data.startswith("setup:day:"))
+async def setup_days_toggle(callback: CallbackQuery, state: FSMContext) -> None:
+    day = callback.data.split(":")[2]
+    if day not in DAY_NAMES:
+        await callback.answer()
+        return
+    selected = list((await state.get_data()).get("available_days") or [])
+    if day in selected:
+        selected.remove(day)
+    else:
+        selected.append(day)
+    await state.update_data(available_days=selected)
+    await callback.message.edit_reply_markup(reply_markup=available_days_keyboard(selected))
+    await callback.answer()
+
+
+@router.callback_query(SetupStates.AVAILABLE_DAYS, F.data == "setup:days:confirm")
+async def setup_days_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+    selected = list((await state.get_data()).get("available_days") or [])
+    if len(selected) < _MIN_AVAILABLE_DAYS:
+        await callback.answer(
+            f"Choisis au moins {_MIN_AVAILABLE_DAYS} jours.", show_alert=True
+        )
+        return
     await state.set_state(SetupStates.CONSTRAINTS)
     await callback.message.edit_text(
         "\U0001fa7a Dernière question — aucune source ne la connaît : as-tu une "
@@ -498,9 +580,10 @@ async def _finalize_setup(
 
 
 def _build_profile(data: dict, fitness=None) -> AthleteProfileSchema:
-    """Build the profile from the CONFIRMED read values (spec 007 US1) + the four
-    answers. Everything read from intervals.icu carries `*_source == "source"`
-    (Constitution IV); nothing is silently defaulted.
+    """Build the profile from the CONFIRMED read values (spec 007 US1) + the five
+    answers (goal, date, volume, available days, health constraints). Everything read
+    from intervals.icu carries `*_source == "source"` (Constitution IV); nothing is
+    silently defaulted.
 
     FR-007: a value the athlete asked to correct is kept at the source's *current*
     number (the correction must be applied at intervals.icu) — the wanted value lives
@@ -544,7 +627,10 @@ def _build_profile(data: dict, fitness=None) -> AthleteProfileSchema:
         ),
         availability=AvailabilityProfile(
             hours_per_week=hours,
-            preferred_days=["tuesday", "thursday", "saturday", "sunday"],
+            # AVAILABLE_DAYS always sets this in the live flow; the default here is
+            # only a safety net for state data missing the key (e.g. an old/partial
+            # FSM state from before this question existed), not the normal path.
+            preferred_days=list(data.get("available_days") or _DEFAULT_AVAILABLE_DAYS),
         ),
         level=level,
         structured_plan_history=False,
@@ -585,6 +671,11 @@ def _built_from_recap(profile: AthleteProfileSchema, data: dict, seeded: bool) -
     lines.append(f"  • Objectif : {o.type}{when}")
     hrs = profile.availability.hours_per_week
     lines.append(f"  • Volume voulu : {hrs:g} h/sem (ton choix)")
+    chosen_days = profile.availability.preferred_days
+    day_indices = sorted(DAY_NAMES.index(d) for d in chosen_days if d in DAY_NAMES)
+    days_fr = [DAY_NAMES_FR[i] for i in day_indices]
+    if days_fr:
+        lines.append(f"  • Jours disponibles : {', '.join(days_fr)} (ton choix)")
     if profile.health_constraints:
         lines.append("  • Contrainte santé prise en compte")
     if seeded:

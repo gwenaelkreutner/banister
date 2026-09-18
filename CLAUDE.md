@@ -526,9 +526,15 @@ ne connaît.
 
 ```
 /setup → read_athlete_profile() → CONFIRM_PROFILE → [CORRECT_VALUE]
-       → GOAL → DATE → VOLUME (voulu) → CONSTRAINTS → _finalize_setup() → plan → disclaimer (1×)
+       → GOAL → DATE → VOLUME (voulu) → AVAILABLE_DAYS (jours dispo) → CONSTRAINTS
+       → _finalize_setup() → plan → disclaimer (1×)
 ```
 
+- **AVAILABLE_DAYS** (ajouté 2026-09-18) : grille de jours à cocher/décocher, pré-sélectionnée sur
+  mar/jeu/sam/dim (même philosophie que CONFIRM_PROFILE — montrer une valeur plausible, laisser corriger),
+  minimum 2 jours (plancher réel de `_build_sessions`). Avant ça, `_build_profile()` hardcodait ces 4 jours
+  pour tout le monde sans jamais demander — `plan_builder.py` a un vrai fallback pour une liste vide, mais
+  elle n'était jamais vide en pratique (confirmé en lisant le code, pas juste supposé).
 - Seuils lus depuis `sportSettings[]` (entrée cyclisme par `types`), **pas** le `icu_ftp` racine (null).
   `app/providers/intervals/athlete_profile.py` — mapping pur, chaque champ porte son origine ; absent =
   jamais un défaut silencieux (FR-008).
@@ -745,6 +751,7 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier le disclaimer ou les règles no-diagnostic | `app/llm/prompts.py` — `DISCLAIMER_TEXT`, `SCOPE_OF_ADVICE_RULES` |
 | Modifier la lecture du profil source (setup) | `app/providers/intervals/athlete_profile.py` — `map_athlete_profile()` |
 | Modifier l'écran de confirmation / `_build_profile` (setup) | `app/bot/routers/setup.py` |
+| Modifier la question des jours disponibles (setup) | `app/bot/routers/setup.py` — `available_days_keyboard()`, `setup_days_toggle()`/`setup_days_confirm()` |
 | Modifier `/goal` (re-plan) ou `/reset` (purge) | `app/bot/routers/{goal,reset}.py` |
 | Ajouter / modifier une voix de coach | `personas/*.yaml` (YAML seul, aucun code) — `/voice` la liste |
 | Modifier la résolution de voix / le fallback | `app/services/coach_voice.py` — `resolve_voice()` |

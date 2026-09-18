@@ -9,6 +9,8 @@ class SetupStates(StatesGroup):
     GOAL = State()             # Objectif (event / fitness / performance / other)
     DATE = State()             # Date cible
     VOLUME = State()           # Heures/semaine voulues
+    AVAILABLE_DAYS = State()  # Jours disponibles — aucune source ne le sait (found 2026-09-18 :
+                               # c'était hardcodé mar/jeu/sam/dim pour tout le monde)
     CONSTRAINTS = State()      # Contraintes santé (rien qu'aucune source ne connaît)
 
 
