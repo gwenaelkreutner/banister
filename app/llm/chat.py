@@ -567,9 +567,12 @@ async def _tool_get_freestyle_session_suggestion(
     en DB et traduit le résultat dans les deux formes du contrat.
 
     `args` (spec 011) porte les signaux extraits du message de l'athlète —
-    `requested_workout_type`/`max_duration_minutes`/`template_id`, tous optionnels — et
-    ne sont que transmis tels quels à `build_freestyle_suggestion()` ; aucun calcul n'a
-    lieu ici (Constitution Principe III : llm/ ne calcule jamais)."""
+    `requested_workout_type`/`max_duration_minutes`/`style_preference`, tous optionnels.
+    Les deux premiers sont transmis tels quels à `build_freestyle_suggestion()`. Le
+    troisième (texte libre) est résolu en `template_id` par un second appel LLM isolé
+    (`app/llm/template_picker.py`) qui ne voit que les candidats du type déjà retenu — le
+    catalogue complet ne transite plus par le schéma de l'outil. Aucun calcul de charge
+    n'a lieu ici (Constitution Principe III : llm/ ne calcule jamais)."""
     from datetime import date as _date
 
     from app.db.repositories import profile_repo
@@ -577,10 +580,13 @@ async def _tool_get_freestyle_session_suggestion(
     from app.engine.freestyle_selector import (
         NoSuitableTemplateError,
         build_freestyle_suggestion,
+        candidates_for,
+        choose_workout_type,
         days_since_hard_effort,
     )
     from app.engine.session_library import SessionLibraryError
     from app.engine.weekly_snapshot import compute_weekly_snapshot
+    from app.llm.template_picker import pick_template
     from app.services.fitness import get_current_fitness
 
     today = _date.today()
@@ -610,6 +616,24 @@ async def _tool_get_freestyle_session_suggestion(
         if profile_orm else ""
     )
     avoid_workout_types = frozenset(t.strip() for t in avoid_raw.split(",") if t.strip())
+    requested_workout_type = args.get("requested_workout_type")
+
+    template_id: str | None = None
+    style_preference = (args.get("style_preference") or "").strip()
+    if style_preference:
+        # Resolve the workout type first so the picker only sees that type's candidates.
+        # choose_workout_type() is pure and cheap; build_freestyle_suggestion() below
+        # recomputes the same answer from the same inputs.
+        try:
+            choice = choose_workout_type(
+                fitness, snapshot,
+                days_since_hard_effort=hard_gap,
+                avoid_workout_types=avoid_workout_types,
+                requested_workout_type=requested_workout_type,
+            )
+            template_id = await pick_template(style_preference, candidates_for(choice.workout_type))
+        except SessionLibraryError as exc:
+            logger.warning("Préférence de style ignorée (bibliothèque) : %s", exc)
 
     try:
         suggestion = build_freestyle_suggestion(
@@ -621,8 +645,8 @@ async def _tool_get_freestyle_session_suggestion(
             avoid_workout_types=avoid_workout_types,
             day_ordinal=today.toordinal(),
             available_minutes=args.get("max_duration_minutes"),
-            requested_workout_type=args.get("requested_workout_type"),
-            requested_template_id=args.get("template_id"),
+            requested_workout_type=requested_workout_type,
+            requested_template_id=template_id,
         )
     except (SessionLibraryError, NoSuitableTemplateError) as exc:
         logger.warning("Suggestion mode libre indisponible : %s", exc)

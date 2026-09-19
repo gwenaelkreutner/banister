@@ -853,14 +853,24 @@ livraison : les deux mécanismes doivent rester indépendants, sinon le chemin s
 regresserait silencieusement). `build_freestyle_suggestion()` ajoute alors une phrase à `reasoning_summary`
 (même pattern que la note existante pour `preference_overridden`), jamais un champ séparé.
 
-**`template_id` — liste fermée, jamais de texte libre** : l'enum du paramètre `template_id` de l'outil est
-construit une fois à l'import de `app/llm/tools.py` (`_build_freestyle_template_catalog()`) en groupant
-`session_library.load_library()` par `workout_type`, avec `purpose`/`intent`/`suits` en description — même
-convention "redémarrer pour recharger `sessions/*.yaml`" que `load_library()` elle-même. Un id qui ne
-correspond pas au `workout_type` finalement résolu (mauvais type, id inconnu) est silencieusement ignoré
-dans `build_freestyle_suggestion()` — la rotation par `day_ordinal` s'applique comme si rien n'avait été
-demandé (FR-005) ; aucune erreur n'est jamais montrée à l'athlète pour ce cas précis, puisque ce n'est
-jamais lui qui a tapé cet id.
+**`style_preference` — texte libre, résolu par un second appel LLM isolé** (remplace l'enum `template_id`
+le 2026-09-20). L'ancienne version collait le catalogue complet des 18 templates (~9,4k chars, purpose/
+intent/suits) dans la description JSON-Schema du paramètre `template_id`, donc renvoyé dans `tools=` à
+**chaque** appel API du chat en mode libre (jusqu'à 3 par tour, aucun prompt caching) — et grossissant
+linéairement avec `sessions/*.yaml`. Maintenant : le modèle du chat recopie la préférence de l'athlète
+verbatim (« pas de pyramide ») dans `style_preference`, sans jamais voir le catalogue. Si le champ est
+rempli, `_tool_get_freestyle_session_suggestion` (`app/llm/chat.py`) résout d'abord le `workout_type`
+via `choose_workout_type()` (pure, recalculé à l'identique par `build_freestyle_suggestion()` ensuite),
+puis `app/llm/template_picker.py::pick_template()` fait **un** appel `LLMProvider.generate()` one-shot
+(même mécanisme que `narrator.py`, pas la boucle agentique, pas le system prompt du chat) avec un
+prompt minimal : la préférence + les seuls candidats du type retenu (`candidates_for()`, 1–13 templates).
+Réponse attendue : un id ou `NONE`. Hors liste, `NONE`, provider en erreur, préférence vide → `None`,
+jamais d'exception ; un seul candidat → renvoyé sans appel. Le résultat est passé en
+`requested_template_id` — chemin `build_freestyle_suggestion()` inchangé (un id hors type reste ignoré,
+rotation `day_ordinal` comme si rien n'avait été demandé, FR-005). Coût : cas courant (pas de préférence)
+= zéro catalogue ; cas rare = +1 appel de quelques centaines de tokens. `max_tokens` du picker =
+`settings.llm_max_tokens`, pas un cap serré — un modèle à raisonnement caché renverrait un contenu null
+(voir Stack, `LLM_MAX_TOKENS`).
 
 **`max_duration_minutes`** : aucun nouveau paramètre côté moteur — réutilise `available_minutes`, déjà
 présent sur `build_freestyle_suggestion()`/`fit_template()` depuis spec 004 mais jamais alimenté par l'outil
@@ -954,7 +964,7 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Modifier la bascule `/goal` (libre ↔ objectif) | `app/bot/routers/goal.py` — `_enter_freestyle_mode()`, `_goal_kb()` |
 | Modifier la sélection de séance en mode libre (type, TSS cible) | `app/engine/freestyle_selector.py` — `choose_workout_type()`, `build_freestyle_suggestion()` |
 | Modifier l'outil LLM de suggestion mode libre | `app/llm/tools.py` (schéma + `tools_for_mode()`) + `_tool_get_freestyle_session_suggestion()` dans `app/llm/chat.py` |
-| Modifier la négociation mode libre (type/template/durée demandés) | `app/engine/freestyle_selector.py` — `requested_workout_type`/`requested_template_id` sur `choose_workout_type()`/`build_freestyle_suggestion()` ; catalogue de templates exposé au LLM dans `app/llm/tools.py::_build_freestyle_template_catalog()` |
+| Modifier la négociation mode libre (type/template/durée demandés) | `app/engine/freestyle_selector.py` — `requested_workout_type`/`requested_template_id` sur `choose_workout_type()`/`build_freestyle_suggestion()` ; résolution de `style_preference` → id par second appel LLM dans `app/llm/template_picker.py::pick_template()` |
 | Modifier le feedback post-activité en mode libre | `app/services/activity_feedback.py` — `_assemble_freestyle_feedback()` ; copie de notification dans `app/providers/intervals/notifier.py` |
 | Modifier la publication d'une séance mode libre (bouton, callback) | `app/bot/routers/chat.py` — `cb_publish_freestyle()` ; tagging dans `app/llm/chat.py::_tool_get_freestyle_session_suggestion` |
 | Modifier l'écriture/retrait calendrier d'une séance mode libre | `app/services/publication.py` — `publish_freestyle_session()`, `withdraw_freestyle_publications()` |

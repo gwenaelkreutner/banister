@@ -153,24 +153,71 @@ class TestFreestyleSessionNegotiation:
         enum = tool["function"]["parameters"]["properties"]["requested_workout_type"]["enum"]
         assert set(enum) == {"long_ride", "intervals", "endurance", "recovery"}
 
-    async def test_requested_template_id_of_wrong_type_does_not_break_the_call(self, db_session):
-        """spec 011 US2 Acceptance Scenario 2 / FR-005: a template belonging to a
-        different workout_type than the one resolved for this request must not crash or
-        force an inconsistent result — the exact "ignored, falls back to rotation"
-        behavior is pinned precisely at the engine level
-        (tests/test_engine/test_freestyle_selector.py::test_requested_template_id_of_wrong_workout_type_is_ignored),
-        since the tool's response never surfaces which template id was picked."""
+    def test_tool_schema_carries_no_template_catalogue(self):
+        """The template catalogue must never ride along in the tool schema — it is
+        resolved by a second, isolated LLM call (app/llm/template_picker.py) only when
+        the athlete voiced a style preference."""
+        tool = next(
+            t for t in TOOL_DEFINITIONS
+            if t["function"]["name"] == "get_freestyle_session_suggestion"
+        )
+        props = tool["function"]["parameters"]["properties"]
+        assert "template_id" not in props
+        assert "enum" not in props["style_preference"]
+        assert len(props["style_preference"]["description"]) < 600
+
+    async def test_style_preference_is_resolved_by_picker_within_resolved_type(
+        self, db_session, monkeypatch
+    ):
+        """The picker only ever sees candidates of the workout type already resolved by
+        the engine, and its answer is threaded through as `requested_template_id`."""
+        import app.llm.template_picker as picker_mod
+
+        seen: dict = {}
+
+        async def fake_pick(style_preference, candidates):
+            seen["preference"] = style_preference
+            seen["types"] = {t.workout_type for t in candidates}
+            return "vo2-5x5"
+
+        # chat.py imports pick_template at call time, so patching the module attribute is enough.
+        monkeypatch.setattr(picker_mod, "pick_template", fake_pick)
+
         user = await _make_user(db_session, 5012)
         await wellness_repo.upsert(db_session, user.id, date.today(), ctl=60, atl=45)
         await db_session.commit()
 
         result = await _tool_get_freestyle_session_suggestion(
-            {"requested_workout_type": "intervals", "template_id": "recovery-z1"},
+            {"requested_workout_type": "intervals", "style_preference": "des efforts de 5 min"},
             user=user, session=db_session, profile=_profile(), logs=[], activities=[],
         )
 
         assert result["available"] is True
         assert result["workout_type"] == "intervals"
+        assert seen["preference"] == "des efforts de 5 min"
+        assert seen["types"] == {"intervals"}
+
+    async def test_style_preference_picker_failure_falls_back_to_rotation(
+        self, db_session, monkeypatch
+    ):
+        """A picker that declines (None) must never break the suggestion."""
+        import app.llm.template_picker as picker_mod
+
+        async def fake_pick(style_preference, candidates):
+            return None
+
+        monkeypatch.setattr(picker_mod, "pick_template", fake_pick)
+
+        user = await _make_user(db_session, 5015)
+        await wellness_repo.upsert(db_session, user.id, date.today(), ctl=60, atl=45)
+        await db_session.commit()
+
+        result = await _tool_get_freestyle_session_suggestion(
+            {"style_preference": "du steady"},
+            user=user, session=db_session, profile=_profile(), logs=[], activities=[],
+        )
+
+        assert result["available"] is True
 
     async def test_max_duration_minutes_bounds_the_result(self, db_session):
         """spec 011 US3 Acceptance Scenario 1."""

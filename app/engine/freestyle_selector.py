@@ -175,7 +175,7 @@ def choose_workout_type(
     )
 
 
-def _candidates_for(workout_type: str) -> list[SessionTemplate]:
+def candidates_for(workout_type: str) -> list[SessionTemplate]:
     candidates = [t for t in load_library() if t.workout_type == workout_type]
     if not candidates:
         raise SessionLibraryError(
@@ -216,7 +216,7 @@ def build_freestyle_suggestion(
         avoid_workout_types=avoid_workout_types,
         requested_workout_type=requested_workout_type,
     )
-    candidates = _candidates_for(choice.workout_type)
+    candidates = candidates_for(choice.workout_type)
     # Start from the day-rotated candidate for variety, but a fixed-duration template
     # (no `scaling:` declared) may simply not reach today's target TSS — try the rest of
     # the same workout_type's templates, in rotation order, before giving up entirely

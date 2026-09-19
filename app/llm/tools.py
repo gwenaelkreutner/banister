@@ -8,39 +8,8 @@ from zoneinfo import ZoneInfo
 from app.engine.atl_ctl import FitnessMetrics, compute_fitness, tsb_label
 from app.engine.freestyle_selector import VALID_WORKOUT_TYPES
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
-from app.engine.session_library import load_library
 from app.engine.zones import compute_hr_zones
 from app.llm.prompts import COACH_SOUL
-
-
-def _build_freestyle_template_catalog() -> tuple[list[str], str]:
-    """Groups session_library templates by workout_type into a closed enum + a
-    human-readable description the LLM can pick a template_id from (spec 011). Built once
-    at import time — same "restart to reload sessions/*.yaml" convention load_library()
-    itself already has (app/engine/session_library.py)."""
-    templates = load_library()
-    by_type: dict[str, list] = {}
-    for t in templates:
-        by_type.setdefault(t.workout_type, []).append(t)
-
-    lines = []
-    for workout_type in sorted(by_type):
-        lines.append(f"{workout_type} :")
-        for t in sorted(by_type[workout_type], key=lambda x: x.id):
-            lines.append(f"  - {t.id} : {t.purpose} — {t.intent} — {t.suits}")
-
-    description = (
-        "Choisis un id UNIQUEMENT si l'athlète exprime une préférence de style sur le "
-        "contenu de la séance (ex: 'pas de pyramide', 'plutôt du steady') ET qu'un des "
-        "templates ci-dessous correspond clairement au type de séance retenu. Omets ce "
-        "champ si aucune préférence de style n'est exprimée, ou si aucun template ne "
-        "correspond clairement — un mauvais choix est silencieusement ignoré, mieux vaut "
-        "ne rien forcer.\n" + "\n".join(lines)
-    )
-    return [t.id for t in templates], description
-
-
-_FREESTYLE_TEMPLATE_IDS, _FREESTYLE_TEMPLATE_DESCRIPTION = _build_freestyle_template_catalog()
 
 # ── Schémas des outils (format OpenAI tool_use) ──────────────────────────────
 
@@ -253,10 +222,15 @@ TOOL_DEFINITIONS = [
                             "précise. Omets ce champ si rien n'est mentionné."
                         ),
                     },
-                    "template_id": {
+                    "style_preference": {
                         "type": "string",
-                        "enum": _FREESTYLE_TEMPLATE_IDS,
-                        "description": _FREESTYLE_TEMPLATE_DESCRIPTION,
+                        "description": (
+                            "Préférence de l'athlète sur le CONTENU ou le STYLE de la séance, "
+                            "recopiée telle quelle depuis son message (ex: 'pas de pyramide', "
+                            "'plutôt du steady', 'des efforts courts'). Omets ce champ si "
+                            "l'athlète n'exprime aucune préférence de ce genre — ne résume pas, "
+                            "n'interprète pas, ne mentionne jamais de nom de séance."
+                        ),
                     },
                 },
                 "required": [],

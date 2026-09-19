@@ -226,7 +226,7 @@ class TestBuildFreestyleSuggestion:
     def test_raises_when_no_template_covers_the_workout_type(self, monkeypatch):
         import app.engine.freestyle_selector as mod
 
-        monkeypatch.setattr(mod, "_candidates_for", lambda workout_type: (_ for _ in ()).throw(
+        monkeypatch.setattr(mod, "candidates_for", lambda workout_type: (_ for _ in ()).throw(
             mod.SessionLibraryError("no coverage")
         ))
         with pytest.raises(mod.SessionLibraryError):
