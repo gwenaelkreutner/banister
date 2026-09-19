@@ -636,6 +636,71 @@ absent du résultat, jamais affiché à 0 token — même convention que `meal_e
 (préfixe stable du system prompt devant, volatile derrière) vaut le coût de l'implémenter — pas fait ici,
 volontairement, cette tâche ne visait que la mesure.
 
+## Observabilité LLM (hors spec — construit le 2026-09-19)
+
+Tracing optionnel des appels LLM (prompts, réponses, tokens, latence, coût) via
+**Phoenix** (Arize, self-hosted) — pas un service géré par ce repo, un ajout
+d'infra séparé que chaque self-hoster déploie (ou non) à côté. Choisi après avoir
+écarté Langfuse : la version "légère" (Postgres + une image, v2) n'a plus de patch de
+sécurité depuis fin Q1 2025 ; la version maintenue (v3/v4) exige 6 conteneurs
+(Postgres, ClickHouse, Redis, MinIO, web, worker). Phoenix tourne en un seul conteneur
+avec persistance SQLite — même philosophie que Banister lui-même :
+```yaml
+# docker-compose.yml d'un déploiement Phoenix séparé (pas dans ce repo)
+services:
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    ports: ["127.0.0.1:6006:6006", "127.0.0.1:4317:4317"]
+    environment: ["PHOENIX_WORKING_DIR=/mnt/data"]
+    volumes: ["phoenix_data:/mnt/data"]
+    networks: ["observability"]
+volumes: {phoenix_data: {}}
+networks: {observability: {external: true}}
+```
+
+**Off par défaut** (`PHOENIX_ENABLED=false`) — un `docker compose up` tout neuf n'a ni
+Phoenix, ni l'extra `observability` installé, ni le réseau Docker ci-dessous, et n'est
+pas affecté : `app/observability.py::setup_observability()` avale toute exception
+d'initialisation (paquets absents, collecteur injoignable...) sans jamais bloquer le
+démarrage. Pour l'activer : `uv sync --extra observability` (ou build Docker avec
+`--build-arg INSTALL_EXTRAS=observability` — voir `pyproject.toml`), déployer un
+Phoenix comme ci-dessus, puis `PHOENIX_ENABLED=true` + le réseau Docker partagé
+ci-dessous.
+
+**Trois chemins d'appel LLM, deux instrumentés automatiquement** :
+- `app/llm/providers/anthropic.py` (SDK `anthropic`) et `app/llm/chat_client.py` (SDK
+  `openai`, `AsyncOpenAI` pointé sur OpenRouter — boucle agentique du chat) : patchés
+  par `register(auto_instrument=True)` via les paquets `openinference-instrumentation-
+  anthropic`/`-openai`, aucune ligne changée dans ces fichiers. `anthropic` doit rester
+  **>=1.0.0** (contrainte de l'instrumenteur) — l'API Messages utilisée ici n'a pas
+  changé depuis la 0.x, vérifié par la suite de tests complète après le bump.
+- `app/llm/providers/openrouter.py` (`generate()`, appels ponctuels — narrateur, feedback
+  post-activité) : `httpx.AsyncClient` brut, aucun SDK à patcher → span OpenInference
+  manuel (`tracer.start_as_current_span`, attributs `input.value`/`output.value`/
+  `llm.token_count.*`), posé autour de `_post_with_retries()` pour couvrir les 3
+  tentatives d'un seul appel logique. Le tracer est un no-op tant que
+  `setup_observability()` n'a pas tourné (`PHOENIX_ENABLED=false` ou import isolé, ex.
+  un script lancé via `docker exec` sans passer par `app.main`) — aucun `if` nécessaire
+  dans ce fichier pour gérer le cas désactivé.
+
+**Réseau Docker** : Phoenix et `banister_app` sont deux projets `docker compose`
+séparés — à connecter via un réseau externe partagé (`docker network create
+observability`, une fois), sinon `banister_app` ne peut pas atteindre Phoenix.
+`PHOENIX_COLLECTOR_ENDPOINT` pointe sur `http://phoenix:6006/v1/traces` (nom DNS du
+conteneur sur ce réseau), jamais `localhost` — dans `banister_app`, `localhost` désigne
+le conteneur lui-même, pas l'hôte ni Phoenix. Ce wiring (le réseau + l'extra Docker
+build) est volontairement **hors du `docker-compose.yml` commité** — il n'a de sens que
+si Phoenix est effectivement déployé, et un `docker compose up` par défaut doit rester
+autonome pour n'importe quel self-hoster. Un `docker-compose.override.yml` local
+(chargé automatiquement par `docker compose`, non commité — voir `.gitignore`) est le
+bon endroit pour l'ajouter à son propre déploiement ; s'inspirer du réseau/`build.args`
+ci-dessus.
+
+**Doit tourner avant tout appel LLM** : `setup_observability()` est appelé en toute
+première instruction de `lifespan()` (`app/main.py`) — `register()` patche les classes
+des SDK anthropic/openai en place, donc l'ordre par rapport à `get_provider()` (lazy,
+`lru_cache`) ne compte pas tant que c'est fait avant le premier message traité.
+
 ## Suivi calorique (spec 008)
 
 L'athlète décrit ce qu'il a mangé en langage naturel dans le chat — pas de commande dédiée, pas de FSM.
@@ -827,6 +892,8 @@ LLM_MAX_TOKENS=4000              # optionnel — budget de sortie des appels ré
                                 # d'émettre du contenu → finish_reason=length → fallback silencieux
 OPENROUTER_API_KEY=...
 ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
+PHOENIX_ENABLED=false                    # optionnel — active le tracing LLM (voir § Observabilité)
+PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défaut déjà correct en docker-compose
 ```
 
 ## Navigation rapide
@@ -894,4 +961,5 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier `/unpublish` en mode libre | `app/bot/routers/publish.py` — `cmd_unpublish()` (branche sans plan actif), `cb_withdraw_all_freestyle()` |
 | Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `alembic revision --autogenerate` |
 | Modifier le backup automatique au démarrage (rotation, throttle) | `app/services/backup.py` — `run_startup_backup()` |
+| Modifier le tracing LLM (Phoenix) | `app/observability.py` — `setup_observability()` ; span manuel dans `app/llm/providers/openrouter.py` |
 | Architecture complète | `docs/ARCHITECTURE.md` |

@@ -13,7 +13,7 @@ dependencies = [
     "aiogram>=3.13.0",
     "sqlalchemy[asyncio]>=2.0.0",
     "alembic>=1.13.0",
-    "anthropic>=0.40.0",
+    "anthropic>=1.0.0",
     "openai>=1.50.0",
     "httpx>=0.27.0",
     "pydantic>=2.9.0",
@@ -37,6 +37,21 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-mock>=3.14.0",
     "ruff>=0.7.0",
+]
+# Tracing LLM optionnel (Phoenix, self-hosted — voir CLAUDE.md § Observabilité).
+# Extra plutôt que dépendance de base : PHOENIX_ENABLED=false par défaut (app/config.py),
+# donc la majorité des déploiements n'en ont jamais besoin — pas de raison de leur imposer
+# grpcio/protobuf. `uv sync --extra observability` (ou build Docker avec
+# `--build-arg INSTALL_EXTRAS=observability`) pour l'activer.
+observability = [
+    # >=1.0.0 : réaffirme la contrainte de openinference-instrumentation-anthropic —
+    # l'API Messages utilisée dans app/llm/providers/anthropic.py (messages.create,
+    # RateLimitError) est inchangée depuis la 0.x, donc combiner cette borne avec la
+    # dépendance de base ne casse rien même sans cet extra installé.
+    "anthropic>=1.0.0",
+    "arize-phoenix-otel>=0.8.0",
+    "openinference-instrumentation-anthropic>=0.1.13",
+    "openinference-instrumentation-openai>=0.1.19",
 ]
 
 [tool.pytest.ini_options]

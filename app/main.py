@@ -60,6 +60,11 @@ PARIS_TZ = ZoneInfo("Europe/Paris")
 async def lifespan(app: FastAPI):
     polling_task = None
 
+    # Doit tourner avant le premier appel LLM (register() patche les SDK
+    # anthropic/openai en place) — voir app/observability.py.
+    from app.observability import setup_observability
+    setup_observability()
+
     # Storage lifecycle, in order (spec 003): the data directory must exist before the
     # instance lock can be created inside it; the lock must be held before migrations run
     # so two instances can't both migrate or both run schedulers against the same store;

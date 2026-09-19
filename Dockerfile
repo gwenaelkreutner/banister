@@ -9,8 +9,12 @@ WORKDIR /app
 # On copie d'abord uniquement les fichiers de dépendances pour le cache
 COPY pyproject.toml uv.lock* ./
 
-# Installation des dépendances (sans installer le projet lui-même)
-RUN uv sync --frozen --no-install-project
+# Installation des dépendances (sans installer le projet lui-même). Extra optionnel
+# (ex. --build-arg INSTALL_EXTRAS=observability pour le tracing Phoenix, voir
+# CLAUDE.md § Observabilité) — vide par défaut, image de base sans dépendances
+# inutilisées pour qui ne l'active pas.
+ARG INSTALL_EXTRAS=
+RUN uv sync --frozen --no-install-project ${INSTALL_EXTRAS:+--extra $INSTALL_EXTRAS}
 
 # Étape 2 : Image finale
 FROM python:3.13-slim

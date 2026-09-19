@@ -1,10 +1,17 @@
+import json
 import logging
 
 import httpx
+from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
+from opentelemetry import trace
 
 from app.llm.providers.base import LLMProvider
 
 logger = logging.getLogger(__name__)
+
+# Appel httpx brut, pas de SDK instrumentable — pas de span émis si Phoenix est
+# désactivé (register() n'a jamais été appelé → tracer no-op, coût ~nul).
+tracer = trace.get_tracer(__name__)
 
 
 class OpenRouterProvider(LLMProvider):
@@ -40,6 +47,21 @@ class OpenRouterProvider(LLMProvider):
         logger.debug("[LLM PROMPT]\n--- SYSTEM ---\n%s\n--- USER ---\n%s",
                      system_prompt, user_message)
 
+        with tracer.start_as_current_span(
+            "OpenRouterProvider.generate",
+            attributes={
+                SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.LLM.value,
+                SpanAttributes.LLM_MODEL_NAME: self.model,
+                SpanAttributes.LLM_PROVIDER: "openrouter",
+                SpanAttributes.INPUT_VALUE: json.dumps(
+                    {"system": system_prompt, "user": user_message}, ensure_ascii=False
+                ),
+                SpanAttributes.INPUT_MIME_TYPE: "application/json",
+            },
+        ) as span:
+            return await self._post_with_retries(payload, headers, max_tokens, span)
+
+    async def _post_with_retries(self, payload: dict, headers: dict, max_tokens: int, span) -> str:
         for attempt in range(3):
             try:
                 async with httpx.AsyncClient(timeout=30) as client:
@@ -60,6 +82,16 @@ class OpenRouterProvider(LLMProvider):
                         logger.warning("[LLM] Réponse tronquée (finish_reason=length) — max_tokens=%d atteint. "
                                        "Augmente max_tokens ou réduis le prompt.", max_tokens)
                     logger.debug("[LLM RESPONSE]\n%s", content)
+                    span.set_attribute(SpanAttributes.OUTPUT_VALUE, content)
+                    span.set_attribute(
+                        SpanAttributes.LLM_TOKEN_COUNT_PROMPT, usage.get("prompt_tokens", 0)
+                    )
+                    span.set_attribute(
+                        SpanAttributes.LLM_TOKEN_COUNT_COMPLETION, usage.get("completion_tokens", 0)
+                    )
+                    span.set_attribute(
+                        SpanAttributes.LLM_TOKEN_COUNT_TOTAL, usage.get("total_tokens", 0)
+                    )
                     return content
             except (httpx.HTTPStatusError, httpx.TimeoutException) as e:
                 if attempt < 2:

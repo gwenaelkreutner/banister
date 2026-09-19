@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     # Redis (optionnel)
     redis_url: str | None = None
 
+    # Observabilité LLM (Phoenix, self-hosted — app/observability.py). Off par défaut :
+    # un déploiement sans conteneur Phoenix ne doit rien changer au comportement.
+    phoenix_enabled: bool = False
+    # "phoenix" résout par DNS Docker vers le conteneur du réseau externe partagé
+    # "observability" (voir docker-compose.yml) — pas localhost, qui dans ce conteneur
+    # ne désigne jamais l'hôte ni le conteneur Phoenix.
+    phoenix_collector_endpoint: str = "http://phoenix:6006/v1/traces"
+
     # intervals.icu (spec 002) — the sole mandatory training data source. Required, not
     # defaulted: FR-003 requires startup to refuse with a message naming this setting
     # when it is absent.
