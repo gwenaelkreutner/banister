@@ -78,6 +78,7 @@ class WorkoutTypeChoice:
     target_tss: float
     reasoning_summary: str
     preference_overridden: bool  # True if every preferred type was in avoid_workout_types
+    default_conflicts: bool  # True if chosen != what fitness alone would have picked (spec 011)
 
 
 @dataclass(frozen=True)
@@ -125,20 +126,34 @@ def choose_workout_type(
     *,
     days_since_hard_effort: int | None,
     avoid_workout_types: frozenset[str] = frozenset(),
+    requested_workout_type: str | None = None,
 ) -> WorkoutTypeChoice:
     """Pure decision: given fitness state + recent load, which workout type and target
     TSS to suggest. Never references a periodization phase or week (SC-005) — the only
     inputs are today's fitness and effort history, exactly as the athlete would explain
-    their own choice ("je suis cuit, je vais rouler tranquille")."""
+    their own choice ("je suis cuit, je vais rouler tranquille").
+
+    `requested_workout_type` (spec 011) is an explicit, same-turn ask from the athlete —
+    it wins outright and bypasses `avoid_workout_types` entirely, since a fresh request is
+    more specific than a standing dislike note (FR-009). `default_conflicts` tells the
+    caller whether this diverges from what fitness alone would have suggested, so the
+    coach can say so honestly instead of presenting it as the natural choice (FR-002)."""
     preferences = _tsb_bucket_preferences(fitness.tsb, days_since_hard_effort)
 
-    chosen = next((wt for wt in preferences if wt not in avoid_workout_types), None)
-    overridden = chosen is None
-    if chosen is None:
-        # Every preferred type is on the avoid list — honesty over silence: pick the
-        # top preference anyway rather than refusing to answer, and say so (the tool
-        # layer surfaces `preference_overridden` to the athlete).
-        chosen = preferences[0]
+    was_requested = (
+        requested_workout_type is not None and requested_workout_type in VALID_WORKOUT_TYPES
+    )
+    if was_requested:
+        chosen = requested_workout_type
+        overridden = False
+    else:
+        chosen = next((wt for wt in preferences if wt not in avoid_workout_types), None)
+        overridden = chosen is None
+        if chosen is None:
+            # Every preferred type is on the avoid list — honesty over silence: pick the
+            # top preference anyway rather than refusing to answer, and say so (the tool
+            # layer surfaces `preference_overridden` to the athlete).
+            chosen = preferences[0]
 
     target_tss = round(
         max(_TSS_FLOOR[chosen], fitness.ctl * _TSS_CTL_MULTIPLIER[chosen]), 0
@@ -153,6 +168,10 @@ def choose_workout_type(
         target_tss=target_tss,
         reasoning_summary=reasoning,
         preference_overridden=overridden,
+        # Only an explicit request can "conflict" with the fitness-driven default — the
+        # avoid-list branch above already has its own honesty signal (preference_overridden)
+        # and must never also trip this one, or FR-007's no-request path would regress.
+        default_conflicts=was_requested and chosen != preferences[0],
     )
 
 
@@ -176,16 +195,26 @@ def build_freestyle_suggestion(
     avoid_workout_types: frozenset[str] = frozenset(),
     day_ordinal: int = 0,
     available_minutes: int | None = None,
+    requested_workout_type: str | None = None,
+    requested_template_id: str | None = None,
 ) -> FreestyleSuggestion:
     """End to end: choose a workout type (`choose_workout_type`), pick a template for it
     (rotated deterministically by `day_ordinal` — same day, same ask, same answer; a new
     day can vary the template), and fit it to the target TSS (`fitting.fit_template()`,
     unchanged, already phase-agnostic).
+
+    `requested_workout_type`/`requested_template_id` (spec 011) let an explicit, same-turn
+    athlete request steer this same deterministic pipeline — never a second, LLM-driven
+    calculation, only different inputs to the same math (Constitution Principle I). A
+    `requested_template_id` that isn't a candidate of the *resolved* workout type (wrong
+    type, unknown id) is silently ignored — the existing `day_ordinal` rotation applies as
+    if it had never been supplied (FR-005).
     """
     choice = choose_workout_type(
         fitness, snapshot,
         days_since_hard_effort=days_since_hard_effort,
         avoid_workout_types=avoid_workout_types,
+        requested_workout_type=requested_workout_type,
     )
     candidates = _candidates_for(choice.workout_type)
     # Start from the day-rotated candidate for variety, but a fixed-duration template
@@ -194,6 +223,11 @@ def build_freestyle_suggestion(
     # (found live: "race-endurance" is a fixed 120min template that can only ever hit
     # ~84 TSS, which is not this athlete's target every day).
     start = day_ordinal % len(candidates)
+    if requested_template_id is not None:
+        for i, candidate in enumerate(candidates):
+            if candidate.id == requested_template_id:
+                start = i
+                break
     rotated = candidates[start:] + candidates[:start]
 
     reasoning = choice.reasoning_summary
@@ -201,6 +235,11 @@ def build_freestyle_suggestion(
         reasoning += (
             " (aucun type non évité ne convenait à ta forme actuelle — je propose quand "
             "même celui qui convient le mieux.)"
+        )
+    if choice.default_conflicts:
+        reasoning += (
+            " Ce n'est pas ce que je t'aurais proposé spontanément vu ta forme actuelle, "
+            "mais voici une séance adaptée à ta demande."
         )
 
     last_error: NoSuitableTemplateError | None = None

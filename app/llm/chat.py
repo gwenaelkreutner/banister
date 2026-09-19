@@ -374,7 +374,7 @@ async def _execute_tool(
 
     elif name == "get_freestyle_session_suggestion":
         return await _tool_get_freestyle_session_suggestion(
-            user=user, session=session, profile=profile, logs=logs,
+            args, user=user, session=session, profile=profile, logs=logs,
             activities=activities or [],
         )
 
@@ -553,6 +553,7 @@ async def _tool_update_coach_memory(args: dict, user: User, session: AsyncSessio
 # ── Outil mode libre (spec 009) ─────────────────────────────────────────────────
 
 async def _tool_get_freestyle_session_suggestion(
+    args: dict,
     *,
     user: User,
     session: AsyncSession,
@@ -563,7 +564,12 @@ async def _tool_get_freestyle_session_suggestion(
     """Propose une séance sans référence à un plan (contracts/llm-tool-session-suggestion.md).
     Tout le calcul est déterministe (app/engine/freestyle_selector.py, Constitution
     Principe I) — cette fonction ne fait que rassembler ce que l'outil a besoin de lire
-    en DB et traduit le résultat dans les deux formes du contrat."""
+    en DB et traduit le résultat dans les deux formes du contrat.
+
+    `args` (spec 011) porte les signaux extraits du message de l'athlète —
+    `requested_workout_type`/`max_duration_minutes`/`template_id`, tous optionnels — et
+    ne sont que transmis tels quels à `build_freestyle_suggestion()` ; aucun calcul n'a
+    lieu ici (Constitution Principe III : llm/ ne calcule jamais)."""
     from datetime import date as _date
 
     from app.db.repositories import profile_repo
@@ -614,6 +620,9 @@ async def _tool_get_freestyle_session_suggestion(
             days_since_hard_effort=hard_gap,
             avoid_workout_types=avoid_workout_types,
             day_ordinal=today.toordinal(),
+            available_minutes=args.get("max_duration_minutes"),
+            requested_workout_type=args.get("requested_workout_type"),
+            requested_template_id=args.get("template_id"),
         )
     except (SessionLibraryError, NoSuitableTemplateError) as exc:
         logger.warning("Suggestion mode libre indisponible : %s", exc)

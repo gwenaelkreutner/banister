@@ -699,9 +699,10 @@ préférence déclarée via `athlete_notes["disliked_workout_types"]` (liste sé
 l'outil `update_coach_memory` existant — pas de nouveau mécanisme de préférence). `build_freestyle_suggestion()`
 tourne ensuite le template choisi parmi ceux du type retenu (variété jour par jour, déterministe via
 `day_ordinal`) et appelle `fitting.fit_template()` — **sans le brancher à `generate_plan()`**, qui reste un
-chantier séparé. Exposé au chat via l'outil LLM `get_freestyle_session_suggestion` (aucun paramètre — tout
-vient du serveur), disponible uniquement en mode libre (`tools.py::tools_for_mode()`, symétrique pour les
-3 outils qui n'ont de sens qu'avec un plan). Le `target_tss` retourné est enregistré dans le
+chantier séparé. Exposé au chat via l'outil LLM `get_freestyle_session_suggestion`, disponible uniquement
+en mode libre (`tools.py::tools_for_mode()`, symétrique pour les 3 outils qui n'ont de sens qu'avec un
+plan) — voir spec 011 ci-dessous pour ses 3 paramètres optionnels (spec 009 livrait la version sans
+paramètre, tout venait du serveur). Le `target_tss` retourné est enregistré dans le
 `MetricRegistry` de la vérification de réponse (spec 006) comme n'importe quelle autre métrique — durée et
 zone ne le sont jamais (déjà exclues structurellement par `response_verification.py`, R5).
 
@@ -769,6 +770,43 @@ approbation par lot serait une fiction silencieuse (Principe IV). Préfixe `bani
 **Non fait délibérément** : pas de chemin de confirmation en langage naturel ("publie-la" tapé en chat) —
 le bouton a été choisi précisément pour rendre la confirmation sans ambiguïté par construction ; pas de
 diff/mise à jour d'une séance déjà publiée (toujours une nouvelle création, jamais un `update_event`).
+
+## Négociation de séance en mode libre (spec 011)
+
+Avant spec 011, `get_freestyle_session_suggestion` (spec 009) ne prenait aucun paramètre — une demande
+explicite de l'athlète en chat ("je veux faire des intervalles", "j'ai 45 minutes ce soir") était
+totalement ignorée, seul l'état de forme comptait. Spec 011 laisse le LLM extraire 3 signaux optionnels du
+message et les transmettre à l'outil, **sans qu'aucun calcul ne change de camp** (Principe I) : `target_tss`
+et la durée restent produits par `app/engine/freestyle_selector.py`, seuls les paramètres d'entrée varient.
+
+**`requested_workout_type` prioritaire mais jamais bloquant** (`choose_workout_type()`) : contourne
+carrément `avoid_workout_types` (une demande explicite du tour courant prime sur une préférence durable —
+la préférence elle-même n'est ni lue ni modifiée dans ce cas). `WorkoutTypeChoice.default_conflicts` est
+`True` uniquement quand une demande explicite diverge de ce que la forme seule aurait choisi — **jamais**
+quand c'est `avoid_workout_types` qui décale le choix sans demande explicite (bug attrapé par un test avant
+livraison : les deux mécanismes doivent rester indépendants, sinon le chemin sans demande — spec 009 —
+regresserait silencieusement). `build_freestyle_suggestion()` ajoute alors une phrase à `reasoning_summary`
+(même pattern que la note existante pour `preference_overridden`), jamais un champ séparé.
+
+**`template_id` — liste fermée, jamais de texte libre** : l'enum du paramètre `template_id` de l'outil est
+construit une fois à l'import de `app/llm/tools.py` (`_build_freestyle_template_catalog()`) en groupant
+`session_library.load_library()` par `workout_type`, avec `purpose`/`intent`/`suits` en description — même
+convention "redémarrer pour recharger `sessions/*.yaml`" que `load_library()` elle-même. Un id qui ne
+correspond pas au `workout_type` finalement résolu (mauvais type, id inconnu) est silencieusement ignoré
+dans `build_freestyle_suggestion()` — la rotation par `day_ordinal` s'applique comme si rien n'avait été
+demandé (FR-005) ; aucune erreur n'est jamais montrée à l'athlète pour ce cas précis, puisque ce n'est
+jamais lui qui a tapé cet id.
+
+**`max_duration_minutes`** : aucun nouveau paramètre côté moteur — réutilise `available_minutes`, déjà
+présent sur `build_freestyle_suggestion()`/`fit_template()` depuis spec 004 mais jamais alimenté par l'outil
+mode libre jusqu'ici. `NoSuitableTemplateError` (déjà existante) couvre le cas où rien ne rentre dans le
+délai indiqué, même après relâchement de tolérance.
+
+**Un seul appel outil, pas de va-et-vient** : les 3 paramètres sont optionnels sur le même appel
+`get_freestyle_session_suggestion` — jamais un second tool call "liste puis choix". `app/llm/chat.py::
+_tool_get_freestyle_session_suggestion` se contente de transmettre `args` tel quel à
+`build_freestyle_suggestion()` ; toute la logique de repli (type non supporté, template hors-liste, durée
+impossible) vit dans `app/engine/freestyle_selector.py`, jamais dans `llm/` (Principe III).
 
 ## Variables d'environnement
 
@@ -849,6 +887,7 @@ ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 | Modifier la bascule `/goal` (libre ↔ objectif) | `app/bot/routers/goal.py` — `_enter_freestyle_mode()`, `_goal_kb()` |
 | Modifier la sélection de séance en mode libre (type, TSS cible) | `app/engine/freestyle_selector.py` — `choose_workout_type()`, `build_freestyle_suggestion()` |
 | Modifier l'outil LLM de suggestion mode libre | `app/llm/tools.py` (schéma + `tools_for_mode()`) + `_tool_get_freestyle_session_suggestion()` dans `app/llm/chat.py` |
+| Modifier la négociation mode libre (type/template/durée demandés) | `app/engine/freestyle_selector.py` — `requested_workout_type`/`requested_template_id` sur `choose_workout_type()`/`build_freestyle_suggestion()` ; catalogue de templates exposé au LLM dans `app/llm/tools.py::_build_freestyle_template_catalog()` |
 | Modifier le feedback post-activité en mode libre | `app/services/activity_feedback.py` — `_assemble_freestyle_feedback()` ; copie de notification dans `app/providers/intervals/notifier.py` |
 | Modifier la publication d'une séance mode libre (bouton, callback) | `app/bot/routers/chat.py` — `cb_publish_freestyle()` ; tagging dans `app/llm/chat.py::_tool_get_freestyle_session_suggestion` |
 | Modifier l'écriture/retrait calendrier d'une séance mode libre | `app/services/publication.py` — `publish_freestyle_session()`, `withdraw_freestyle_publications()` |

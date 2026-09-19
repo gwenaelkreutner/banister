@@ -50,7 +50,7 @@ class TestGetFreestyleSessionSuggestion:
         user = await _make_user(db_session, 5001)
 
         result = await _tool_get_freestyle_session_suggestion(
-            user=user, session=db_session, profile=_profile(), logs=[], activities=[],
+            {}, user=user, session=db_session, profile=_profile(), logs=[], activities=[],
         )
 
         assert result["available"] is False
@@ -62,7 +62,7 @@ class TestGetFreestyleSessionSuggestion:
         await db_session.commit()
 
         result = await _tool_get_freestyle_session_suggestion(
-            user=user, session=db_session, profile=None, logs=[], activities=[],
+            {}, user=user, session=db_session, profile=None, logs=[], activities=[],
         )
 
         assert result["available"] is False
@@ -73,7 +73,7 @@ class TestGetFreestyleSessionSuggestion:
         await db_session.commit()
 
         result = await _tool_get_freestyle_session_suggestion(
-            user=user, session=db_session, profile=_profile(), logs=[], activities=[],
+            {}, user=user, session=db_session, profile=_profile(), logs=[], activities=[],
         )
 
         assert result["available"] is True
@@ -96,11 +96,109 @@ class TestGetFreestyleSessionSuggestion:
         await db_session.commit()
 
         result = await _tool_get_freestyle_session_suggestion(
-            user=user, session=db_session, profile=_profile(), logs=[], activities=[],
+            {}, user=user, session=db_session, profile=_profile(), logs=[], activities=[],
         )
 
         assert result["available"] is True
         assert result["workout_type"] not in {"intervals", "long_ride"}
+
+
+class TestFreestyleSessionNegotiation:
+    """spec 011 — requested_workout_type/max_duration_minutes/template_id threaded from
+    the tool's `args` through to app/engine/freestyle_selector.py, unmodified."""
+
+    async def test_requested_workout_type_is_honored(self, db_session):
+        """spec 011 US1 Acceptance Scenario 1."""
+        user = await _make_user(db_session, 5010)
+        # Low CTL/high ATL → negative TSB → would otherwise default to recovery/endurance.
+        await wellness_repo.upsert(db_session, user.id, date.today(), ctl=60, atl=90)
+        await db_session.commit()
+
+        result = await _tool_get_freestyle_session_suggestion(
+            {"requested_workout_type": "intervals"},
+            user=user, session=db_session, profile=_profile(), logs=[], activities=[],
+        )
+
+        assert result["available"] is True
+        assert result["workout_type"] == "intervals"
+        assert "spontanément" in result["reasoning_summary"]
+
+    async def test_requested_workout_type_overrides_disliked_note(self, db_session):
+        """spec 011 FR-009: the explicit ask wins for this one suggestion; the standing
+        preference itself is left untouched (not asserted here — see its own test)."""
+        user = await _make_user(db_session, 5011)
+        await wellness_repo.upsert(db_session, user.id, date.today(), ctl=60, atl=45)
+        await db_session.commit()
+        profile_orm = await profile_repo.create(db_session, user.id, {})
+        await profile_repo.update_athlete_notes(
+            db_session, profile_orm, {"disliked_workout_types": "intervals,long_ride"}
+        )
+        await db_session.commit()
+
+        result = await _tool_get_freestyle_session_suggestion(
+            {"requested_workout_type": "intervals"},
+            user=user, session=db_session, profile=_profile(), logs=[], activities=[],
+        )
+
+        assert result["available"] is True
+        assert result["workout_type"] == "intervals"
+
+    def test_tool_schema_type_enum_has_only_the_four_supported_types(self):
+        """spec 011 FR-008 pinned at the schema boundary: an unsupported type (e.g.
+        'yoga') can never be submitted as a valid tool argument in the first place."""
+        tool = next(
+            t for t in TOOL_DEFINITIONS
+            if t["function"]["name"] == "get_freestyle_session_suggestion"
+        )
+        enum = tool["function"]["parameters"]["properties"]["requested_workout_type"]["enum"]
+        assert set(enum) == {"long_ride", "intervals", "endurance", "recovery"}
+
+    async def test_requested_template_id_of_wrong_type_does_not_break_the_call(self, db_session):
+        """spec 011 US2 Acceptance Scenario 2 / FR-005: a template belonging to a
+        different workout_type than the one resolved for this request must not crash or
+        force an inconsistent result — the exact "ignored, falls back to rotation"
+        behavior is pinned precisely at the engine level
+        (tests/test_engine/test_freestyle_selector.py::test_requested_template_id_of_wrong_workout_type_is_ignored),
+        since the tool's response never surfaces which template id was picked."""
+        user = await _make_user(db_session, 5012)
+        await wellness_repo.upsert(db_session, user.id, date.today(), ctl=60, atl=45)
+        await db_session.commit()
+
+        result = await _tool_get_freestyle_session_suggestion(
+            {"requested_workout_type": "intervals", "template_id": "recovery-z1"},
+            user=user, session=db_session, profile=_profile(), logs=[], activities=[],
+        )
+
+        assert result["available"] is True
+        assert result["workout_type"] == "intervals"
+
+    async def test_max_duration_minutes_bounds_the_result(self, db_session):
+        """spec 011 US3 Acceptance Scenario 1."""
+        user = await _make_user(db_session, 5013)
+        await wellness_repo.upsert(db_session, user.id, date.today(), ctl=60, atl=45)
+        await db_session.commit()
+
+        result = await _tool_get_freestyle_session_suggestion(
+            {"max_duration_minutes": 90},
+            user=user, session=db_session, profile=_profile(), logs=[], activities=[],
+        )
+
+        assert result["available"] is True
+        assert result["duration_minutes"] <= 90
+
+    async def test_max_duration_minutes_too_tight_is_reported_as_unavailable(self, db_session):
+        """spec 011 US3 Acceptance Scenario 2: never an over-length session."""
+        user = await _make_user(db_session, 5014)
+        await wellness_repo.upsert(db_session, user.id, date.today(), ctl=60, atl=45)
+        await db_session.commit()
+
+        result = await _tool_get_freestyle_session_suggestion(
+            {"max_duration_minutes": 5},
+            user=user, session=db_session, profile=_profile(), logs=[], activities=[],
+        )
+
+        assert result["available"] is False
+        assert "reason" in result
 
 
 class TestToolsForMode:

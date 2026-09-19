@@ -12,6 +12,7 @@ import pytest
 
 from app.engine.atl_ctl import FitnessMetrics
 from app.engine.freestyle_selector import (
+    NoSuitableTemplateError,
     build_freestyle_suggestion,
     choose_workout_type,
     days_since_hard_effort,
@@ -130,6 +131,70 @@ class TestChooseWorkoutType:
         for forbidden in ("phase", "semaine", "week"):
             assert forbidden not in choice.reasoning_summary.lower()
 
+    def test_requested_type_overrides_tsb_default(self):
+        """spec 011 US1 Acceptance Scenario 1: an explicit request wins even against a
+        fitness state that would normally suggest recovery."""
+        fitness = FitnessMetrics(atl=90, ctl=60, tsb=-40)  # surmenage → would default to recovery
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=1, requested_workout_type="intervals",
+        )
+        assert choice.workout_type == "intervals"
+        assert choice.target_tss > 0  # still computed from real fitness, never a stock value
+
+    def test_requested_type_bypasses_standing_avoid_list(self):
+        """spec 011 FR-009: an explicit, same-turn request overrides a standing dislike
+        for that one suggestion — the standing preference mechanism itself is untouched."""
+        fitness = FitnessMetrics(atl=50, ctl=60, tsb=10)
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=5,
+            avoid_workout_types=frozenset({"intervals"}),
+            requested_workout_type="intervals",
+        )
+        assert choice.workout_type == "intervals"
+        assert choice.preference_overridden is False  # bypassed, not "every option exhausted"
+
+    def test_default_conflicts_true_when_request_disagrees_with_default(self):
+        """spec 011 US1 Acceptance Scenario 1: the coach must know it diverged, so it can
+        say so honestly instead of presenting the request as the natural choice."""
+        fitness = FitnessMetrics(atl=90, ctl=60, tsb=-40)  # would default to recovery
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=1, requested_workout_type="intervals",
+        )
+        assert choice.default_conflicts is True
+
+    def test_default_conflicts_false_when_request_matches_default(self):
+        """spec 011 US1 Acceptance Scenario 2: no conflict note when the request already
+        matches what fitness alone would have suggested."""
+        fitness = FitnessMetrics(atl=50, ctl=60, tsb=10)  # would default to intervals
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=5, requested_workout_type="intervals",
+        )
+        assert choice.default_conflicts is False
+
+    def test_default_conflicts_false_when_avoid_list_alone_shifts_the_pick(self):
+        """FR-007 regression guard: an avoid-list-driven pick away from preferences[0]
+        (spec 009 behavior, no request involved) must NOT be flagged as a request
+        conflict — that would append a nonsensical note to a suggestion nobody asked to
+        redirect."""
+        fitness = FitnessMetrics(atl=50, ctl=60, tsb=10)  # would default to intervals
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=5,
+            avoid_workout_types=frozenset({"intervals"}),
+        )
+        assert choice.workout_type != "intervals"
+        assert choice.default_conflicts is False
+
+    def test_unsupported_requested_type_is_ignored(self):
+        """A value outside VALID_WORKOUT_TYPES (should never happen once the tool
+        schema's enum constrains it, but defended here too) falls back to the
+        fitness-driven default rather than crashing or being echoed back."""
+        fitness = FitnessMetrics(atl=50, ctl=60, tsb=10)
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=5, requested_workout_type="yoga",
+        )
+        assert choice.workout_type == "intervals"
+        assert choice.default_conflicts is False
+
 
 class TestBuildFreestyleSuggestion:
     def test_returns_a_concrete_structured_session(self):
@@ -168,4 +233,79 @@ class TestBuildFreestyleSuggestion:
             build_freestyle_suggestion(
                 FitnessMetrics(atl=50, ctl=60, tsb=10), _SNAPSHOT,
                 coaching_mode="power", ftp=220, days_since_hard_effort=5,
+            )
+
+    def test_requested_type_conflict_note_appended_to_reasoning(self):
+        """spec 011 Research Decision 6: the conflict note is appended, not a separate
+        field — the athlete-facing narration is the single channel that carries it."""
+        suggestion = build_freestyle_suggestion(
+            FitnessMetrics(atl=90, ctl=60, tsb=-40),  # would default to recovery
+            _SNAPSHOT, coaching_mode="power", ftp=220, days_since_hard_effort=1,
+            requested_workout_type="intervals",
+        )
+        assert suggestion.workout_type == "intervals"
+        assert "spontanément" in suggestion.reasoning_summary
+
+    def test_no_conflict_note_when_request_matches_default(self):
+        suggestion = build_freestyle_suggestion(
+            FitnessMetrics(atl=50, ctl=60, tsb=10),  # already defaults to intervals
+            _SNAPSHOT, coaching_mode="power", ftp=220, days_since_hard_effort=5,
+            requested_workout_type="intervals",
+        )
+        assert "spontanément" not in suggestion.reasoning_summary
+
+    def test_requested_template_id_is_honored_when_it_fits(self):
+        """spec 011 US2 Acceptance Scenario 1."""
+        suggestion = build_freestyle_suggestion(
+            FitnessMetrics(atl=50, ctl=60, tsb=10), _SNAPSHOT,
+            coaching_mode="power", ftp=220, days_since_hard_effort=5,
+            requested_template_id="vo2-5x5",
+        )
+        assert suggestion.template_id == "vo2-5x5"
+
+    def test_requested_template_id_of_wrong_workout_type_is_ignored(self):
+        """spec 011 US2 Acceptance Scenario 2 / FR-005: a template belonging to a
+        different workout_type than the resolved one must never be forced through —
+        falls back to the same rotation as if nothing had been requested."""
+        default = build_freestyle_suggestion(
+            FitnessMetrics(atl=50, ctl=60, tsb=10), _SNAPSHOT,
+            coaching_mode="power", ftp=220, days_since_hard_effort=5,
+        )
+        with_mismatched_request = build_freestyle_suggestion(
+            FitnessMetrics(atl=50, ctl=60, tsb=10), _SNAPSHOT,
+            coaching_mode="power", ftp=220, days_since_hard_effort=5,
+            requested_template_id="recovery-z1",  # workout_type=recovery, resolved type=intervals
+        )
+        assert with_mismatched_request.workout_type == "intervals"
+        assert with_mismatched_request.template_id == default.template_id
+
+    def test_requested_template_id_unknown_is_ignored(self):
+        default = build_freestyle_suggestion(
+            FitnessMetrics(atl=50, ctl=60, tsb=10), _SNAPSHOT,
+            coaching_mode="power", ftp=220, days_since_hard_effort=5,
+        )
+        with_unknown_request = build_freestyle_suggestion(
+            FitnessMetrics(atl=50, ctl=60, tsb=10), _SNAPSHOT,
+            coaching_mode="power", ftp=220, days_since_hard_effort=5,
+            requested_template_id="does-not-exist",
+        )
+        assert with_unknown_request.template_id == default.template_id
+
+    def test_available_minutes_bounds_the_returned_duration(self):
+        """spec 011 US3 Acceptance Scenario 1 — already-existing fit_template()
+        behavior, exercised here through build_freestyle_suggestion()'s own parameter."""
+        suggestion = build_freestyle_suggestion(
+            FitnessMetrics(atl=50, ctl=60, tsb=10), _SNAPSHOT,
+            coaching_mode="power", ftp=220, days_since_hard_effort=5,
+            available_minutes=90,
+        )
+        assert suggestion.duration_minutes <= 90
+
+    def test_available_minutes_too_tight_raises_rather_than_exceeding(self):
+        """spec 011 US3 Acceptance Scenario 2: nothing fits → say so, never overrun."""
+        with pytest.raises(NoSuitableTemplateError):
+            build_freestyle_suggestion(
+                FitnessMetrics(atl=50, ctl=60, tsb=10), _SNAPSHOT,
+                coaching_mode="power", ftp=220, days_since_hard_effort=5,
+                available_minutes=5,
             )

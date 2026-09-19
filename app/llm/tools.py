@@ -6,9 +6,41 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.engine.atl_ctl import FitnessMetrics, compute_fitness, tsb_label
+from app.engine.freestyle_selector import VALID_WORKOUT_TYPES
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
+from app.engine.session_library import load_library
 from app.engine.zones import compute_hr_zones
 from app.llm.prompts import COACH_SOUL
+
+
+def _build_freestyle_template_catalog() -> tuple[list[str], str]:
+    """Groups session_library templates by workout_type into a closed enum + a
+    human-readable description the LLM can pick a template_id from (spec 011). Built once
+    at import time — same "restart to reload sessions/*.yaml" convention load_library()
+    itself already has (app/engine/session_library.py)."""
+    templates = load_library()
+    by_type: dict[str, list] = {}
+    for t in templates:
+        by_type.setdefault(t.workout_type, []).append(t)
+
+    lines = []
+    for workout_type in sorted(by_type):
+        lines.append(f"{workout_type} :")
+        for t in sorted(by_type[workout_type], key=lambda x: x.id):
+            lines.append(f"  - {t.id} : {t.purpose} — {t.intent} — {t.suits}")
+
+    description = (
+        "Choisis un id UNIQUEMENT si l'athlète exprime une préférence de style sur le "
+        "contenu de la séance (ex: 'pas de pyramide', 'plutôt du steady') ET qu'un des "
+        "templates ci-dessous correspond clairement au type de séance retenu. Omets ce "
+        "champ si aucune préférence de style n'est exprimée, ou si aucun template ne "
+        "correspond clairement — un mauvais choix est silencieusement ignoré, mieux vaut "
+        "ne rien forcer.\n" + "\n".join(lines)
+    )
+    return [t.id for t in templates], description
+
+
+_FREESTYLE_TEMPLATE_IDS, _FREESTYLE_TEMPLATE_DESCRIPTION = _build_freestyle_template_catalog()
 
 # ── Schémas des outils (format OpenAI tool_use) ──────────────────────────────
 
@@ -199,7 +231,34 @@ TOOL_DEFINITIONS = [
             ),
             "parameters": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "requested_workout_type": {
+                        "type": "string",
+                        "enum": sorted(VALID_WORKOUT_TYPES),
+                        "description": (
+                            "Type de séance demandé EXPLICITEMENT par l'athlète dans ce message "
+                            "(ex: 'je veux faire des intervalles'). Omets ce champ si l'athlète n'a "
+                            "rien demandé de précis — le choix se fera alors selon sa forme du "
+                            "moment. N'invente jamais une correspondance avec un type non listé ici "
+                            "(ex: une demande de 'yoga' ne doit PAS être mappée sur un des 4 types — "
+                            "dis-le à l'athlète à la place)."
+                        ),
+                    },
+                    "max_duration_minutes": {
+                        "type": "integer",
+                        "minimum": 15,
+                        "maximum": 300,
+                        "description": (
+                            "Durée maximale disponible mentionnée par l'athlète pour cette séance "
+                            "précise. Omets ce champ si rien n'est mentionné."
+                        ),
+                    },
+                    "template_id": {
+                        "type": "string",
+                        "enum": _FREESTYLE_TEMPLATE_IDS,
+                        "description": _FREESTYLE_TEMPLATE_DESCRIPTION,
+                    },
+                },
                 "required": [],
             },
         },
