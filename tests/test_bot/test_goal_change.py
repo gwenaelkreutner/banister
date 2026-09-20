@@ -9,13 +9,22 @@ from datetime import date, timedelta
 
 from sqlalchemy import func, select
 
-from app.bot.routers.goal import _enter_freestyle_mode, _regenerate, cmd_goal, goal_type
+from app.bot.routers.goal import (
+    _enter_freestyle_mode,
+    _regenerate,
+    cmd_goal,
+    goal_confirm_apply,
+    goal_confirm_cancel,
+    goal_date,
+    goal_type,
+)
 from app.bot.routers.setup import parse_goal_date
+from app.bot.states import GoalStates, PlanStates
 from app.db.models.chat_message import ChatMessage
 from app.db.models.session_log import SessionLog
 from app.db.models.user import User
 from app.db.models.weekly_adherence import WeeklyAdherence
-from app.db.repositories import plan_repo, profile_repo, session_log_repo
+from app.db.repositories import journal_repo, plan_repo, profile_repo, session_log_repo
 from app.engine.plan_builder import generate_plan
 from tests.test_engine.test_plan_builder import make_profile
 
@@ -45,7 +54,8 @@ def test_parse_goal_date_flags_too_soon_and_too_far_but_keeps_the_date():
 
 
 class _Msg:
-    def __init__(self):
+    def __init__(self, text: str | None = None):
+        self.text = text
         self.sent = []
         self.markups = []
 
@@ -305,3 +315,161 @@ async def test_regenerate_from_freestyle_withdraws_pending_freestyle_publication
     assert "mode libre retirée" in msg.sent[-1]
     active = await freestyle_publication_repo.get_active_for_user(db_session, u.id)
     assert active == []
+
+
+# ── Confirmation gating (revu) — plan actif → confirmer avant d'écraser ──────
+
+
+_FAR_ENOUGH_DATE = (date.today() + timedelta(days=120)).isoformat()
+
+
+async def test_goal_date_shows_confirmation_when_a_plan_is_active(db_session):
+    u = await _populate(db_session)
+    msg, state = _Msg(text=_FAR_ENOUGH_DATE), _State()
+    await state.update_data(goal="fitness")
+
+    await goal_date(msg, state, db_session, u)
+
+    assert state.state == GoalStates.CONFIRM_REGEN
+    assert "Confirmer" in msg.sent[-1]
+    # Rien n'a encore été écrit — l'ancien plan et l'ancien objectif restent en place.
+    plan = await plan_repo.get_active_plan(db_session, u.id)
+    assert plan is not None
+    profile = await profile_repo.get_by_user_id(db_session, u.id)
+    assert profile.profile["objective"]["type"] == "event"
+
+
+async def test_goal_date_from_freestyle_applies_immediately_without_confirmation(db_session):
+    """spec 009 : venir du mode libre = rien à perdre — comportement inchangé."""
+    u = await _make_user_no_plan(db_session)
+    msg, state = _Msg(text=_FAR_ENOUGH_DATE), _State()
+    await state.update_data(goal="fitness")
+
+    await goal_date(msg, state, db_session, u)
+
+    assert state.state != GoalStates.CONFIRM_REGEN
+    plan = await plan_repo.get_active_plan(db_session, u.id)
+    assert plan is not None
+    profile = await profile_repo.get_by_user_id(db_session, u.id)
+    assert profile.profile["objective"]["type"] == "fitness"
+
+
+async def test_goal_confirm_cancel_keeps_the_old_plan_untouched(db_session):
+    u = await _populate(db_session)
+    old_plan = await plan_repo.get_active_plan(db_session, u.id)
+    msg, state = _Msg(text=_FAR_ENOUGH_DATE), _State()
+    await state.update_data(goal="fitness")
+    await goal_date(msg, state, db_session, u)
+
+    callback = _Callback("goal:confirm:cancel")
+    await goal_confirm_cancel(callback, state, db_session, u)
+
+    assert "inchangé" in callback.message.sent[-1].lower()
+    plan = await plan_repo.get_active_plan(db_session, u.id)
+    assert plan.id == old_plan.id
+    profile = await profile_repo.get_by_user_id(db_session, u.id)
+    assert profile.profile["objective"]["type"] == "event"
+    assert state.state == PlanStates.ACTIVE
+
+
+async def test_goal_confirm_apply_applies_the_pending_plan(db_session):
+    u = await _populate(db_session)
+    old_plan = await plan_repo.get_active_plan(db_session, u.id)
+    msg, state = _Msg(text=_FAR_ENOUGH_DATE), _State()
+    await state.update_data(goal="fitness")
+    await goal_date(msg, state, db_session, u)
+    assert state.state == GoalStates.CONFIRM_REGEN
+
+    callback = _Callback("goal:confirm:apply")
+    await goal_confirm_apply(callback, state, db_session, u)
+
+    plan = await plan_repo.get_active_plan(db_session, u.id)
+    assert plan is not None
+    assert plan.id != old_plan.id
+    profile = await profile_repo.get_by_user_id(db_session, u.id)
+    assert profile.profile["objective"]["type"] == "fitness"
+    summary = callback.message.sent[-1]
+    assert "gardé" in summary and "change" in summary
+
+
+async def test_goal_confirm_apply_preserves_history_like_direct_regenerate(db_session):
+    """Même garantie SC-005 que test_goal_change_preserves_all_history, via le chemin
+    de confirmation cette fois."""
+    u = await _populate(db_session)
+    before = len(await session_log_repo.get_all_for_user(db_session, u.id))
+
+    msg, state = _Msg(text=_FAR_ENOUGH_DATE), _State()
+    await state.update_data(goal="fitness")
+    await goal_date(msg, state, db_session, u)
+    callback = _Callback("goal:confirm:apply")
+    await goal_confirm_apply(callback, state, db_session, u)
+
+    after = len(await session_log_repo.get_all_for_user(db_session, u.id))
+    assert before == after
+
+
+# ── Journal daté (Enduragent parity review, 2026-09-20) ─────────────────────
+
+
+async def test_goal_change_journals_a_deterministic_goal_change_entry(db_session):
+    """_apply_new_plan journals category=goal_change (source=deterministic, text
+    templated from already-computed variables) when an old plan existed to diff
+    against — distinct from the freestyle_toggle case below."""
+    u = await _populate(db_session)
+    await _regenerate(_Msg(), _State(), db_session, u, "fitness", None)
+
+    rows = await journal_repo.query(db_session, u.id, date.today(), date.today())
+    assert len(rows) == 1
+    assert rows[0].category == "goal_change"
+    assert rows[0].source == "deterministic"
+    assert "fitness" in rows[0].text
+
+
+async def test_regenerate_from_freestyle_journals_freestyle_toggle_not_goal_change(db_session):
+    """Coming from freestyle mode (no old plan to diff) is a mode switch, not an
+    in-mode goal change — must journal freestyle_toggle, never both."""
+    u = await _make_user_no_plan(db_session, telegram_id=4301)
+    await _regenerate(_Msg(), _State(), db_session, u, "fitness", None)
+
+    rows = await journal_repo.query(db_session, u.id, date.today(), date.today())
+    assert len(rows) == 1
+    assert rows[0].category == "freestyle_toggle"
+    assert rows[0].source == "deterministic"
+
+
+async def test_entering_freestyle_mode_journals_a_freestyle_toggle_entry(db_session, monkeypatch):
+    u = await _populate(db_session)
+
+    async def _fake_withdraw(session, client, user, plan_):
+        return (0, 0)
+
+    monkeypatch.setattr("app.services.publication.withdraw_all_publications", _fake_withdraw)
+
+    callback, state = _Callback("goal:type:freestyle"), _State()
+    await _enter_freestyle_mode(callback, state, db_session, u)
+
+    rows = await journal_repo.query(db_session, u.id, date.today(), date.today())
+    assert len(rows) == 1
+    assert rows[0].category == "freestyle_toggle"
+    assert rows[0].source == "deterministic"
+
+
+async def test_entering_freestyle_mode_when_already_freestyle_journals_nothing(db_session):
+    """Idempotent path (no plan to deactivate) — must not fabricate an event."""
+    u = await _make_user_no_plan(db_session, telegram_id=4302)
+    callback, state = _Callback("goal:type:freestyle"), _State()
+    await _enter_freestyle_mode(callback, state, db_session, u)
+
+    rows = await journal_repo.query(db_session, u.id, date.today(), date.today())
+    assert rows == []
+
+
+async def test_regenerate_from_freestyle_writes_freestyle_toggle_not_goal_change(db_session):
+    """Coming from freestyle mode is a mode-switch event, not a plain goal change —
+    exactly one journal entry per click, never both categories for the same action."""
+    u = await _make_user_no_plan(db_session)
+    msg, state = _Msg(), _State()
+    await _regenerate(msg, state, db_session, u, "fitness", date.today() + timedelta(days=120))
+
+    rows = await journal_repo.query(db_session, u.id, date.today(), date.today())
+    assert [r.category for r in rows] == ["freestyle_toggle"]

@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     # "observability" (voir docker-compose.yml) — pas localhost, qui dans ce conteneur
     # ne désigne jamais l'hôte ni le conteneur Phoenix.
     phoenix_collector_endpoint: str = "http://phoenix:6006/v1/traces"
+    # Collecteur Phoenix authentifié (optionnel) — pas encore câblé dans
+    # app/observability.py (le déploiement self-hosted documenté dans CLAUDE.md n'a pas
+    # d'authentification). Accepté ici uniquement pour que Settings() ne lève pas
+    # (pydantic-settings a extra="forbid" par défaut) quand la variable est présente en
+    # local — trouvé en lançant la suite de tests, sans rapport avec /review ou /goal.
+    phoenix_api_key: SecretStr = SecretStr("")
 
     # intervals.icu (spec 002) — the sole mandatory training data source. Required, not
     # defaulted: FR-003 requires startup to refuse with a message naming this setting

@@ -25,6 +25,7 @@ from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
 router = Router(name="goal")
+# MARKER_TEST_12345
 
 
 def _client() -> IntervalsClient:
@@ -32,6 +33,13 @@ def _client() -> IntervalsClient:
         settings.intervals_api_key.get_secret_value(),
         athlete_id=settings.intervals_athlete_id,
     )
+
+
+def _confirm_regen_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Confirmer", callback_data="goal:confirm:apply"),
+        InlineKeyboardButton(text="❌ Annuler", callback_data="goal:confirm:cancel"),
+    ]])
 
 
 def _goal_kb() -> InlineKeyboardMarkup:
@@ -103,6 +111,17 @@ async def _enter_freestyle_mode(
 
     await repo.plan_repo.deactivate_all_for_user(session, user.id)
 
+    from app.db.repositories import journal_repo
+
+    await journal_repo.create(
+        session,
+        user_id=user.id,
+        entry_date=date.today(),
+        category="freestyle_toggle",
+        source="deterministic",
+        text="Passage en mode libre — objectif désactivé.",
+    )
+
     withdrawn = 0
     calendar_note = ""
     try:
@@ -158,18 +177,76 @@ async def goal_date(message: Message, state: FSMContext, session: AsyncSession, 
             "ℹ️ Si loin, le plan est surtout spéculatif — je le fais quand même."
         )
 
-    await message.answer("⏳ Je régénère ton plan depuis ta forme actuelle…")
-    await _regenerate(message, state, session, user, data["goal"], target_date)
-
-
-async def _regenerate(message, state, session, user, goal: str, target_date: date | None) -> None:
-    # spec 009 : old_plan is None when this is entered from freestyle mode (no plan to
-    # diff against) — every use below is guarded accordingly.
+    # spec 007 US3 (revu) : un plan actif existe → on montre un résumé et on attend
+    # confirmation avant d'écraser quoi que ce soit. Venue du mode libre (aucun plan
+    # actif) → comportement inchangé, exécution immédiate (rien à perdre).
     old_plan = await repo.plan_repo.get_active_plan(session, user.id)
-    profile_row = await repo.profile_repo.get_by_user_id(session, user.id)
-    old_schema = (
-        TrainingPlanSchema.model_validate(old_plan.plan_technical) if old_plan else None
+    if old_plan is None:
+        await message.answer("⏳ Je régénère ton plan depuis ta forme actuelle…")
+        await _regenerate(message, state, session, user, data["goal"], target_date)
+        return
+
+    await message.answer("⏳ Je prépare le nouveau plan pour confirmation…")
+    new_plan, profile = await _build_new_plan(session, user, data["goal"], target_date)
+    old_schema = TrainingPlanSchema.model_validate(old_plan.plan_technical)
+
+    await state.update_data(
+        _pending_goal=data["goal"],
+        _pending_target_date=target_date.isoformat() if target_date else None,
+        _pending_new_plan=new_plan.model_dump(mode="json"),
+        _pending_profile=profile.model_dump(mode="json"),
     )
+    await state.set_state(GoalStates.CONFIRM_REGEN)
+    date_str = f" le {target_date:%d/%m/%Y}" if target_date else ""
+    await message.answer(
+        "🔎 <b>Nouveau plan proposé</b>\n\n"
+        f"{new_plan.weeks_count} semaines (actuellement {old_schema.weeks_count}) — "
+        f"objectif {data['goal']}{date_str}.\n\nConfirmer le changement ?",
+        reply_markup=_confirm_regen_kb(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(GoalStates.CONFIRM_REGEN, F.data == "goal:confirm:apply")
+async def goal_confirm_apply(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, user
+) -> None:
+    from app.engine.schemas import AthleteProfileSchema
+
+    data = await state.get_data()
+    old_plan = await repo.plan_repo.get_active_plan(session, user.id)
+    new_plan = TrainingPlanSchema.model_validate(data["_pending_new_plan"])
+    profile = AthleteProfileSchema.model_validate(data["_pending_profile"])
+    target_date = (
+        date.fromisoformat(data["_pending_target_date"])
+        if data.get("_pending_target_date") else None
+    )
+
+    await callback.answer("Application en cours…")
+    await callback.message.edit_text("⏳ J'applique le nouveau plan…")
+    await _apply_new_plan(
+        callback.message, state, session, user, data["_pending_goal"], target_date,
+        new_plan, profile, old_plan,
+    )
+
+
+@router.callback_query(GoalStates.CONFIRM_REGEN, F.data == "goal:confirm:cancel")
+async def goal_confirm_cancel(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, user
+) -> None:
+    await state.clear()
+    await state.set_state(PlanStates.ACTIVE)
+    await callback.message.edit_text("Objectif inchangé — ton plan actuel reste actif.")
+    await callback.answer()
+
+
+async def _build_new_plan(session, user, goal: str, target_date: date | None):
+    """Partie pure de la régénération — aucune écriture DB. Lit le profil et la forme
+    actuelle, construit et retourne le nouveau plan + profil, pour aperçu (confirmation)
+    ou application immédiate (_regenerate) selon l'appelant."""
+    from app.engine.schemas import AthleteProfileSchema
+
+    profile_row = await repo.profile_repo.get_by_user_id(session, user.id)
 
     # Forme actuelle — jamais un départ à zéro (FR-012).
     current = await get_current_fitness(session, user.id)
@@ -185,10 +262,34 @@ async def _regenerate(message, state, session, user, goal: str, target_date: dat
         pdata["current_ctl"] = fitness.ctl
         pdata["current_atl"] = fitness.atl
         pdata["current_tsb"] = fitness.tsb
-    from app.engine.schemas import AthleteProfileSchema
 
     profile = AthleteProfileSchema.model_validate(pdata)
     new_plan = generate_plan(profile)
+    return new_plan, profile
+
+
+async def _regenerate(message, state, session, user, goal: str, target_date: date | None) -> None:
+    # spec 009 : old_plan is None when this is entered from freestyle mode (no plan to
+    # diff against) — every use below is guarded accordingly. Kept as a thin wrapper
+    # around _build_new_plan()/_apply_new_plan() so callers that need the whole thing
+    # done in one shot (freestyle→goal, and every existing test) see no behavior change.
+    old_plan = await repo.plan_repo.get_active_plan(session, user.id)
+    new_plan, profile = await _build_new_plan(session, user, goal, target_date)
+    await _apply_new_plan(
+        message, state, session, user, goal, target_date, new_plan, profile, old_plan
+    )
+
+
+async def _apply_new_plan(
+    message, state, session, user, goal: str, target_date: date | None,
+    new_plan, profile, old_plan,
+) -> None:
+    """Partie écriture — appelée soit directement (_regenerate, pas de confirmation
+    nécessaire), soit après confirmation explicite (goal_confirm_apply)."""
+    profile_row = await repo.profile_repo.get_by_user_id(session, user.id)
+    old_schema = (
+        TrainingPlanSchema.model_validate(old_plan.plan_technical) if old_plan else None
+    )
 
     await repo.plan_repo.deactivate_all_for_user(session, user.id)
     await repo.plan_repo.create(
@@ -199,6 +300,39 @@ async def _regenerate(message, state, session, user, goal: str, target_date: dat
         end_date=new_plan.end_date or date.today(),
     )
     await repo.profile_repo.update(session, profile_row, profile.model_dump(mode="json"))
+
+    # Journal daté (Enduragent parity review, 2026-09-20) — texte templaté depuis des
+    # variables déjà calculées, jamais de prose libre (source="deterministic"). Venir du
+    # mode libre est une bascule de mode (freestyle_toggle), pas un simple changement
+    # d'objectif au sein du mode objectif (goal_change) — un seul événement par clic,
+    # pas les deux.
+    from app.db.repositories import journal_repo
+
+    date_str = f" (cible {target_date:%d/%m/%Y})" if target_date else ""
+    if old_schema is None:
+        await journal_repo.create(
+            session,
+            user_id=user.id,
+            entry_date=date.today(),
+            category="freestyle_toggle",
+            source="deterministic",
+            text=(
+                f"Sortie du mode libre — objectif {goal}{date_str}, "
+                f"plan {new_plan.weeks_count} semaines."
+            ),
+        )
+    else:
+        await journal_repo.create(
+            session,
+            user_id=user.id,
+            entry_date=date.today(),
+            category="goal_change",
+            source="deterministic",
+            text=(
+                f"Objectif changé vers {goal}{date_str} — plan "
+                f"{old_schema.weeks_count}→{new_plan.weeks_count} semaines."
+            ),
+        )
 
     # Calendrier publié sous l'ancien plan → périmé (FR-014, réutilise spec 005). Rien à
     # vérifier si on vient du mode libre (aucun ancien plan, donc rien de publié).

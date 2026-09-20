@@ -87,7 +87,9 @@ async def run_chat(
     from app.services.coach_voice import resolve_voice
 
     _persona, _voice_fell_back = resolve_voice(user)
-    ux_rules = build_ux_system_prompt(user_level, persona=_persona)
+    ux_rules = build_ux_system_prompt(
+        user_level, persona=_persona, first_name=user.first_name or "l'athlète"
+    )
     def _item_date(item):
         return item.logged_date if hasattr(item, "logged_date") else item.activity_date
 
@@ -163,7 +165,6 @@ async def run_chat(
         calendar_divergence=calendar_divergence,
         guardrail_findings=guardrail_findings,
         recovery_insufficiency=recovery_gap,
-        persona=_persona,
     )
     system = f"{ux_rules}\n\n---\n\n{coaching_ctx}"
     if has_load_reduction_finding(guardrail_findings):
@@ -387,6 +388,9 @@ async def _execute_tool(
     elif name == "get_calorie_history":
         return await _tool_get_calorie_history(args, user=user, session=session)
 
+    elif name == "memory_query":
+        return await _tool_memory_query(args, user=user, session=session)
+
     else:
         return {"error": f"Outil inconnu : {name}"}
 
@@ -457,6 +461,23 @@ async def _tool_update_injury_status(
     # Mettre à jour le profil en DB
     await repo.profile_repo.update_injury_status(session, user.id, injury_data)
 
+    # Journal daté (Enduragent parity review, 2026-09-20) — texte templaté depuis les
+    # arguments déjà contraints par les enum JSON-Schema de l'outil (location, severity),
+    # jamais de prose libre du LLM (source="deterministic").
+    from app.db.repositories import journal_repo
+    from app.llm.tools import LOCATION_FR, SEVERITY_FR
+
+    loc_fr = LOCATION_FR.get(location, location)
+    sev_fr = SEVERITY_FR.get(severity, severity)
+    await journal_repo.create(
+        session,
+        user_id=user.id,
+        entry_date=date.today(),
+        category="injury",
+        source="deterministic",
+        text=f"Blessure signalée : {loc_fr} ({sev_fr}), récupération estimée {recovery_days}j.",
+    )
+
     # Adapter le plan si disponible
     adapted_weeks = []
     if plan and plan.start_date:
@@ -510,9 +531,17 @@ def _tool_propose_plan_modification(args: dict, plan) -> dict:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def _tool_update_coach_memory(args: dict, user: User, session: AsyncSession) -> dict:
-    """Mémorise une observation durable dans coach_memory ou athlete_notes."""
+    """Mémorise une observation durable dans coach_memory ou athlete_notes.
+
+    add_note écrit à DEUX endroits en une seule opération (Enduragent parity review,
+    2026-09-20, décision owner actée) : coach_memory (JSON capé à 15, court/moyen terme
+    toujours injecté dans le system prompt — inchangé) ET coach_journal_entries
+    (append-only, source="llm") — une note évincée au-delà de 15 reste queryable
+    indéfiniment via l'outil memory_query au lieu d'être perdue. Le LLM ne décide
+    toujours que du texte/catégorie, jamais de la mécanique de double écriture
+    (Principe III)."""
     from datetime import date as _date
-    from app.db.repositories import profile_repo
+    from app.db.repositories import journal_repo, profile_repo
 
     action = args.get("action")
     profile_orm = await profile_repo.get_by_user_id(session, user.id)
@@ -535,6 +564,14 @@ async def _tool_update_coach_memory(args: dict, user: User, session: AsyncSessio
             memory.append({"date": str(_date.today()), "category": category, "note": note_text})
 
         await profile_repo.update_coach_memory(session, profile_orm, memory)
+        await journal_repo.create(
+            session,
+            user_id=user.id,
+            entry_date=_date.today(),
+            category=category,
+            source="llm",
+            text=note_text,
+        )
         return {"ok": True, "action": "add_note", "category": category}
 
     elif action == "update_athlete_notes":
@@ -792,6 +829,75 @@ async def _tool_get_calorie_history(args: dict, user: User, session: AsyncSessio
             result_days.append({"date": str(d), "logged": False})
 
     return {"range_start": str(start), "range_end": str(today), "days": result_days}
+
+
+# ── Journal daté / memory_query (Enduragent parity review, 2026-09-20) ──────────
+
+_MEMORY_QUERY_MAX_RANGE_DAYS = 400
+_MEMORY_QUERY_LIMIT = 30
+_MEMORY_QUERY_MAX_RESULT_CHARS = 3000
+
+
+async def _tool_memory_query(args: dict, user: User, session: AsyncSession) -> dict:
+    """Recherche dans le journal daté (app/db/models/coach_journal.py) — l'équivalent
+    banister du memory_query d'Enduragent (packages/engine/src/sport/memory-tools.ts,
+    vérifié sur le vrai source). Plafonds validés par l'owner : 400 jours de plage max,
+    30 entrées / 3000 caractères de résultat avec `truncated: true` au-delà.
+
+    Fencing DIFFÉRÉ par décision owner (2026-09-20) : seul sanitize_untrusted_text() est
+    appliqué ici (niveau standard minimal, cohérent avec les autres outils du projet qui
+    ne wrappent pas leurs résultats). TODO : réévaluer si un fencing complet
+    (wrap_untrusted_block, comme build_system_prompt() l'applique à coach_memory) est
+    nécessaire pour ce canal — une partie des entrées est écrite par le LLM lui-même
+    (voie add_note) donc potentiellement adversariale, mais le canal `role="tool"` de la
+    boucle agentique est structurellement distinct du system prompt.
+    """
+    from app.db.repositories import journal_repo
+    from app.llm.prompt_fence import sanitize_untrusted_text
+
+    try:
+        start = date.fromisoformat(args.get("from_date", ""))
+        end = date.fromisoformat(args.get("to_date", ""))
+    except (TypeError, ValueError):
+        return {"error": "from_date/to_date doivent être au format AAAA-MM-JJ."}
+
+    if start > end:
+        return {"error": f"from_date ({start}) est après to_date ({end}) — inverse les bornes."}
+
+    range_days = (end - start).days + 1
+    if range_days > _MEMORY_QUERY_MAX_RANGE_DAYS:
+        return {
+            "error": (
+                f"Plage trop large ({range_days} jours, max "
+                f"{_MEMORY_QUERY_MAX_RANGE_DAYS}) — réduis-la."
+            ),
+        }
+
+    keyword = (args.get("keyword") or "").strip() or None
+    category = args.get("category") or None
+
+    rows = await journal_repo.query(
+        session, user.id, start, end,
+        keyword=keyword, category=category, limit=_MEMORY_QUERY_LIMIT,
+    )
+
+    truncated = len(rows) >= _MEMORY_QUERY_LIMIT
+    entries: list[dict] = []
+    total_chars = 0
+    for row in rows:
+        text = sanitize_untrusted_text(row.text)
+        if total_chars + len(text) > _MEMORY_QUERY_MAX_RESULT_CHARS:
+            truncated = True
+            break
+        total_chars += len(text)
+        entries.append({"date": str(row.entry_date), "category": row.category, "text": text})
+
+    return {
+        "range": {"from": str(start), "to": str(end)},
+        "count": len(entries),
+        "truncated": truncated,
+        "entries": entries,
+    }
 
 
 def _compute_zone_restrictions(severity: str) -> dict:

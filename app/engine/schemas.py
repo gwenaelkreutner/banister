@@ -183,6 +183,20 @@ class TrainingPlanSchema(BaseModel):
     generated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+def session_at(plan: TrainingPlanSchema, week_number: int, day_of_week: int) -> SessionSpec | None:
+    """Séance planifiée à (semaine, jour), ou None si absente.
+
+    Point d'entrée unique pour un couple "chercher la semaine puis le jour dedans" écrit
+    à la main à ~15 endroits du repo (plan.py, session_log.py, publication.py,
+    weekly_recap.py, activity_feedback.py, matching.py, plan_modifier.py). Introduit ici
+    pour /review (spec de revue de séance) sans migrer les sites existants dans ce lot —
+    chacun reste un changement isolé, testable seul, à faire séparément."""
+    week = next((w for w in plan.weeks if w.week_number == week_number), None)
+    if week is None:
+        return None
+    return next((s for s in week.sessions if s.day_of_week == day_of_week), None)
+
+
 # ── Schéma profil (construit depuis session_data onboarding) ──────────────────
 
 

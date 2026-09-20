@@ -118,6 +118,26 @@ async def get_all_for_user(
     return list(result.scalars().all())
 
 
+async def get_recent_for_user(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    limit: int = 5,
+) -> list[SessionLog]:
+    """Les N dernières séances réellement réalisées ("done"/"unplanned"), la plus récente
+    d'abord — alimente le picker /review. "skipped" exclu : rien à review sur une séance
+    sautée."""
+    result = await session.execute(
+        select(SessionLog)
+        .where(
+            SessionLog.user_id == user_id,
+            SessionLog.status.in_(["done", "unplanned"]),
+        )
+        .order_by(SessionLog.logged_date.desc(), SessionLog.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
 async def get_by_source_activity(
     session: AsyncSession,
     source_activity_id: str,
