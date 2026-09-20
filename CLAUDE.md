@@ -900,6 +900,29 @@ _tool_get_freestyle_session_suggestion` se contente de transmettre `args` tel qu
 `build_freestyle_suggestion()` ; toute la logique de repli (type non supporté, template hors-liste, durée
 impossible) vit dans `app/engine/freestyle_selector.py`, jamais dans `llm/` (Principe III).
 
+## Relecture de séance — `/review` (hors spec — arrivé du remote 2026-09-21, jamais documenté avant)
+
+L'athlète relit une séance déjà loggée à la demande : `/review` liste les 5 dernières (`session_log_repo
+.get_recent_for_user`) via un clavier inline (`app/bot/keyboards/review.py::recent_sessions_keyboard`,
+callback `review:pick:<log_id hex>`), puis génère une synthèse en un seul appel LLM one-shot
+(`app/llm/review.py::generate_session_review`, même mécanisme que `narrator.py`/`template_picker.py` —
+jamais la boucle agentique, `app/services/session_review.py::assemble_review_context()` assemble tout
+avant l'appel). Pas de FSM (même précédent que `freestyle:publish:<id>`, spec 010).
+
+**Un seul mode, pas trois** (simplifié 2026-09-21, décision owner) : la version arrivée du remote proposait
+3 profondeurs (`brief`/`default`/`deep`, picker à 2 étapes + raccourci CLI `/review brief`), copiées d'un
+ratio observé chez Enduragent (référence open source). Retiré après revue — les 3 modes ne se
+différenciaient que par deux consignes de prompt molles (un budget de mots suggéré, une permission de
+vocabulaire technique), **jamais appliquées par force** (même `max_tokens` fixe pour les 3, aucune
+troncature, structure obligatoire identique en 4 points) : en pratique rien ne garantissait que les 3
+sorties diffèrent, et aucun test ne le vérifiait. `build_review_system_prompt(has_rpe)` (`app/llm/
+prompts.py`) ne prend plus de paramètre de profondeur — un seul `REVIEW_WORD_BUDGET` (150-200 mots) et un
+seul `REVIEW_VOCAB_RULE`.
+
+**Règle non-négociable conservée** : si le RPE n'est pas loggé sur la séance, `REVIEW_RPE_MISSING_RULE`
+interdit au LLM de juger "séance réussie" sur les seuls chiffres (durée/TSS/zones ne disent rien de la
+fatigue ressentie) — il doit le dire explicitement plutôt que de trancher à la place de l'athlète.
+
 ## Variables d'environnement
 
 ```
@@ -989,4 +1012,5 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `alembic revision --autogenerate` |
 | Modifier le backup automatique au démarrage (rotation, throttle) | `app/services/backup.py` — `run_startup_backup()` |
 | Modifier le tracing LLM (Phoenix) | `app/observability.py` — `setup_observability()` ; span manuel dans `app/llm/providers/openrouter.py` |
+| Modifier `/review` (picker, synthèse) | `app/bot/routers/review.py` + `app/llm/review.py` — prompt dans `app/llm/prompts.py::build_review_system_prompt()` |
 | Architecture complète | `docs/ARCHITECTURE.md` |

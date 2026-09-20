@@ -1,18 +1,18 @@
-"""Claviers inline pour `/review` (picker séance + picker profondeur).
+"""Clavier inline pour `/review` (picker de séance).
 
 Préfixe callback : `review:` (alongside setup:/plan:/log:/chat:/rem:/pub:/goal:/voice:).
-Deux claviers, deux étapes :
-  - `review:pick:<log_id hex>:<depth|none>`  — choix de la séance parmi les 5 dernières
-  - `review:depth:<log_id hex>:<depth>`      — choix de la profondeur (si pas donnée en CLI)
+Une seule étape : `review:pick:<log_id hex>` — choix de la séance parmi les 5 dernières.
+Un ancien picker de profondeur (brief/default/deep) a été retiré (2026-09-21, décision
+owner) : les 3 modes ne se différenciaient que par deux consignes molles jamais
+appliquées par force, donc convergeaient en pratique — un seul mode bien calibré vaut
+mieux (voir `app/llm/prompts.py::build_review_system_prompt`).
 
 Pas de FSM ici (volontaire, symétrique du callback `freestyle:publish:<id>` de spec 010) :
-la seule donnée transportée est un UUID + un flag de profondeur, qui tient largement dans
-les 64 octets du `callback_data` Telegram — inutile de payer le coût d'un état FSM (perdu
-au redémarrage du bot avec `MemoryStorage`) pour ça.
+la seule donnée transportée est un UUID, qui tient largement dans les 64 octets du
+`callback_data` Telegram — inutile de payer le coût d'un état FSM (perdu au redémarrage
+du bot avec `MemoryStorage`) pour ça.
 """
 from __future__ import annotations
-
-import uuid
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -30,8 +30,6 @@ _SESSION_TYPE_LABELS: dict[str, str] = {
     "race": "Course",
 }
 
-DEPTH_LABELS: dict[str, str] = {"brief": "Bref", "default": "Standard", "deep": "Profond"}
-
 
 def _session_label(log: SessionLog) -> str:
     type_label = _SESSION_TYPE_LABELS.get(log.session_type_real or "", "Séance")
@@ -41,31 +39,15 @@ def _session_label(log: SessionLog) -> str:
     return " · ".join(parts)
 
 
-def recent_sessions_keyboard(
-    logs: list[SessionLog], cli_depth: str | None
-) -> InlineKeyboardMarkup:
-    depth_token = cli_depth if cli_depth in ("brief", "deep") else "none"
+def recent_sessions_keyboard(logs: list[SessionLog]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=_session_label(log),
-                    callback_data=f"review:pick:{log.id.hex}:{depth_token}",
+                    callback_data=f"review:pick:{log.id.hex}",
                 )
             ]
             for log in logs
-        ]
-    )
-
-
-def depth_keyboard(log_id: uuid.UUID) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=label, callback_data=f"review:depth:{log_id.hex}:{depth}"
-                )
-                for depth, label in DEPTH_LABELS.items()
-            ]
         ]
     )

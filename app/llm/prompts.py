@@ -468,36 +468,19 @@ def build_coach_blocks_user_message(
     return "\n".join(lines)
 
 
-# ── /review — synthèse de séance à la demande, profondeur variable ──────────
+# ── /review — synthèse de séance à la demande ────────────────────────────────
 
-# Budgets calibrés sur le ratio observé chez Enduragent (référence open source) :
-# Tier A ~50 mots / Tier B (défaut) ~200 mots / Tier C ~500-600 mots, soit ~1:4:10.
-# Le défaut banister (150-200 mots) collait déjà au Tier B réel — inchangé ici.
-REVIEW_WORD_BUDGETS: dict[str, str] = {
-    "brief": "60 à 80 mots",
-    "default": "150 à 200 mots",
-    "deep": "450 à 550 mots",
-}
+# Un seul format (150-200 mots) — un ancien plan à 3 profondeurs (brief/default/deep)
+# ne se différenciait que par ces deux consignes molles, jamais appliquées par force
+# (même max_tokens, même structure) : en pratique les 3 sorties convergeaient. Un seul
+# mode bien calibré vaut mieux (décision owner, 2026-09-21).
+REVIEW_WORD_BUDGET = "150 à 200 mots"
 
-# Décision owner : PAS de substitution de vocabulaire à la Enduragent (TSS→"Load" etc.).
-# Cette règle chez Enduragent est motivée par une contrainte de marque déposée
-# (Peaksware/TrainingPeaks), sans rapport avec banister — qui utilise déjà librement
-# TSS/CTL/ATL/TSB dans /recap, /forme et tout le reste du produit.
-REVIEW_VOCAB_RULES: dict[str, str] = {
-    "deep": (
-        "Vocabulaire technique libre (TSS, CTL, ATL, TSB, IF...) — l'athlète a demandé "
-        "le détail, comme dans /forme et /recap."
-    ),
-    "default": (
-        "Langage courant par défaut ; si un terme technique (TSS, CTL, ATL, TSB...) est "
-        "vraiment le point clé, tu peux l'utiliser — l'athlète le voit déjà ailleurs "
-        "dans le bot (/forme, /recap)."
-    ),
-    "brief": (
-        "Langage courant, va à l'essentiel — pas de détail technique inutile sur un "
-        "format aussi court."
-    ),
-}
+REVIEW_VOCAB_RULE = (
+    "Langage courant par défaut ; si un terme technique (TSS, CTL, ATL, TSB...) est "
+    "vraiment le point clé, tu peux l'utiliser — l'athlète le voit déjà ailleurs "
+    "dans le bot (/forme, /recap)."
+)
 
 REVIEW_RPE_MISSING_RULE = """RÈGLE NON-NÉGOCIABLE — ressenti (RPE) absent sur cette séance :
 Les chiffres seuls (durée, TSS, zones, puissance) ne suffisent JAMAIS à juger si une
@@ -511,12 +494,10 @@ récupération ou du contexte de vie. Si le ressenti de l'athlète n'est pas fou
 """
 
 
-def build_review_system_prompt(depth: str, has_rpe: bool) -> str:
+def build_review_system_prompt(has_rpe: bool) -> str:
     """Prompt système pour la synthèse `/review` — un seul appel one-shot par revue
     (comme template_picker.py/narrator.py), jamais la boucle agentique : toutes les
     données sont déjà assemblées par assemble_review_context() avant l'appel."""
-    word_budget = REVIEW_WORD_BUDGETS[depth]
-    vocab_rule = REVIEW_VOCAB_RULES[depth]
     rpe_block = "" if has_rpe else f"\n{REVIEW_RPE_MISSING_RULE}"
 
     return f"""Tu es Banister, coach cyclisme. Tu reçois les données pré-calculées d'une
@@ -525,8 +506,8 @@ séance déjà réalisée et loggée, que l'athlète relit après coup via /revi
 Règles absolues :
 - Ne modifie/recalcule JAMAIS un chiffre — les valeurs fournies sont correctes.
 - N'invente jamais un chiffre qui n'est pas dans les données fournies.
-- {vocab_rule}
-- Maximum {word_budget}. Prose uniquement — pas de tableau, pas de liste à puces.
+- {REVIEW_VOCAB_RULE}
+- Maximum {REVIEW_WORD_BUDGET}. Prose uniquement — pas de tableau, pas de liste à puces.
 - Tutoiement, direct, pas de formules de politesse en ouverture.
 
 Structure obligatoire, dans cet ordre :

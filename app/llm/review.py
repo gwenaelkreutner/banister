@@ -17,8 +17,8 @@ _FALLBACK_TEXT = (
 )
 
 
-async def generate_session_review(ctx: ReviewContext, depth: str) -> str:
-    system = build_review_system_prompt(depth, has_rpe=ctx.log.rpe_emoji is not None)
+async def generate_session_review(ctx: ReviewContext) -> str:
+    system = build_review_system_prompt(has_rpe=ctx.log.rpe_emoji is not None)
     user_message = build_review_user_message(ctx)
 
     try:
