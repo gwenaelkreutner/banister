@@ -12,6 +12,7 @@ import pytest
 
 from app.engine.atl_ctl import FitnessMetrics
 from app.engine.freestyle_selector import (
+    LONG_RIDE_MIN_MINUTES,
     NoSuitableTemplateError,
     build_freestyle_suggestion,
     choose_workout_type,
@@ -183,6 +184,39 @@ class TestChooseWorkoutType:
         )
         assert choice.workout_type != "intervals"
         assert choice.default_conflicts is False
+
+    def test_long_ride_target_tss_is_never_ctl_scaled(self):
+        """Found live 2026-09-20: the old `_TSS_CTL_MULTIPLIER["long_ride"] = 1.4` guess
+        gave a detrained athlete (low CTL) a ~65min "long ride" — a long ride is defined
+        by duration, never by a fraction of CTL. A very low and a very high CTL must
+        yield the exact same default duration/TSS when no explicit request is made."""
+        low = choose_workout_type(
+            FitnessMetrics(atl=10, ctl=25, tsb=20), _SNAPSHOT,
+            days_since_hard_effort=None, requested_workout_type="long_ride",
+            coaching_mode="power", ftp=220,
+        )
+        high = choose_workout_type(
+            FitnessMetrics(atl=10, ctl=90, tsb=20), _SNAPSHOT,
+            days_since_hard_effort=None, requested_workout_type="long_ride",
+            coaching_mode="power", ftp=220,
+        )
+        assert low.target_tss == high.target_tss
+
+    def test_long_ride_default_duration_meets_the_floor(self):
+        suggestion = build_freestyle_suggestion(
+            FitnessMetrics(atl=10, ctl=34, tsb=23), _SNAPSHOT,
+            coaching_mode="power", ftp=220, days_since_hard_effort=None,
+            requested_workout_type="long_ride",
+        )
+        assert suggestion.duration_minutes == LONG_RIDE_MIN_MINUTES
+
+    def test_long_ride_honors_an_explicit_duration_above_the_floor(self):
+        suggestion = build_freestyle_suggestion(
+            FitnessMetrics(atl=10, ctl=34, tsb=23), _SNAPSHOT,
+            coaching_mode="power", ftp=220, days_since_hard_effort=None,
+            requested_workout_type="long_ride", available_minutes=180,
+        )
+        assert suggestion.duration_minutes == 180
 
     def test_unsupported_requested_type_is_ignored(self):
         """A value outside VALID_WORKOUT_TYPES (should never happen once the tool

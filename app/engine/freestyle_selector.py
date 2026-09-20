@@ -22,15 +22,28 @@ from datetime import date
 from app.engine.atl_ctl import FitnessMetrics
 from app.engine.fitting import FitResult, FittingError, fit_template
 from app.engine.session_library import SessionLibraryError, SessionTemplate, load_library
+from app.engine.tss import estimate_session_tss
 from app.engine.weekly_snapshot import WeeklySnapshot
 
 VALID_WORKOUT_TYPES = frozenset({"long_ride", "intervals", "endurance", "recovery"})
 
-# Target TSS per workout type, as a multiplier of CTL (an EMA of daily TSS — a
-# reasonable single-session anchor) with a floor for very-low-CTL athletes so a
-# suggestion is never a near-zero, meaningless duration.
-_TSS_FLOOR = {"recovery": 20.0, "endurance": 30.0, "intervals": 35.0, "long_ride": 40.0}
-_TSS_CTL_MULTIPLIER = {"recovery": 0.4, "endurance": 0.9, "intervals": 0.85, "long_ride": 1.4}
+# Target TSS per workout type (recovery/endurance/intervals only — long_ride is handled
+# separately below), as a multiplier of CTL (an EMA of daily TSS — a reasonable
+# single-session anchor) with a floor for very-low-CTL athletes so a suggestion is never
+# a near-zero, meaningless duration. No single documented ratio exists for "how much of
+# CTL one session should be" (unlike TSS/hour by zone, which tss.py's ZONE_IF already
+# gets from Coggan/TrainingPeaks) — these three stay an engineering approximation,
+# flagged as such rather than presented as a sourced rule.
+_TSS_FLOOR = {"recovery": 20.0, "endurance": 30.0, "intervals": 35.0}
+_TSS_CTL_MULTIPLIER = {"recovery": 0.4, "endurance": 0.9, "intervals": 0.85}
+
+# A "long ride" is defined by time in the saddle, not by a CTL-scaled TSS guess — Friel:
+# the aerobic endurance ride runs 30min to 2h+ depending on goal, and is by definition the
+# longest ride of the week (see CLAUDE.md). Below this floor it is not what a cyclist
+# means by "sortie longue", regardless of current CTL. Replaces the old
+# `_TSS_CTL_MULTIPLIER["long_ride"] = 1.4` guess (never sourced, and produced ~65min
+# "long" rides for a detrained athlete — found live 2026-09-20, removed here).
+LONG_RIDE_MIN_MINUTES = 120
 
 # A hard effort in the last HARD_EFFORT_COOLDOWN_DAYS days rules out another
 # intervals/long_ride day, favoring endurance instead — mirrors the "hard" vocabulary
@@ -120,6 +133,24 @@ def _tsb_bucket_preferences(tsb: float, days_since_hard_effort: int | None) -> l
     return ["intervals", "long_ride", "endurance"]
 
 
+def _long_ride_target_tss(
+    available_minutes: int | None, coaching_mode: str, ftp: int | None,
+) -> float:
+    """Duration drives the target, not the other way around. An explicit request at or
+    above `LONG_RIDE_MIN_MINUTES` is honored as-is (a same-turn ask is more specific than
+    any default); below the floor, the floor wins — `fit_template()`'s own
+    `available_minutes` check downstream will honestly refuse rather than silently serve
+    a shorter "long ride" than what the word means (Constitution Principle IV). Uses the
+    same `estimate_session_tss()` `fit_template()` uses internally, so the duration that
+    comes back out the other end matches what was asked for here, not a different
+    zone/TSS constant drifting the two apart."""
+    duration = (
+        available_minutes if available_minutes and available_minutes > LONG_RIDE_MIN_MINUTES
+        else LONG_RIDE_MIN_MINUTES
+    )
+    return estimate_session_tss("Z2", duration, coaching_mode, ftp)
+
+
 def choose_workout_type(
     fitness: FitnessMetrics,
     snapshot: WeeklySnapshot,
@@ -127,6 +158,9 @@ def choose_workout_type(
     days_since_hard_effort: int | None,
     avoid_workout_types: frozenset[str] = frozenset(),
     requested_workout_type: str | None = None,
+    coaching_mode: str = "power",
+    ftp: int | None = None,
+    available_minutes: int | None = None,
 ) -> WorkoutTypeChoice:
     """Pure decision: given fitness state + recent load, which workout type and target
     TSS to suggest. Never references a periodization phase or week (SC-005) — the only
@@ -137,7 +171,10 @@ def choose_workout_type(
     it wins outright and bypasses `avoid_workout_types` entirely, since a fresh request is
     more specific than a standing dislike note (FR-009). `default_conflicts` tells the
     caller whether this diverges from what fitness alone would have suggested, so the
-    coach can say so honestly instead of presenting it as the natural choice (FR-002)."""
+    coach can say so honestly instead of presenting it as the natural choice (FR-002).
+
+    `coaching_mode`/`ftp`/`available_minutes` only feed `_long_ride_target_tss()` — every
+    other workout type's target stays the CTL-multiplier estimate above, untouched."""
     preferences = _tsb_bucket_preferences(fitness.tsb, days_since_hard_effort)
 
     was_requested = (
@@ -155,9 +192,12 @@ def choose_workout_type(
             # layer surfaces `preference_overridden` to the athlete).
             chosen = preferences[0]
 
-    target_tss = round(
-        max(_TSS_FLOOR[chosen], fitness.ctl * _TSS_CTL_MULTIPLIER[chosen]), 0
-    )
+    if chosen == "long_ride":
+        target_tss = _long_ride_target_tss(available_minutes, coaching_mode, ftp)
+    else:
+        target_tss = round(
+            max(_TSS_FLOOR[chosen], fitness.ctl * _TSS_CTL_MULTIPLIER[chosen]), 0
+        )
 
     reasoning = (
         f"TSB {fitness.tsb:+.0f}, charge des 7 derniers jours {snapshot.tss_7d:.0f} TSS "
@@ -215,6 +255,9 @@ def build_freestyle_suggestion(
         days_since_hard_effort=days_since_hard_effort,
         avoid_workout_types=avoid_workout_types,
         requested_workout_type=requested_workout_type,
+        coaching_mode=coaching_mode,
+        ftp=ftp,
+        available_minutes=available_minutes,
     )
     candidates = candidates_for(choice.workout_type)
     # Start from the day-rotated candidate for variety, but a fixed-duration template

@@ -771,6 +771,23 @@ paramètre, tout venait du serveur). Le `target_tss` retourné est enregistré d
 `MetricRegistry` de la vérification de réponse (spec 006) comme n'importe quelle autre métrique — durée et
 zone ne le sont jamais (déjà exclues structurellement par `response_verification.py`, R5).
 
+**Cible de charge par type — hors `long_ride`** (`_TSS_FLOOR`/`_TSS_CTL_MULTIPLIER`) : `target_tss = max(floor,
+CTL × coefficient)`, un engineering guess assumé comme tel — aucune règle "TSS d'une séance = fraction de
+CTL" n'est documentée nulle part (vérifié 2026-09-20), contrairement au TSS/heure par zone (`tss.py::ZONE_IF`,
+lui sourcé Coggan/TrainingPeaks — IF² × 100). Pas retouché faute de mieux à sourcer ; à revisiter si une
+meilleure référence apparaît.
+
+**`long_ride` — cas à part, durée d'abord** (corrigé 2026-09-20, trouvé en test live) : l'ancien
+`_TSS_CTL_MULTIPLIER["long_ride"] = 1.4` donnait à un athlète déconditionné (CTL bas après une coupure) une
+« sortie longue » de ~65min — jamais sourcé, et contraire à la définition même de « longue » (Friel :
+30min à 2h+ selon l'objectif, toujours la sortie la plus longue de la semaine, indépendamment de la charge
+courante). `_long_ride_target_tss()` inverse la logique : durée d'abord (plancher `LONG_RIDE_MIN_MINUTES`
+= 120min, jamais dérivé de CTL), TSS dérivée via `tss.estimate_session_tss("Z2", durée, …)` — la même
+fonction que `fit_template()` utilise en interne, donc la durée qui ressort correspond exactement à celle
+demandée (pas de dérive entre deux constantes zone/TSS différentes). Une durée demandée (`available_minutes`)
+au-dessus du plancher est honorée telle quelle ; en dessous, le plancher gagne — `fit_template()` refuse
+honnêtement plutôt que de servir une « longue » plus courte que ce mot ne veut dire (Principe IV).
+
 **Feedback post-activité en mode libre** (`app/services/activity_feedback.py`) : l'outcome `"no_plan"` est
 retiré, remplacé par `"freestyle"` — `_assemble_freestyle_feedback()` logge la séance
 (`plan_id`/`week_number`/`day_of_week` à `NULL`, `status="unplanned"`), calcule forme + highlight comme le
