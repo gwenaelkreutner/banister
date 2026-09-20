@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.activity import Activity
 from app.db.models.chat_message import ChatMessage
+from app.db.models.coach_journal import CoachJournalEntry
 from app.db.models.guardrail import GuardrailAcknowledgement, ResponseCheckFailure
 from app.db.models.profile import AthleteProfile
 from app.db.models.publication import PublicationApproval, PublishedEntry
@@ -115,6 +116,13 @@ _PURGE_MODELS = (
     Activity,
     TrainingPlan,
     AthleteProfile,
+    # Enduragent parity review (2026-09-20): the dated journal is an extension of
+    # coach_memory/athlete_notes (both purged above via AthleteProfile) — unlike
+    # MealEntry, it IS coaching-relationship data (goal changes, injuries, durable
+    # notes), not a personal record the athlete asked to survive independently of the
+    # relationship. Leaving it behind would let a "reset" coach still answer
+    # memory_query about the pre-reset athlete, defeating the point of /reset.
+    CoachJournalEntry,
     # Without this, history_import_complete stays True after Activity rows are wiped
     # above, so import_history() no-ops forever and the athlete's history never comes
     # back after a /reset. Deleting the row (not just the flag) also clears

@@ -334,6 +334,51 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_query",
+            "description": (
+                "Recherche dans l'historique daté du coaching (changements d'objectif, "
+                "blessures passées, bascules mode libre/objectif, observations durables) "
+                "sur une période donnée — ce n'est PAS déjà dans ton contexte (la mémoire "
+                "coach affichée montre seulement les 5 notes les plus récentes). Utilise "
+                "cet outil quand l'athlète référence un fait passé qui n'est ni dans les "
+                "7 dernières séances ni dans la mémoire coach actuelle (ex: 'tu te "
+                "souviens de ma blessure au genou ?', 'c'était quand mon dernier "
+                "changement d'objectif ?')."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "from_date": {
+                        "type": "string",
+                        "description": "Date de début (incluse), format AAAA-MM-JJ.",
+                    },
+                    "to_date": {
+                        "type": "string",
+                        "description": "Date de fin (incluse), format AAAA-MM-JJ.",
+                    },
+                    "keyword": {
+                        "type": "string",
+                        "description": (
+                            "Sous-chaîne à rechercher, insensible à la casse. Omets ce "
+                            "champ pour tout retourner sur la période."
+                        ),
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": [
+                            "fatigue", "motivation", "physique", "event", "preference",
+                            "goal_change", "injury", "freestyle_toggle",
+                        ],
+                        "description": "Filtre optionnel sur une catégorie précise.",
+                    },
+                },
+                "required": ["from_date", "to_date"],
+            },
+        },
+    },
 ]
 
 # Tools that only make sense with an active plan — offering them in freestyle mode

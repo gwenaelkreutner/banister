@@ -111,6 +111,17 @@ async def _enter_freestyle_mode(
 
     await repo.plan_repo.deactivate_all_for_user(session, user.id)
 
+    from app.db.repositories import journal_repo
+
+    await journal_repo.create(
+        session,
+        user_id=user.id,
+        entry_date=date.today(),
+        category="freestyle_toggle",
+        source="deterministic",
+        text="Passage en mode libre — objectif désactivé.",
+    )
+
     withdrawn = 0
     calendar_note = ""
     try:
@@ -289,6 +300,39 @@ async def _apply_new_plan(
         end_date=new_plan.end_date or date.today(),
     )
     await repo.profile_repo.update(session, profile_row, profile.model_dump(mode="json"))
+
+    # Journal daté (Enduragent parity review, 2026-09-20) — texte templaté depuis des
+    # variables déjà calculées, jamais de prose libre (source="deterministic"). Venir du
+    # mode libre est une bascule de mode (freestyle_toggle), pas un simple changement
+    # d'objectif au sein du mode objectif (goal_change) — un seul événement par clic,
+    # pas les deux.
+    from app.db.repositories import journal_repo
+
+    date_str = f" (cible {target_date:%d/%m/%Y})" if target_date else ""
+    if old_schema is None:
+        await journal_repo.create(
+            session,
+            user_id=user.id,
+            entry_date=date.today(),
+            category="freestyle_toggle",
+            source="deterministic",
+            text=(
+                f"Sortie du mode libre — objectif {goal}{date_str}, "
+                f"plan {new_plan.weeks_count} semaines."
+            ),
+        )
+    else:
+        await journal_repo.create(
+            session,
+            user_id=user.id,
+            entry_date=date.today(),
+            category="goal_change",
+            source="deterministic",
+            text=(
+                f"Objectif changé vers {goal}{date_str} — plan "
+                f"{old_schema.weeks_count}→{new_plan.weeks_count} semaines."
+            ),
+        )
 
     # Calendrier publié sous l'ancien plan → périmé (FR-014, réutilise spec 005). Rien à
     # vérifier si on vient du mode libre (aucun ancien plan, donc rien de publié).

@@ -51,3 +51,6 @@ class User(Base, TimestampMixin):
     meal_entries: Mapped[list["MealEntry"]] = relationship(  # noqa: F821
         back_populates="user", cascade="all, delete-orphan"
     )
+    coach_journal_entries: Mapped[list["CoachJournalEntry"]] = relationship(  # noqa: F821
+        back_populates="user", cascade="all, delete-orphan"
+    )

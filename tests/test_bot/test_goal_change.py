@@ -24,7 +24,7 @@ from app.db.models.chat_message import ChatMessage
 from app.db.models.session_log import SessionLog
 from app.db.models.user import User
 from app.db.models.weekly_adherence import WeeklyAdherence
-from app.db.repositories import plan_repo, profile_repo, session_log_repo
+from app.db.repositories import journal_repo, plan_repo, profile_repo, session_log_repo
 from app.engine.plan_builder import generate_plan
 from tests.test_engine.test_plan_builder import make_profile
 
@@ -406,3 +406,70 @@ async def test_goal_confirm_apply_preserves_history_like_direct_regenerate(db_se
 
     after = len(await session_log_repo.get_all_for_user(db_session, u.id))
     assert before == after
+
+
+# ── Journal daté (Enduragent parity review, 2026-09-20) ─────────────────────
+
+
+async def test_goal_change_journals_a_deterministic_goal_change_entry(db_session):
+    """_apply_new_plan journals category=goal_change (source=deterministic, text
+    templated from already-computed variables) when an old plan existed to diff
+    against — distinct from the freestyle_toggle case below."""
+    u = await _populate(db_session)
+    await _regenerate(_Msg(), _State(), db_session, u, "fitness", None)
+
+    rows = await journal_repo.query(db_session, u.id, date.today(), date.today())
+    assert len(rows) == 1
+    assert rows[0].category == "goal_change"
+    assert rows[0].source == "deterministic"
+    assert "fitness" in rows[0].text
+
+
+async def test_regenerate_from_freestyle_journals_freestyle_toggle_not_goal_change(db_session):
+    """Coming from freestyle mode (no old plan to diff) is a mode switch, not an
+    in-mode goal change — must journal freestyle_toggle, never both."""
+    u = await _make_user_no_plan(db_session, telegram_id=4301)
+    await _regenerate(_Msg(), _State(), db_session, u, "fitness", None)
+
+    rows = await journal_repo.query(db_session, u.id, date.today(), date.today())
+    assert len(rows) == 1
+    assert rows[0].category == "freestyle_toggle"
+    assert rows[0].source == "deterministic"
+
+
+async def test_entering_freestyle_mode_journals_a_freestyle_toggle_entry(db_session, monkeypatch):
+    u = await _populate(db_session)
+
+    async def _fake_withdraw(session, client, user, plan_):
+        return (0, 0)
+
+    monkeypatch.setattr("app.services.publication.withdraw_all_publications", _fake_withdraw)
+
+    callback, state = _Callback("goal:type:freestyle"), _State()
+    await _enter_freestyle_mode(callback, state, db_session, u)
+
+    rows = await journal_repo.query(db_session, u.id, date.today(), date.today())
+    assert len(rows) == 1
+    assert rows[0].category == "freestyle_toggle"
+    assert rows[0].source == "deterministic"
+
+
+async def test_entering_freestyle_mode_when_already_freestyle_journals_nothing(db_session):
+    """Idempotent path (no plan to deactivate) — must not fabricate an event."""
+    u = await _make_user_no_plan(db_session, telegram_id=4302)
+    callback, state = _Callback("goal:type:freestyle"), _State()
+    await _enter_freestyle_mode(callback, state, db_session, u)
+
+    rows = await journal_repo.query(db_session, u.id, date.today(), date.today())
+    assert rows == []
+
+
+async def test_regenerate_from_freestyle_writes_freestyle_toggle_not_goal_change(db_session):
+    """Coming from freestyle mode is a mode-switch event, not a plain goal change —
+    exactly one journal entry per click, never both categories for the same action."""
+    u = await _make_user_no_plan(db_session)
+    msg, state = _Msg(), _State()
+    await _regenerate(msg, state, db_session, u, "fitness", date.today() + timedelta(days=120))
+
+    rows = await journal_repo.query(db_session, u.id, date.today(), date.today())
+    assert [r.category for r in rows] == ["freestyle_toggle"]

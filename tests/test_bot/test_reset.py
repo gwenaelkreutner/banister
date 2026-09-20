@@ -11,10 +11,11 @@ from sqlalchemy import func, select
 from app.bot.routers import reset as reset_router
 from app.bot.routers.reset import cmd_reset, reset_confirm
 from app.db.models.chat_message import ChatMessage
+from app.db.models.coach_journal import CoachJournalEntry
 from app.db.models.meal_entry import MealEntry
 from app.db.models.session_log import SessionLog
 from app.db.models.user import User
-from app.db.repositories import plan_repo, profile_repo, user_repo
+from app.db.repositories import journal_repo, plan_repo, profile_repo, user_repo
 from app.engine.plan_builder import generate_plan
 from tests.test_engine.test_plan_builder import make_profile
 
@@ -61,6 +62,10 @@ async def _populate(db_session) -> User:
         user_id=u.id, entry_date=date.today(), entry_type="meal", meal_slot="lunch",
         raw_description="omelette", estimated_calories=500,
     ))
+    await journal_repo.create(
+        db_session, user_id=u.id, entry_date=date.today(), category="goal_change",
+        source="deterministic", text="Objectif changé vers fitness.",
+    )
     await db_session.flush()
     return u
 
@@ -106,6 +111,10 @@ async def test_exact_word_deletes_everything_local_and_keeps_identity(db_session
     # it survives a /reset by explicit athlete request, unlike everything else here.
     assert await db_session.scalar(select(func.count()).select_from(MealEntry)) == 1
 
+    # Enduragent parity review (2026-09-20) — the dated journal IS coaching-relationship
+    # data (unlike MealEntry), purged like coach_memory/athlete_notes.
+    assert await db_session.scalar(select(func.count()).select_from(CoachJournalEntry)) == 0
+
     refreshed = await db_session.get(User, u.id)
     assert refreshed is not None                    # user row survives
     assert refreshed.coach_voice == "zen"           # identity kept (FR-020)
@@ -118,6 +127,12 @@ def test_meal_entries_not_in_purge_models():
     purge targets, the same standard test_reset_path_issues_no_outbound_call sets for
     the outbound-call guarantee."""
     assert MealEntry not in user_repo._PURGE_MODELS
+
+
+def test_coach_journal_entry_is_in_purge_models():
+    """Enduragent parity review (2026-09-20) — the inverse of the MealEntry check
+    above: the journal IS coaching-relationship data, so it must be a purge target."""
+    assert CoachJournalEntry in user_repo._PURGE_MODELS
 
 
 def test_reset_path_issues_no_outbound_call():
