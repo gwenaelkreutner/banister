@@ -306,7 +306,7 @@ SCOPE_OF_ADVICE_RULES = (
 )
 
 
-def build_ux_system_prompt(user_level: int, persona=None) -> str:
+def build_ux_system_prompt(user_level: int, persona=None, first_name: str | None = None) -> str:
     """Retourne le system prompt UXWriting avec vocabulaire adapté au niveau.
 
     Args:
@@ -314,6 +314,12 @@ def build_ux_system_prompt(user_level: int, persona=None) -> str:
         persona: si fourni (spec 007 US5), sa voix `ux_prompt` remplace le texte
           "Pace" par défaut. Le vocabulaire adapté au niveau et les règles spec 006
           (scope-of-advice) restent ajoutés dans tous les cas.
+        first_name: si fourni, ajoute le bloc d'identité du coach (persona ou
+          COACH_SOUL) en fin de prompt — c'est ce bloc, 100 % statique, qui vivait
+          auparavant à la fin de app/llm/tools.py::build_system_prompt() (préfixe
+          stable / queue volatile, voir doc de revue Enduragent 2026-09-20). Laisser
+          à None préserve le comportement historique pour les appelants qui n'ont
+          jamais eu ce bloc (app/bot/routers/forme.py, app/llm/activity_analysis.py).
 
     Returns:
         System prompt string à passer au LLM.
@@ -339,8 +345,17 @@ def build_ux_system_prompt(user_level: int, persona=None) -> str:
         f"{SCOPE_OF_ADVICE_RULES}"
     )
 
+    identity_block = ""
+    if first_name is not None:
+        identity = (
+            persona.format_system_prompt(first_name=first_name)
+            if persona is not None
+            else COACH_SOUL.format(first_name=first_name)
+        )
+        identity_block = f"\n\n{identity}"
+
     if persona is not None:
-        return f"{persona.ux_prompt.strip()}\n\n{level_and_rules}"
+        return f"{persona.ux_prompt.strip()}\n\n{level_and_rules}{identity_block}"
 
     return (
         "Tu t'appelles Pace, coach cyclisme personnel. "
@@ -364,6 +379,7 @@ def build_ux_system_prompt(user_level: int, persona=None) -> str:
         "Réponds à la dernière question en utilisant le contexte de l'échange si nécessaire, mais sans répéter ce qui a déjà été dit. "
         "Si la question ne concerne pas l'entraînement ou le vélo, réponds directement et brièvement sans utiliser les données sportives. "
         "Écris exclusivement en français — n'utilise jamais de caractères chinois, japonais, arabes ou d'une autre langue."
+        f"{identity_block}"
     )
 
 

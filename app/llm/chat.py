@@ -87,7 +87,9 @@ async def run_chat(
     from app.services.coach_voice import resolve_voice
 
     _persona, _voice_fell_back = resolve_voice(user)
-    ux_rules = build_ux_system_prompt(user_level, persona=_persona)
+    ux_rules = build_ux_system_prompt(
+        user_level, persona=_persona, first_name=user.first_name or "l'athlète"
+    )
     def _item_date(item):
         return item.logged_date if hasattr(item, "logged_date") else item.activity_date
 
@@ -163,7 +165,6 @@ async def run_chat(
         calendar_divergence=calendar_divergence,
         guardrail_findings=guardrail_findings,
         recovery_insufficiency=recovery_gap,
-        persona=_persona,
     )
     system = f"{ux_rules}\n\n---\n\n{coaching_ctx}"
     if has_load_reduction_finding(guardrail_findings):

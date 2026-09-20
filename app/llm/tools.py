@@ -9,7 +9,7 @@ from app.engine.atl_ctl import FitnessMetrics, compute_fitness, tsb_label
 from app.engine.freestyle_selector import VALID_WORKOUT_TYPES
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
 from app.engine.zones import compute_hr_zones
-from app.llm.prompts import COACH_SOUL
+from app.llm.prompt_fence import sanitize_untrusted_text, wrap_untrusted_block
 
 # ── Schémas des outils (format OpenAI tool_use) ──────────────────────────────
 
@@ -482,7 +482,6 @@ def build_system_prompt(
     calendar_divergence: str | None = None,
     guardrail_findings: list | None = None,
     recovery_insufficiency: str | None = None,
-    persona=None,
 ) -> str:
     p = profile
 
@@ -501,8 +500,6 @@ def build_system_prompt(
     )
 
     lines = [
-        f"📅 {DAY_NAMES_FR[now_paris.weekday()]} {now_paris.strftime('%d/%m/%Y — %H:%M')}",
-        "",
         f"PROFIL ATHLÈTE — {first_name} :",
         f"- Niveau : {LEVEL_FR.get(p.level, p.level)} | Objectif : {goal_str} (date cible : {target_str})",
         f"- FTP : {ftp_str} | FC max : {p.physio.hr_max} bpm | FC repos : {p.physio.hr_rest} bpm | LTHR ~{lthr_est} bpm (estimé)",
@@ -523,19 +520,25 @@ def build_system_prompt(
             f"⚠️ BLESSURE ACTIVE : {loc} ({sev}) — zones restreintes : {restr_str}",
         ]
 
-    # Mémoire coach
+    # Mémoire coach — texte écrit par le LLM lui-même (outil update_coach_memory) et
+    # réinjecté tel quel à chaque tour futur : encadré entre marqueurs anti-injection
+    # (app/llm/prompt_fence.py), jamais interpolé brut dans le prompt.
     _memory = coach_memory or []
     _notes = athlete_notes or {}
     if _memory or _notes:
-        lines.append("")
-        lines.append("MÉMOIRE COACH :")
+        mem_lines = ["MÉMOIRE COACH :"]
         for m in sorted(_memory, key=lambda x: x.get("date", ""), reverse=True)[:5]:
-            lines.append(f"• [{m.get('date','')}] {m.get('category','')} — {m.get('note','')}")
+            note = sanitize_untrusted_text(m.get("note", ""))
+            mem_lines.append(f"• [{m.get('date','')}] {m.get('category','')} — {note}")
         if _notes:
-            lines.append("NOTES ATHLÈTE :")
+            mem_lines.append("NOTES ATHLÈTE :")
             for k, v in _notes.items():
                 if v:
-                    lines.append(f"• {k} : {v}")
+                    key = sanitize_untrusted_text(str(k))
+                    val = sanitize_untrusted_text(str(v))
+                    mem_lines.append(f"• {key} : {val}")
+        lines.append("")
+        lines.extend(wrap_untrusted_block(mem_lines))
 
     # Métriques de forme
     if metrics:
@@ -615,11 +618,16 @@ def build_system_prompt(
     if recovery_insufficiency:
         lines += ["", f"ℹ️ {recovery_insufficiency}"]
 
-    lines.append("")
-    if persona is not None:
-        lines.append(persona.format_system_prompt(first_name=first_name))
-    else:
-        lines.append(COACH_SOUL.format(first_name=first_name))
+    # Donnée la plus volatile (précision minute, change à chaque appel) — en dernier
+    # pour maximiser la portion du prompt identique d'un appel à l'autre (cache
+    # automatique côté OpenRouter/DeepSeek : la boucle de chat principale y appelle
+    # toujours ce provider, cf. app/llm/chat_client.py — pas de breakpoint explicite
+    # nécessaire, juste un préfixe stable). Le bloc d'identité coach, lui, est 100 %
+    # statique et vit désormais dans build_ux_system_prompt (préfixe stable).
+    lines += [
+        "",
+        f"📅 {DAY_NAMES_FR[now_paris.weekday()]} {now_paris.strftime('%d/%m/%Y — %H:%M')}",
+    ]
 
     return "\n".join(lines)
 
