@@ -9,8 +9,17 @@ from datetime import date, timedelta
 
 from sqlalchemy import func, select
 
-from app.bot.routers.goal import _enter_freestyle_mode, _regenerate, cmd_goal, goal_type
+from app.bot.routers.goal import (
+    _enter_freestyle_mode,
+    _regenerate,
+    cmd_goal,
+    goal_confirm_apply,
+    goal_confirm_cancel,
+    goal_date,
+    goal_type,
+)
 from app.bot.routers.setup import parse_goal_date
+from app.bot.states import GoalStates, PlanStates
 from app.db.models.chat_message import ChatMessage
 from app.db.models.session_log import SessionLog
 from app.db.models.user import User
@@ -45,7 +54,8 @@ def test_parse_goal_date_flags_too_soon_and_too_far_but_keeps_the_date():
 
 
 class _Msg:
-    def __init__(self):
+    def __init__(self, text: str | None = None):
+        self.text = text
         self.sent = []
         self.markups = []
 
@@ -305,3 +315,94 @@ async def test_regenerate_from_freestyle_withdraws_pending_freestyle_publication
     assert "mode libre retirée" in msg.sent[-1]
     active = await freestyle_publication_repo.get_active_for_user(db_session, u.id)
     assert active == []
+
+
+# ── Confirmation gating (revu) — plan actif → confirmer avant d'écraser ──────
+
+
+_FAR_ENOUGH_DATE = (date.today() + timedelta(days=120)).isoformat()
+
+
+async def test_goal_date_shows_confirmation_when_a_plan_is_active(db_session):
+    u = await _populate(db_session)
+    msg, state = _Msg(text=_FAR_ENOUGH_DATE), _State()
+    await state.update_data(goal="fitness")
+
+    await goal_date(msg, state, db_session, u)
+
+    assert state.state == GoalStates.CONFIRM_REGEN
+    assert "Confirmer" in msg.sent[-1]
+    # Rien n'a encore été écrit — l'ancien plan et l'ancien objectif restent en place.
+    plan = await plan_repo.get_active_plan(db_session, u.id)
+    assert plan is not None
+    profile = await profile_repo.get_by_user_id(db_session, u.id)
+    assert profile.profile["objective"]["type"] == "event"
+
+
+async def test_goal_date_from_freestyle_applies_immediately_without_confirmation(db_session):
+    """spec 009 : venir du mode libre = rien à perdre — comportement inchangé."""
+    u = await _make_user_no_plan(db_session)
+    msg, state = _Msg(text=_FAR_ENOUGH_DATE), _State()
+    await state.update_data(goal="fitness")
+
+    await goal_date(msg, state, db_session, u)
+
+    assert state.state != GoalStates.CONFIRM_REGEN
+    plan = await plan_repo.get_active_plan(db_session, u.id)
+    assert plan is not None
+    profile = await profile_repo.get_by_user_id(db_session, u.id)
+    assert profile.profile["objective"]["type"] == "fitness"
+
+
+async def test_goal_confirm_cancel_keeps_the_old_plan_untouched(db_session):
+    u = await _populate(db_session)
+    old_plan = await plan_repo.get_active_plan(db_session, u.id)
+    msg, state = _Msg(text=_FAR_ENOUGH_DATE), _State()
+    await state.update_data(goal="fitness")
+    await goal_date(msg, state, db_session, u)
+
+    callback = _Callback("goal:confirm:cancel")
+    await goal_confirm_cancel(callback, state, db_session, u)
+
+    assert "inchangé" in callback.message.sent[-1].lower()
+    plan = await plan_repo.get_active_plan(db_session, u.id)
+    assert plan.id == old_plan.id
+    profile = await profile_repo.get_by_user_id(db_session, u.id)
+    assert profile.profile["objective"]["type"] == "event"
+    assert state.state == PlanStates.ACTIVE
+
+
+async def test_goal_confirm_apply_applies_the_pending_plan(db_session):
+    u = await _populate(db_session)
+    old_plan = await plan_repo.get_active_plan(db_session, u.id)
+    msg, state = _Msg(text=_FAR_ENOUGH_DATE), _State()
+    await state.update_data(goal="fitness")
+    await goal_date(msg, state, db_session, u)
+    assert state.state == GoalStates.CONFIRM_REGEN
+
+    callback = _Callback("goal:confirm:apply")
+    await goal_confirm_apply(callback, state, db_session, u)
+
+    plan = await plan_repo.get_active_plan(db_session, u.id)
+    assert plan is not None
+    assert plan.id != old_plan.id
+    profile = await profile_repo.get_by_user_id(db_session, u.id)
+    assert profile.profile["objective"]["type"] == "fitness"
+    summary = callback.message.sent[-1]
+    assert "gardé" in summary and "change" in summary
+
+
+async def test_goal_confirm_apply_preserves_history_like_direct_regenerate(db_session):
+    """Même garantie SC-005 que test_goal_change_preserves_all_history, via le chemin
+    de confirmation cette fois."""
+    u = await _populate(db_session)
+    before = len(await session_log_repo.get_all_for_user(db_session, u.id))
+
+    msg, state = _Msg(text=_FAR_ENOUGH_DATE), _State()
+    await state.update_data(goal="fitness")
+    await goal_date(msg, state, db_session, u)
+    callback = _Callback("goal:confirm:apply")
+    await goal_confirm_apply(callback, state, db_session, u)
+
+    after = len(await session_log_repo.get_all_for_user(db_session, u.id))
+    assert before == after

@@ -466,3 +466,125 @@ def build_coach_blocks_user_message(
         lines.append(f"\n- Prochaine séance : {next_session_info}")
 
     return "\n".join(lines)
+
+
+# ── /review — synthèse de séance à la demande, profondeur variable ──────────
+
+# Budgets calibrés sur le ratio observé chez Enduragent (référence open source) :
+# Tier A ~50 mots / Tier B (défaut) ~200 mots / Tier C ~500-600 mots, soit ~1:4:10.
+# Le défaut banister (150-200 mots) collait déjà au Tier B réel — inchangé ici.
+REVIEW_WORD_BUDGETS: dict[str, str] = {
+    "brief": "60 à 80 mots",
+    "default": "150 à 200 mots",
+    "deep": "450 à 550 mots",
+}
+
+# Décision owner : PAS de substitution de vocabulaire à la Enduragent (TSS→"Load" etc.).
+# Cette règle chez Enduragent est motivée par une contrainte de marque déposée
+# (Peaksware/TrainingPeaks), sans rapport avec banister — qui utilise déjà librement
+# TSS/CTL/ATL/TSB dans /recap, /forme et tout le reste du produit.
+REVIEW_VOCAB_RULES: dict[str, str] = {
+    "deep": (
+        "Vocabulaire technique libre (TSS, CTL, ATL, TSB, IF...) — l'athlète a demandé "
+        "le détail, comme dans /forme et /recap."
+    ),
+    "default": (
+        "Langage courant par défaut ; si un terme technique (TSS, CTL, ATL, TSB...) est "
+        "vraiment le point clé, tu peux l'utiliser — l'athlète le voit déjà ailleurs "
+        "dans le bot (/forme, /recap)."
+    ),
+    "brief": (
+        "Langage courant, va à l'essentiel — pas de détail technique inutile sur un "
+        "format aussi court."
+    ),
+}
+
+REVIEW_RPE_MISSING_RULE = """RÈGLE NON-NÉGOCIABLE — ressenti (RPE) absent sur cette séance :
+Les chiffres seuls (durée, TSS, zones, puissance) ne suffisent JAMAIS à juger si une
+séance "s'est bien passée" — ils ne disent rien de la fatigue ressentie, de la
+récupération ou du contexte de vie. Si le ressenti de l'athlète n'est pas fourni :
+- Réponds à "ça s'est bien passé ?" avec le seul constat factuel (durée, TSS, zone
+  dominante) et dis explicitement qu'il n'y a pas assez d'éléments pour juger.
+- Ne dis JAMAIS "séance réussie" / "bien géré" / "parfait" à partir des seules stats.
+- Ne change JAMAIS la recommandation pour la prochaine séance sur cette seule base —
+  demande le ressenti à la place de trancher.
+"""
+
+
+def build_review_system_prompt(depth: str, has_rpe: bool) -> str:
+    """Prompt système pour la synthèse `/review` — un seul appel one-shot par revue
+    (comme template_picker.py/narrator.py), jamais la boucle agentique : toutes les
+    données sont déjà assemblées par assemble_review_context() avant l'appel."""
+    word_budget = REVIEW_WORD_BUDGETS[depth]
+    vocab_rule = REVIEW_VOCAB_RULES[depth]
+    rpe_block = "" if has_rpe else f"\n{REVIEW_RPE_MISSING_RULE}"
+
+    return f"""Tu es Banister, coach cyclisme. Tu reçois les données pré-calculées d'une
+séance déjà réalisée et loggée, que l'athlète relit après coup via /review.
+
+Règles absolues :
+- Ne modifie/recalcule JAMAIS un chiffre — les valeurs fournies sont correctes.
+- N'invente jamais un chiffre qui n'est pas dans les données fournies.
+- {vocab_rule}
+- Maximum {word_budget}. Prose uniquement — pas de tableau, pas de liste à puces.
+- Tutoiement, direct, pas de formules de politesse en ouverture.
+
+Structure obligatoire, dans cet ordre :
+1. Ça s'est bien passé ? (1-2 phrases, le ressenti global)
+2. Un point à corriger ou à remarquer (un seul, concret — ou "rien à signaler" si RAS)
+3. Ce que ça implique pour la prochaine séance (une recommandation)
+4. Si un signal de forme est préoccupant (TSB très négatif, tendance de charge en forte
+   hausse) : une phrase sur la vue d'ensemble. Sinon, omets ce point.
+{rpe_block}"""
+
+
+def build_review_user_message(ctx) -> str:
+    """Construit le message utilisateur pour generate_session_review(). `ctx` est un
+    ReviewContext (app/services/session_review.py) — import non typé ici pour éviter un
+    cycle prompts.py ↔ services/."""
+    log = ctx.log
+    lines = ["DONNÉES SÉANCE :"]
+    lines.append(f"- Date : {log.logged_date:%d/%m/%Y}")
+    if log.session_type_real:
+        lines.append(f"- Type réalisé : {log.session_type_real}")
+    if log.duration_minutes_actual is not None:
+        lines.append(f"- Durée : {log.duration_minutes_actual} min")
+    if log.tss_actual is not None:
+        tss_line = f"- TSS : {log.tss_actual:.0f}"
+        if ctx.session_spec is not None:
+            tss_line += f" (prévu : {ctx.session_spec.tss_target:.0f})"
+        lines.append(tss_line)
+    if ctx.session_spec is not None:
+        lines.append(f"- Type prévu : {ctx.session_spec.workout_type}")
+    if log.dominant_zone:
+        lines.append(f"- Zone dominante : {log.dominant_zone}")
+    if log.avg_power is not None:
+        lines.append(f"- Puissance moyenne : {log.avg_power} W")
+    if log.avg_heart_rate is not None:
+        lines.append(f"- FC moyenne : {log.avg_heart_rate} bpm")
+
+    rpe_labels = {"hard": "Dur", "normal": "Normal", "easy": "Facile"}
+    if log.rpe_emoji:
+        lines.append(f"- Ressenti athlète : {rpe_labels.get(log.rpe_emoji, log.rpe_emoji)}")
+    else:
+        lines.append("- Ressenti athlète : non renseigné")
+
+    if ctx.fitness_at_session is not None:
+        from app.engine.atl_ctl import tsb_label
+
+        f = ctx.fitness_at_session
+        lines.append(
+            f"- Forme au moment de la séance : TSB {f.tsb:+.0f} ({tsb_label(f.tsb)}), "
+            f"CTL {f.ctl:.0f}, ATL {f.atl:.0f}"
+        )
+
+    snap = ctx.weekly_snapshot
+    if snap.monotony_index is not None:
+        lines.append(f"- Monotonie de la semaine : {snap.monotony_index}")
+    if snap.load_trend_pct:
+        trend_dir = "en hausse" if snap.load_trend_pct > 0 else "en baisse"
+        lines.append(
+            f"- Tendance de charge 7j vs habitude : {snap.load_trend_pct:+.0f}% ({trend_dir})"
+        )
+
+    return "\n".join(lines)

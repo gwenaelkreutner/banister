@@ -16,6 +16,14 @@ async def get_active_plan(session: AsyncSession, user_id) -> TrainingPlan | None
     return result.scalar_one_or_none()
 
 
+async def get_by_id(session: AsyncSession, plan_id: uuid.UUID) -> TrainingPlan | None:
+    """Le plan exact référencé par un SessionLog.plan_id — peut être désactivé depuis
+    (un /goal a régénéré), contrairement à get_active_plan(). Utilisé par /review pour
+    retrouver la séance planifiée telle qu'elle était au moment loggé."""
+    result = await session.execute(select(TrainingPlan).where(TrainingPlan.id == plan_id))
+    return result.scalar_one_or_none()
+
+
 async def deactivate_all_for_user(session: AsyncSession, user_id) -> None:
     """Marque tous les plans actifs de l'utilisateur comme inactifs.
 

@@ -18,6 +18,7 @@ class GoalStates(StatesGroup):
     """spec 007 /goal — changer d'objectif sans repasser tout le setup."""
     GOAL = State()
     DATE = State()
+    CONFIRM_REGEN = State()  # plan actif existant : confirmation avant d'écraser (revu)
 
 
 class ResetStates(StatesGroup):
