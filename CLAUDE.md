@@ -555,10 +555,13 @@ points d'écart, pas une nuance.
 - Calcul **à la demande**, pas de nouvelle colonne wellness/session_log ni d'appel à chaque tick du poller
   (ce n'est pas une donnée journalière) — décision : éviter un appel API de plus par jour pour un signal
   utile ponctuellement
-- ⚠️ **Pas encore câblé à une surface** (`/review`/`/forme`/chat) — le moteur + le client sont livrés et
-  testés contre la vraie forme de réponse API, mais où afficher exactement `rotation_index`/
-  `model_divergence_pct` reste une décision produit à prendre séparément (si un jour généré en texte libre
-  par le LLM, `MetricRegistry`/`_ANCHORS`/`_METRIC_FR` devront être étendus avant, pas après)
+- **Câblé dans `/forme`** (2026-09-21) — `app/bot/routers/forme.py::_fetch_power_profile()` : 3 appels
+  power-curves (delta 2×28j + sustainability Ride/VirtualRide 42j) + 1 appel wellness du jour pour W'
+  (`sportInfo[].wPrime`, pas encore stocké localement — lu à chaque appel, pas persisté). Best-effort,
+  message Telegram séparé, silencieux (`None`) si pas de FTP déclaré, endpoint en échec, ou pas assez de
+  données — jamais affiché comme si la donnée existait. `_format_power_profile()` = texte HTML déterministe
+  (pas de LLM), volontairement pas passé au `MetricRegistry` (décision owner 2026-09-21 : même statut que
+  EF/HRR/TID côté vérification — pas de garde-fou post-hoc sur `/forme`/`/review`, cohérent avec l'existant)
 
 ### DFA α1 (`app/engine/dfa.py`, 2026-09-21, porté de Section11 — AlphaHRV)
 - **Consomme, ne recalcule pas** (Principe IV) : AlphaHRV (champ Garmin Connect IQ) calcule déjà l'exposant
@@ -584,7 +587,13 @@ points d'écart, pas une nuance.
   fidèlement et testé sur des séries synthétiques (`tests/test_engine/test_dfa.py`), la plomberie
   (`get_activity_streams`, confirmée fonctionnelle contre l'API réelle) est prête, mais **rien n'est encore
   validé contre une vraie lecture AlphaHRV** — à revisiter dès la première activité réelle enregistrée
-- Pas encore câblé à une surface, même statut que power-curve ci-dessus
+- **Câblé dans `/review`** (2026-09-21) — `app/bot/routers/review.py::_fetch_dfa()` : un appel réseau
+  best-effort de plus, séparé du reste de `/review` (DB uniquement), déclenché seulement si
+  `log.source_activity_id` existe. `None` sans crash si pas d'activité source, si l'appel échoue, ou si
+  `dfa_a1` est absent des streams (aucun AlphaHRV — le cas normal pour la plupart des comptes). Affiché dans
+  `build_review_user_message()` seulement si `quality.sufficient=True` (un bloc insuffisant reste muet,
+  pas de bruit dans le prompt pour une donnée inexploitable). Même décision que power-curve : pas de
+  `MetricRegistry`/vérification post-hoc sur cette valeur
 
 ### Analyse LLM post-séance (`app/llm/activity_analysis.py`)
 - `generate_activity_analysis(**kwargs)` — prompt structuré en 5 blocs : Séance / Puissance / Qualité / Contexte / Forme & Charge
@@ -1071,8 +1080,8 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Modifier snapshot hebdo (monotonie, tendance) | `app/engine/weekly_snapshot.py` |
 | Modifier le TID / indice de polarisation | `app/engine/tid.py` — seuils dans `app/engine/guardrail_thresholds.py` |
 | Modifier la phase diagnostique (`detected_phase`, distincte de `week.phase`) | `app/engine/phase_detection.py` |
-| Modifier power-curve delta / sustainability_profile | `app/engine/power_curve.py` — endpoint dans `client.get_power_curves()` |
-| Modifier l'analyse DFA α1 | `app/engine/dfa.py` — normalisation streams dans `app/providers/intervals/streams.py` |
+| Modifier power-curve delta / sustainability_profile | `app/engine/power_curve.py` — endpoint dans `client.get_power_curves()`, câblé dans `app/bot/routers/forme.py::_fetch_power_profile()` |
+| Modifier l'analyse DFA α1 | `app/engine/dfa.py` — normalisation streams dans `app/providers/intervals/streams.py`, câblé dans `app/bot/routers/review.py::_fetch_dfa()` |
 | Modifier récap hebdo (logique + LLM) | `app/services/weekly_recap.py` |
 | Lire/écrire l'adhérence hebdomadaire | `app/db/repositories/weekly_adherence_repo.py` |
 | Modifier le scheduler dimanche 20h | `app/main.py` — `_weekly_recap_scheduler()` |

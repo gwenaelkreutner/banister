@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 
 from app.config import settings
+from app.engine.dfa import DFABlock
 from app.llm.prompts import build_review_system_prompt, build_review_user_message
 from app.services.session_review import ReviewContext
 
@@ -17,9 +18,12 @@ _FALLBACK_TEXT = (
 )
 
 
-async def generate_session_review(ctx: ReviewContext) -> str:
+async def generate_session_review(ctx: ReviewContext, dfa: DFABlock | None = None) -> str:
+    """`dfa` : calculé par l'appelant (`app/bot/routers/review.py`), pas ici — nécessite
+    un appel réseau intervals.icu (streams), hors de la responsabilité de ce module
+    one-shot et de `assemble_review_context()` (DB uniquement, zéro réseau)."""
     system = build_review_system_prompt(has_rpe=ctx.log.rpe_emoji is not None)
-    user_message = build_review_user_message(ctx)
+    user_message = build_review_user_message(ctx, dfa=dfa)
 
     try:
         from app.llm.factory import get_provider

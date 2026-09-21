@@ -531,10 +531,12 @@ Structure obligatoire, dans cet ordre :
 {rpe_block}"""
 
 
-def build_review_user_message(ctx) -> str:
+def build_review_user_message(ctx, dfa=None) -> str:
     """Construit le message utilisateur pour generate_session_review(). `ctx` est un
     ReviewContext (app/services/session_review.py) — import non typé ici pour éviter un
-    cycle prompts.py ↔ services/."""
+    cycle prompts.py ↔ services/. `dfa` : DFABlock (app/engine/dfa.py) calculé par
+    l'appelant si l'activité a un enregistrement AlphaHRV — None sinon (aucun
+    enregistrement, ou pas d'`source_activity_id` pour logguer manuel)."""
     log = ctx.log
     lines = ["DONNÉES SÉANCE :"]
     lines.append(f"- Date : {log.logged_date:%d/%m/%Y}")
@@ -559,6 +561,14 @@ def build_review_user_message(ctx) -> str:
         lines.append(f"- Efficiency factor : {log.efficiency_factor:.2f}")
     if log.hrr is not None:
         lines.append(f"- HRRc (récupération FC 60s) : {log.hrr:.0f}")
+    if dfa is not None and dfa.quality.sufficient:
+        dfa_line = f"- DFA α1 moyen : {dfa.avg:.2f}"
+        if dfa.lt1_crossing is not None and dfa.lt1_crossing.avg_hr is not None:
+            dfa_line += f" (franchissement LT1 ~{dfa.lt1_crossing.avg_hr} bpm"
+            if dfa.lt2_crossing is not None and dfa.lt2_crossing.avg_hr is not None:
+                dfa_line += f", LT2 ~{dfa.lt2_crossing.avg_hr} bpm"
+            dfa_line += ")"
+        lines.append(dfa_line)
 
     rpe_labels = {"hard": "Dur", "normal": "Normal", "easy": "Facile"}
     if log.rpe_emoji:

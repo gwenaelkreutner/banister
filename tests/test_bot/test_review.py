@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from app.bot.routers.review import cb_review_pick, cmd_review
+from app.bot.routers.review import _fetch_dfa, cb_review_pick, cmd_review
 from app.db.models.session_log import SessionLog
 from app.db.models.user import User
 
@@ -130,7 +130,7 @@ async def test_pick_another_users_log_is_rejected(db_session):
 async def test_pick_runs_the_review_immediately(db_session, monkeypatch):
     calls = []
 
-    async def _fake_review(ctx):
+    async def _fake_review(ctx, dfa=None):
         calls.append(ctx)
         return "Synthèse générée."
 
@@ -144,3 +144,69 @@ async def test_pick_runs_the_review_immediately(db_session, monkeypatch):
 
     assert len(calls) == 1
     assert callback.message.sent[-1] == "Synthèse générée."
+
+
+# ── _fetch_dfa (2026-09-21) — câblage réseau best-effort ─────────────────────
+
+
+class _FakeStreamsClient:
+    def __init__(self, raw_streams=None, raise_error=False):
+        self._raw_streams = raw_streams or []
+        self._raise_error = raise_error
+        self.calls = []
+
+    async def get_activity_streams(self, activity_id, *, types):
+        self.calls.append((activity_id, types))
+        if self._raise_error:
+            raise RuntimeError("boom")
+        return self._raw_streams
+
+
+async def test_fetch_dfa_returns_none_without_source_activity_id(db_session):
+    user = await _make_user(db_session)
+    log = await _make_log(db_session, user.id, days_ago=1)  # source_activity_id absent
+    assert await _fetch_dfa(log) is None
+
+
+async def test_fetch_dfa_returns_none_on_network_error(db_session, monkeypatch):
+    fake_client = _FakeStreamsClient(raise_error=True)
+    monkeypatch.setattr("app.bot.routers.review._client", lambda: fake_client)
+
+    user = await _make_user(db_session)
+    log = await _make_log(db_session, user.id, days_ago=1, source_activity_id="i123")
+
+    assert await _fetch_dfa(log) is None
+    assert fake_client.calls  # a bien tenté l'appel
+
+
+async def test_fetch_dfa_returns_none_when_no_alphahrv_recording(db_session, monkeypatch):
+    # dfa_a1 absent des streams — état normal pour un compte sans AlphaHRV.
+    fake_client = _FakeStreamsClient(raw_streams=[
+        {"type": "time", "data": [0, 1, 2]},
+        {"type": "watts", "data": [100, 110, 120]},
+    ])
+    monkeypatch.setattr("app.bot.routers.review._client", lambda: fake_client)
+
+    user = await _make_user(db_session)
+    log = await _make_log(db_session, user.id, days_ago=1, source_activity_id="i123")
+
+    assert await _fetch_dfa(log) is None
+    assert fake_client.calls[0] == ("i123", ["dfa_a1", "artifacts", "heartrate", "watts"])
+
+
+async def test_fetch_dfa_computes_block_when_alphahrv_data_present(db_session, monkeypatch):
+    from app.engine.dfa import DFA_MIN_DURATION_SECS
+
+    n = DFA_MIN_DURATION_SECS + 50
+    fake_client = _FakeStreamsClient(raw_streams=[
+        {"type": "dfa_a1", "data": [0.9] * n},
+    ])
+    monkeypatch.setattr("app.bot.routers.review._client", lambda: fake_client)
+
+    user = await _make_user(db_session)
+    log = await _make_log(db_session, user.id, days_ago=1, source_activity_id="i123")
+
+    result = await _fetch_dfa(log)
+    assert result is not None
+    assert result.quality.sufficient is True
+    assert result.avg == 0.9

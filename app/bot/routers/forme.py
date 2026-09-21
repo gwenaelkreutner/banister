@@ -15,14 +15,33 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.atl_ctl import compute_fitness_from_any, estimate_initial_ctl, tsb_label
+from app.engine.power_curve import (
+    PowerCurveDelta,
+    SustainabilityProfile,
+    compute_power_curve_delta,
+    compute_sustainability_profile,
+)
+from app.engine.schemas import AthleteProfileSchema
 from app.engine.tss import tss_from_weekly_hours
+from app.providers.intervals.client import IntervalsClient
 from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+_DELTA_ANCHOR_LABELS = ("5s", "60s", "300s", "1200s", "3600s")
+_SUSTAINABILITY_KEY_ANCHORS = (("1200s", "20min"), ("3600s", "60min"))
+
+
+def _client() -> IntervalsClient:
+    return IntervalsClient(
+        settings.intervals_api_key.get_secret_value(),
+        athlete_id=settings.intervals_athlete_id,
+    )
 
 
 def _item_date(it):
@@ -110,6 +129,19 @@ async def cmd_forme(message: Message, session: AsyncSession, user: User):
     user_level: int = (profile_db.profile or {}).get("user_level", 0) if profile_db else 0
     interpretation = await _generate_fitness_interpretation(metrics, logs, pre_plan_acts, recent, user_level=user_level)
     await message.answer(escape(interpretation), parse_mode="HTML")
+
+    # Profil de puissance (power-curve delta + sustainability_profile, 2026-09-21) —
+    # best-effort, message séparé, silencieux si indisponible (pas de FTP, endpoint en
+    # échec, pas assez de données).
+    profile_schema: AthleteProfileSchema | None = None
+    if profile_db and profile_db.profile:
+        try:
+            profile_schema = AthleteProfileSchema.model_validate(profile_db.profile)
+        except Exception:
+            logger.warning("Impossible de valider le profil athlète pour /forme")
+    power_profile_text = await _fetch_power_profile(profile_schema)
+    if power_profile_text:
+        await message.answer(power_profile_text, parse_mode="HTML")
 
 
 async def _generate_fitness_interpretation(
@@ -203,6 +235,103 @@ def _fallback_interpretation(metrics) -> str:
         "⚪ Tu es trop frais — risque de désentraînement si ça dure. "
         "Reprends la charge sans attendre."
     )
+
+
+async def _fetch_power_profile(profile: AthleteProfileSchema | None) -> str | None:
+    """Best-effort, calculé à la demande pour /forme, pas persisté (CLAUDE.md § Power-
+    curve delta) — 4 appels réseau intervals.icu (power-curves ×3, wellness du jour pour
+    W'). `None` si indisponible (endpoint en échec, pas assez de données, pas de FTP
+    déclaré) — jamais affiché comme si la donnée existait."""
+    if profile is None or not profile.equipment.ftp:
+        return None
+    try:
+        client = _client()
+        today = date.today()
+        w1_start = (today - timedelta(days=27)).isoformat()
+        w1_end = today.isoformat()
+        w2_end = (today - timedelta(days=28)).isoformat()
+        w2_start = (today - timedelta(days=55)).isoformat()
+        cur_id = f"r.{w1_start}.{w1_end}"
+        prev_id = f"r.{w2_start}.{w2_end}"
+
+        power_response = await client.get_power_curves(
+            curve_type="power",
+            windows=[(w1_start, w1_end), (w2_start, w2_end)],
+            activity_type="Ride",
+        )
+        delta = compute_power_curve_delta(
+            power_response, current_window_id=cur_id, previous_window_id=prev_id
+        )
+
+        sus_start = (today - timedelta(days=41)).isoformat()
+        sus_end = today.isoformat()
+        sus_id = f"r.{sus_start}.{sus_end}"
+        ride_response = await client.get_power_curves(
+            curve_type="power", windows=[(sus_start, sus_end)], activity_type="Ride"
+        )
+        vride_response = await client.get_power_curves(
+            curve_type="power", windows=[(sus_start, sus_end)], activity_type="VirtualRide"
+        )
+
+        # W' (joules) — pas encore stocké localement, lu depuis le wellness du jour
+        # (sportInfo[].wPrime, même chemin que Section11 — voir CLAUDE.md).
+        w_prime = None
+        wellness_today = await client.list_wellness(oldest=sus_end, newest=sus_end)
+        if wellness_today:
+            cycling_info = next(
+                (s for s in (wellness_today[0].get("sportInfo") or []) if s.get("type") == "Ride"),
+                None,
+            )
+            if cycling_info:
+                w_prime = cycling_info.get("wPrime")
+
+        sustainability = compute_sustainability_profile(
+            [ride_response, vride_response],
+            window_id=sus_id,
+            ftp=float(profile.equipment.ftp),
+            w_prime=w_prime,
+            weight_kg=profile.weight_kg,
+        )
+        return _format_power_profile(delta, sustainability)
+    except Exception:
+        logger.warning("Impossible de calculer le profil de puissance pour /forme")
+        return None
+
+
+def _format_power_profile(
+    delta: PowerCurveDelta, sustainability: SustainabilityProfile
+) -> str | None:
+    blocks: list[str] = []
+
+    if delta.rotation_index is not None:
+        parts = []
+        for label in _DELTA_ANCHOR_LABELS:
+            anchor = delta.anchors.get(label)
+            if anchor and anchor.pct_change is not None:
+                sign = "+" if anchor.pct_change >= 0 else ""
+                parts.append(f"{label} {sign}{anchor.pct_change:.0f}%")
+        if parts:
+            bias = "sprint" if delta.rotation_index > 0 else "endurance"
+            blocks.append(
+                "⚡ <b>Profil de puissance (28j vs 28j précédents)</b>\n"
+                + " | ".join(parts)
+                + f"\n→ biais {bias} (rotation {delta.rotation_index:+.1f})"
+            )
+
+    if sustainability.note is None:
+        sus_parts = []
+        for key, label in _SUSTAINABILITY_KEY_ANCHORS:
+            anchor = sustainability.anchors.get(key)
+            if anchor and anchor.actual_watts is not None:
+                div = (
+                    f" ({anchor.model_divergence_pct:+.0f}% vs modèle CP)"
+                    if anchor.model_divergence_pct is not None else ""
+                )
+                sus_parts.append(f"{label} : {anchor.actual_watts:.0f}W{div}")
+        if sus_parts:
+            blocks.append("📈 <b>Soutenabilité (42j)</b>\n" + " | ".join(sus_parts))
+
+    return "\n\n".join(blocks) if blocks else None
 
 
 async def _estimate_ctl_seed(items: list, session, user_id) -> float:

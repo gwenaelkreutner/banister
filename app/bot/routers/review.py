@@ -20,15 +20,45 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.review import recent_sessions_keyboard
+from app.config import settings
 from app.db import repositories as repo
 from app.db.models.session_log import SessionLog
 from app.db.models.user import User
+from app.providers.intervals.client import IntervalsClient
 from app.services.session_review import assemble_review_context
 
 logger = logging.getLogger(__name__)
 router = Router(name="review")
 
 _RECENT_LIMIT = 5
+_DFA_STREAM_TYPES = ["dfa_a1", "artifacts", "heartrate", "watts"]
+
+
+def _client() -> IntervalsClient:
+    return IntervalsClient(
+        settings.intervals_api_key.get_secret_value(),
+        athlete_id=settings.intervals_athlete_id,
+    )
+
+
+async def _fetch_dfa(log: SessionLog):
+    """Best-effort : un appel réseau intervals.icu en plus, séparé du reste de /review
+    (DB uniquement) — jamais bloquant. `None` si pas d'activité source (log manuel), si
+    l'appel échoue, ou si l'athlète n'a pas d'AlphaHRV (dfa_a1 absent des streams — état
+    normal pour la plupart des comptes tant que le champ Garmin n'est pas installé)."""
+    if not log.source_activity_id:
+        return None
+    try:
+        from app.engine.dfa import compute_dfa_block
+        from app.providers.intervals.streams import streams_to_dict
+
+        raw_streams = await _client().get_activity_streams(
+            log.source_activity_id, types=_DFA_STREAM_TYPES
+        )
+        return compute_dfa_block(streams_to_dict(raw_streams))
+    except Exception:
+        logger.warning("Impossible de récupérer les streams DFA pour /review")
+        return None
 
 
 @router.message(Command("review"))
@@ -58,7 +88,8 @@ async def _run_review(
     from app.llm.review import generate_session_review
 
     ctx = await assemble_review_context(session, user, log)
-    text = await generate_session_review(ctx)
+    dfa = await _fetch_dfa(log)
+    text = await generate_session_review(ctx, dfa=dfa)
     await edit_target.edit_text(text, parse_mode="HTML")
 
 
