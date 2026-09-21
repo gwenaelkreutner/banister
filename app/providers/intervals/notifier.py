@@ -231,12 +231,12 @@ async def notify_detected_activity(
                 bot, user.telegram_id, "🔄 <b>Sortie bonus enregistrée</b>", context
             )
         elif context.outcome == "freestyle":
-            # spec 009 US3 — no plan exists to match or miss against, so the title never
-            # implies one (FR-008, US3 Acceptance Scenario 1). Distinct from "unplanned"
-            # copy below, which is specifically about a plan the activity didn't fit.
-            delivered = await _notify_simple(
-                bot, user.telegram_id, "🚴 <b>Activité enregistrée</b>", context
-            )
+            # spec 009 US3 — no plan exists to match or miss against, but the athlete
+            # still gets the same staged notification (with RPE keyboard) as a matched
+            # session: skipping straight to _notify_simple silently never asked for RPE
+            # in freestyle mode (bug found live, 2026-09-21). send_staged_notification
+            # already tolerates candidate=None/match_result=None (built for that path).
+            delivered = await send_staged_notification(bot, user.telegram_id, context)
         else:  # "unplanned"
             delivered = await _notify_simple(
                 bot, user.telegram_id, "🚴 <b>Activité hors plan détectée</b>", context

@@ -215,7 +215,9 @@ class TestNotifyDetectedActivityDeliveryGating:
 
     async def test_no_active_plan_is_reported_and_notified_as_freestyle(self, db_session):
         """spec 009 US3 — freestyle mode gets real feedback now, not a silent skip
-        (the old "no_plan" outcome was retired; see research.md Decision 3)."""
+        (the old "no_plan" outcome was retired; see research.md Decision 3). Also gets
+        the same 3-message staged exchange (RPE keyboard included) as a matched session
+        — bug found live 2026-09-21, freestyle rides never asked for RPE before."""
         user = await _make_user(db_session, 906)
         payload = _load("activity_full.json")
         client = _FakeClient(payload)
@@ -226,5 +228,6 @@ class TestNotifyDetectedActivityDeliveryGating:
 
         activity_id = str(payload["id"])
         assert await sync_state_repo.is_reported(db_session, user.id, activity_id)
-        assert len(bot.sent) == 1
-        assert "hors plan" not in bot.sent[0]  # never implies a plan it didn't match
+        assert len(bot.sent) == 3
+        # never implies a plan it didn't match
+        assert not any("hors plan" in msg for msg in bot.sent)
