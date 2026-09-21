@@ -73,7 +73,7 @@ async def run_agentic_loop(
     tool_executor,  # callable(name: str, args: dict) -> dict
     model: str | None = None,
     max_iterations: int = 3,
-) -> tuple[str, str | None, dict | None, dict]:
+) -> tuple[str, str | None, dict | None, dict, list[dict]]:
     """
     Exécute la boucle agentique tool_use → tool_result jusqu'à end_turn.
 
@@ -81,10 +81,14 @@ async def run_agentic_loop(
     fallback sur contenu vide, appel final après tool call en texte, fallback de fin de
     boucle) — `usage` cumule les tokens de TOUS ces appels, pas juste le dernier.
 
-    Retourne (response_text, tool_used_name | None, last_tool_result | None, usage).
-    `usage` = {"prompt_tokens", "completion_tokens", "total_tokens", "calls"} — tous à 0
-    si l'API n'a jamais renvoyé de champ `usage` (ne devrait pas arriver avec OpenRouter/
-    OpenAI, mais mieux vaut 0 que planter sur un provider qui l'omettrait).
+    Retourne (response_text, tool_used_name | None, last_tool_result | None, usage,
+    tool_calls_log). `usage` = {"prompt_tokens", "completion_tokens", "total_tokens",
+    "calls"} — tous à 0 si l'API n'a jamais renvoyé de champ `usage` (ne devrait pas
+    arriver avec OpenRouter/OpenAI, mais mieux vaut 0 que planter sur un provider qui
+    l'omettrait). `tool_calls_log` = liste de {"name", "args", "result"} pour CHAQUE
+    tool call exécuté ce tour (`last_tool_result` n'en garde que le dernier — un tour
+    qui enregistre plusieurs repas dans la même conversation a besoin des autres aussi,
+    pour construire une confirmation qui ne dépend pas de ce que le LLM dit avoir fait).
     """
     client = _get_client()
     effective_model = model or settings.chat_model
@@ -92,6 +96,7 @@ async def run_agentic_loop(
     all_messages = list(messages)
     tool_used = None
     last_tool_result: dict | None = None
+    tool_calls_log: list[dict] = []
     usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
 
     def _track_usage(response) -> None:
@@ -184,6 +189,7 @@ async def run_agentic_loop(
                         logger.warning("Erreur tool (text) %s: %s", name, e)
                         result = {"error": str(e)}
                         last_tool_result = result
+                    tool_calls_log.append({"name": name, "args": args, "result": result})
                     tool_results_for_prompt.append((name, result))
 
                 # Appel final sans tools — présenter les résultats comme contexte texte
@@ -211,19 +217,22 @@ async def run_agentic_loop(
                 logger.info("[LLM REPLY] %.300s", final_content)
                 logger.debug("[LLM FULL REPLY]\n%s", final_content)
                 logger.info("[LLM USAGE] %s", usage_total)
-                return final_content, tool_used, last_tool_result, usage_total
+                return final_content, tool_used, last_tool_result, usage_total, tool_calls_log
 
             # Réponse texte normale
             logger.info("[LLM REPLY] %.300s", content)
             logger.debug("[LLM FULL REPLY]\n%s", content)
             logger.info("[LLM USAGE] %s", usage_total)
-            return content, tool_used, last_tool_result, usage_total
+            return content, tool_used, last_tool_result, usage_total, tool_calls_log
 
         # Traiter les tool calls natifs
         tool_calls = choice.message.tool_calls or []
         if not tool_calls:
             logger.info("[LLM USAGE] %s", usage_total)
-            return choice.message.content or "", tool_used, last_tool_result, usage_total
+            return (
+                choice.message.content or "", tool_used, last_tool_result,
+                usage_total, tool_calls_log,
+            )
 
         # Ajouter le message assistant avec les tool calls
         all_messages.append({
@@ -243,6 +252,7 @@ async def run_agentic_loop(
         for tc in tool_calls:
             tool_used = tc.function.name
             logger.info("[LLM TOOL →] %s | args: %.200s", tc.function.name, tc.function.arguments)
+            args: dict = {}
             try:
                 args = json.loads(tc.function.arguments)
                 result = await tool_executor(tc.function.name, args)
@@ -252,6 +262,8 @@ async def run_agentic_loop(
                 logger.warning("Erreur tool %s: %s", tc.function.name, e)
                 result = {"error": str(e)}
                 last_tool_result = result
+
+            tool_calls_log.append({"name": tc.function.name, "args": args, "result": result})
 
             all_messages.append({
                 "role": "tool",
@@ -272,4 +284,4 @@ async def run_agentic_loop(
         raise RuntimeError("LLM fallback response empty after max iterations")
     logger.info("[LLM REPLY] %.300s", content)
     logger.info("[LLM USAGE] %s", usage_total)
-    return content, tool_used, last_tool_result, usage_total
+    return content, tool_used, last_tool_result, usage_total, tool_calls_log

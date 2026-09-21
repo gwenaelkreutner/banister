@@ -268,7 +268,7 @@ async def run_chat(
     from app.llm.tools import tools_for_mode
     from app.services.coaching_mode import mode_from_plan
 
-    response_text, tool_used, last_tool_result, usage = await run_agentic_loop(
+    response_text, tool_used, last_tool_result, usage, tool_calls_log = await run_agentic_loop(
         system=system,
         messages=messages,
         tools=tools_for_mode(mode_from_plan(plan)),
@@ -323,6 +323,18 @@ async def run_chat(
             response_text = apply_result(response_text, verification)
     except Exception:
         logger.warning("Vérification de réponse impossible — réponse envoyée telle quelle")
+
+    # 4c. Confirmation calorique déterministe — ce que le modèle DIT avoir enregistré
+    # n'est pas fiable à 100% (texte libre, jamais vérifié comme les métriques d'entraînement
+    # ci-dessus — cf. CLAUDE.md § Suivi calorique, "délibérément non fait"). Bug réel vu en
+    # conditions réelles (2026-09-21) : un repas décrit en langage naturel n'entraînait
+    # aucun appel `log_meal` tant que l'athlète ne redemandait pas explicitement, et un
+    # second tour n'a loggé que 2 des 3 aliments sans que ce soit clair dans la réponse.
+    # Un ledger construit depuis les VRAIS résultats de `log_meal`/`undo_last_meal_entry`
+    # (jamais du texte du modèle) retire toute ambiguïté sur ce qui a atterri en base.
+    meal_ledger = _format_meal_ledger(tool_calls_log)
+    if meal_ledger:
+        response_text = f"{response_text}\n\n{meal_ledger}"
 
     # 5. Déduire l'intent depuis l'outil appelé
     intent = _intent_from_tool(tool_used)
@@ -760,6 +772,68 @@ async def _tool_get_freestyle_session_suggestion(
 
 
 # ── Outils nutrition (spec 008) ────────────────────────────────────────────────
+
+_MEAL_SLOT_LABELS_FR = {
+    "breakfast": "Petit-déjeuner",
+    "lunch": "Déjeuner",
+    "dinner": "Dîner",
+    "snack": "Collation",
+    "other": "Repas",
+}
+
+
+def _format_meal_ledger(tool_calls_log: list[dict]) -> str | None:
+    """Résumé déterministe de ce qui a RÉELLEMENT été écrit en base ce tour, construit
+    depuis les résultats de `log_meal`/`undo_last_meal_entry` — jamais depuis le texte
+    du modèle, qui peut décrire une entrée comme enregistrée sans qu'elle le soit (ou
+    l'inverse). `None` si aucun outil nutrition n'a été appelé ce tour (comportement
+    inchangé pour toute autre conversation)."""
+    lines: list[str] = []
+    last_day_total: tuple[str, object] | None = None
+
+    for call in tool_calls_log:
+        name = call.get("name")
+        if name not in ("log_meal", "undo_last_meal_entry"):
+            continue
+        args = call.get("args") or {}
+        result = call.get("result") or {}
+
+        if name == "log_meal":
+            if result.get("ok"):
+                cal = result.get("estimated_calories")
+                entry_date = result.get("entry_date")
+                if args.get("entry_type") == "day_recap":
+                    label = "Récap de journée"
+                else:
+                    label = _MEAL_SLOT_LABELS_FR.get(args.get("meal_slot"), "Repas")
+                suffix = (
+                    " (remplace les entrées déjà loggées ce jour-là)"
+                    if result.get("replaced_existing_entries")
+                    else ""
+                )
+                lines.append(f"✅ {label} enregistré — ~{cal} cal ({entry_date}){suffix}")
+                last_day_total = (entry_date, result.get("day_total_estimated_calories"))
+            else:
+                lines.append(f"❌ Repas NON enregistré — {result.get('error', 'erreur inconnue')}")
+
+        elif name == "undo_last_meal_entry":
+            if result.get("ok"):
+                cal = result.get("removed_estimated_calories")
+                entry_date = result.get("entry_date")
+                lines.append(f"🗑️ Entrée supprimée — ~{cal} cal ({entry_date})")
+                last_day_total = (entry_date, result.get("day_total_estimated_calories"))
+            else:
+                lines.append(f"❌ Rien à annuler — {result.get('error', 'erreur inconnue')}")
+
+    if not lines:
+        return None
+
+    if last_day_total is not None:
+        entry_date, total = last_day_total
+        if total is not None:
+            lines.append(f"Total en base pour {entry_date} : ~{total} cal estimées")
+
+    return "📋 Base de données :\n" + "\n".join(lines)
 
 _MEAL_DAYS_AGO_MAX = 2
 _CALORIES_MIN = 1
