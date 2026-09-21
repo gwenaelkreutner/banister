@@ -30,7 +30,7 @@ def test_age_is_derived_from_date_of_birth():
     p = map_athlete_profile(_ATHLETE)
     assert p.date_of_birth.value == "1990-01-01"
     # age = years since DOB, adjusted for whether the birthday has passed this year
-    dob = date(1998, 6, 29)
+    dob = date(1990, 1, 1)
     today = date.today()
     expected = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
     assert p.age.value == expected

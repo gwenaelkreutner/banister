@@ -61,7 +61,7 @@ def test_build_profile_marks_source_values_and_never_asks_age():
     assert profile.physio.hr_rest == 65
     assert profile.physio.hr_rest_source == "source"
     # age came from DOB, not a question
-    dob = date(1998, 6, 29)
+    dob = date(1990, 1, 1)
     today = date.today()
     assert profile.physio.age == today.year - dob.year - (
         (today.month, today.day) < (dob.month, dob.day)
