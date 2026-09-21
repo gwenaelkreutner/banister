@@ -75,3 +75,11 @@ class AnalyzedSession(BaseModel):
 
     # Contexte d'environnement (indoor/outdoor)
     environment: Literal["indoor", "outdoor"] | None = None
+
+    # Contexte externe — vérifiés contre un payload réel intervals.icu (2026-09-21) avant
+    # d'être branchés : total_elevation_gain/average_temp/icu_joules existent bien
+    # (average_temp déjà en °C, aucune conversion). None sur une sortie indoor
+    # (VirtualRide) — pas de capteur météo, jamais une valeur 0 hallucinée.
+    elevation_gain_m: float | None = None
+    average_temp_c: float | None = None
+    kilojoules: float | None = None

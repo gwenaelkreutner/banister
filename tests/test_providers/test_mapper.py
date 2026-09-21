@@ -52,6 +52,14 @@ class TestNullVsZero:
         analyzed = map_activity_to_analyzed_session(_load("activity_no_sensors.json"))
         assert analyzed.hrr is None
 
+    def test_elevation_gain_m_stays_none(self):
+        analyzed = map_activity_to_analyzed_session(_load("activity_no_sensors.json"))
+        assert analyzed.elevation_gain_m is None
+
+    def test_kilojoules_stays_none(self):
+        analyzed = map_activity_to_analyzed_session(_load("activity_no_sensors.json"))
+        assert analyzed.kilojoules is None
+
     def test_time_in_zones_stays_empty_not_populated(self):
         analyzed = map_activity_to_analyzed_session(_load("activity_no_sensors.json"))
         assert analyzed.time_in_zones_s == {}
@@ -161,6 +169,23 @@ class TestPopulatedFixtureConsumesSourceValuesVerbatim:
     def test_source_is_intervals_icu(self):
         analyzed = map_activity_to_analyzed_session(_load("activity_full.json"))
         assert analyzed.source == "intervals_icu"
+
+    def test_elevation_gain_m_equals_total_elevation_gain(self):
+        payload = _load("activity_full.json")
+        analyzed = map_activity_to_analyzed_session(payload)
+        assert analyzed.elevation_gain_m == payload["total_elevation_gain"]
+
+    def test_average_temp_c_equals_average_temp_verbatim(self):
+        """average_temp is already in °C on the source — no conversion, unlike
+        decoupling/cardiac_drift_index."""
+        payload = _load("activity_full.json")
+        analyzed = map_activity_to_analyzed_session(payload)
+        assert analyzed.average_temp_c == payload["average_temp"]
+
+    def test_kilojoules_equals_icu_joules_divided_by_1000(self):
+        payload = _load("activity_full.json")
+        analyzed = map_activity_to_analyzed_session(payload)
+        assert analyzed.kilojoules == payload["icu_joules"] / 1000
 
 
 class TestIntervalsConsistencyIndex:

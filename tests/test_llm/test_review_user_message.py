@@ -1,5 +1,5 @@
 """build_review_user_message() (app/llm/prompts.py) — blocs de données optionnels
-raw_power/quality_signals (2026-09-21). Purement synchrone, pas de DB/LLM.
+raw_power/quality_signals/environmental (2026-09-21). Purement synchrone, pas de DB/LLM.
 """
 from __future__ import annotations
 
@@ -62,12 +62,26 @@ def test_quality_signals_block_included_by_default():
     assert "Consistance des intervalles : 91%" in message
 
 
+def test_environmental_block_included_by_default():
+    ctx = _ctx(elevation_gain_m=509.0, average_temp_c=26.2, kilojoules=1049.2)
+
+    message = prompts.build_review_user_message(ctx)
+
+    assert "Dénivelé : 509 m" in message
+    assert "Température moyenne : 26°C" in message
+    assert "Énergie dépensée : 1049 kJ" in message
+
+
 def test_blocks_can_be_toggled_off(monkeypatch):
-    ctx = _ctx(normalized_power=210, respect_zones_score=87.0)
+    ctx = _ctx(
+        normalized_power=210, respect_zones_score=87.0, elevation_gain_m=509.0,
+    )
     monkeypatch.setitem(prompts.REVIEW_DATA_BLOCKS, "raw_power", False)
     monkeypatch.setitem(prompts.REVIEW_DATA_BLOCKS, "quality_signals", False)
+    monkeypatch.setitem(prompts.REVIEW_DATA_BLOCKS, "environmental", False)
 
     message = prompts.build_review_user_message(ctx)
 
     assert "Puissance normalisée" not in message
     assert "Respect de la zone cible" not in message
+    assert "Dénivelé" not in message

@@ -201,6 +201,13 @@ def map_activity_to_analyzed_session(
     # app/services/activity_feedback.py).
     rpe = payload.get("icu_rpe")
 
+    # elevation_gain_m/average_temp_c/kilojoules — vérifiés contre un payload réel
+    # (total_elevation_gain, average_temp, icu_joules) avant d'être branchés (2026-09-21) :
+    # average_temp est déjà en °C (pas de conversion, contrairement à decoupling).
+    # icu_joules est en joules — même conversion que l'import historique (history.py).
+    icu_joules = payload.get("icu_joules")
+    kilojoules = (icu_joules / 1000) if icu_joules is not None else None
+
     duration_s = int(payload.get("elapsed_time") or 0)
 
     respect_zones_score = _compute_respect_zones_score(
@@ -250,4 +257,7 @@ def map_activity_to_analyzed_session(
         plan_match_score=None,
         fatigue_anomaly=None,
         environment=_environment(icu_type),
+        elevation_gain_m=payload.get("total_elevation_gain"),
+        average_temp_c=payload.get("average_temp"),
+        kilojoules=kilojoules,
     )

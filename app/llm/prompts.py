@@ -508,17 +508,22 @@ REVIEW_DATA_BLOCKS = {
     # cardiac_drift_index, intervals_consistency_index, respect_zones_score,
     # variability_index — idem, mêmes libellés que activity_analysis.py (bloc [QUALITÉ]).
     "quality_signals": True,
+    # elevation_gain_m, average_temp_c, kilojoules — rebranchés le 2026-09-21 :
+    # AnalyzedSession/mapper.py/activity_feedback.py ne portaient pas ces trois champs
+    # jusqu'ici (vérifié contre un payload réel intervals.icu avant d'écrire le mapping —
+    # total_elevation_gain/average_temp/icu_joules existent bien, déjà dans les bonnes
+    # unités). None sur une sortie indoor (VirtualRide, pas de capteur météo) — jamais 0.
+    "environmental": True,
 }
 
-# elevation_gain_m / average_temp_c / kilojoules / athlete_count existent sur SessionLog
-# et sont acceptés par session_log_repo.create(), mais AUCUN appelant réel du pipeline
-# intervals.icu (mapper.py → AnalyzedSession → activity_feedback.py) ne les renseigne —
-# AnalyzedSession n'a même pas ces champs. Vestiges de l'ère Strava (athlete_count
-# dépendait de Strava, confirmé mort après spec 002 — l'utilisateur l'a signalé en
-# testant en conditions réelles) : toujours NULL pour toute séance loguée depuis. Pas de
-# bloc "contexte environnemental" ici tant que ce n'est pas rebranché à l'ingestion
-# (chantier séparé, pas fait ici) — un bloc togglable sur une donnée qui n'existe jamais
-# ne servirait à rien.
+# athlete_count reste hors scope, lui, pour une raison différente des trois champs
+# ci-dessus : vérifié contre le payload réel (2026-09-21) — il n'existe tout simplement
+# aucun champ de comptage d'athlètes sur une activité intervals.icu. Le seul champ
+# apparenté est `group` (l'id de corrélation d'une sortie de groupe, une string opaque
+# partagée entre les activités des participants) — reconstruire un compte demanderait de
+# recouper les activités d'autres comptes que le nôtre, hors de portée d'une clé API
+# personnelle. Confirmé mort après spec 002 (dépendait de Strava, l'utilisateur l'a
+# signalé en testant en conditions réelles) et rien à rebrancher côté source.
 
 REVIEW_RPE_MISSING_RULE = """RÈGLE NON-NÉGOCIABLE — ressenti (RPE) absent sur cette séance :
 Les chiffres seuls (durée, TSS, zones, puissance) ne suffisent JAMAIS à juger si une
@@ -618,6 +623,15 @@ def build_review_user_message(ctx, dfa=None) -> str:
             lines.append(
                 f"- Consistance des intervalles : {round(log.intervals_consistency_index * 100)}%"
             )
+
+    if REVIEW_DATA_BLOCKS["environmental"]:
+        if log.elevation_gain_m:
+            lines.append(f"- Dénivelé : {log.elevation_gain_m:.0f} m")
+        if log.average_temp_c is not None:
+            lines.append(f"- Température moyenne : {log.average_temp_c:.0f}°C")
+        if log.kilojoules:
+            lines.append(f"- Énergie dépensée : {log.kilojoules:.0f} kJ")
+
     if dfa is not None and dfa.quality.sufficient:
         dfa_line = f"- DFA α1 moyen : {dfa.avg:.2f}"
         if dfa.lt1_crossing is not None and dfa.lt1_crossing.avg_hr is not None:
