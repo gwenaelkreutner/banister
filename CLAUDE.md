@@ -631,6 +631,14 @@ explicitement renseigné côté source.
   analyse utile). Maintenant : seul le point 1 énonce l'absence de RPE ; les points 2/3 doivent puiser dans
   les autres signaux déjà fournis (tendance de charge, TSB, monotonie, cohérence historique, zones) plutôt
   que de se répéter.
+- **Rattrapage en masse** (`scripts/backfill_session_metrics.py`, 2026-09-21) : les séances loguées avant
+  56096d2/8625e1c ont `efficiency_factor`/`hrr`/`rpe` encore `NULL` — ces champs ne se remplissent que pour
+  les *nouvelles* ingestions, jamais rétroactivement tout seuls. Script one-shot, dry-run par défaut
+  (`--apply` pour écrire), ré-utilise `mapper.py::map_activity_to_analyzed_session()` (pas de logique
+  dupliquée), ne touche jamais un champ déjà renseigné — même garde-fou que `_backfill_rpe_from_source`
+  (Telegram prioritaire). Vérifié contre l'API réelle avant livraison (2026-09-21) : 11/11 séances du
+  compte de test candidates, 6 avaient une vraie donnée à rattraper, 0 échec, ré-exécution confirmée
+  idempotente.
 
 ### Analyse LLM post-séance (`app/llm/activity_analysis.py`)
 - `generate_activity_analysis(**kwargs)` — prompt structuré en 5 blocs : Séance / Puissance / Qualité / Contexte / Forme & Charge
