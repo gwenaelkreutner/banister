@@ -404,6 +404,17 @@ TrainingPlanSchema.model_validate(plan.plan_technical)  # pas l'ORM directement
 
 ## Règles importantes
 
+### Sourcer avant de coder
+Dès qu'une feature ou un fix touche un jugement d'entraînement non trivial (seuil, ratio, règle de
+périodisation, timeline de reprise/récupération...) — **avant** d'écrire le design, pas seulement quand un
+chiffre sort absurde a posteriori — chercher ce que documente la vraie littérature coaching (TrainingPeaks,
+Joe Friel, Coggan, Uphill Athlete, presse spécialisée avec experts nommés) plutôt que d'inventer une
+constante plausible. Si rien de documenté ne colle exactement, le dire explicitement (commentaire de code +
+à l'utilisateur) plutôt que présenter une approximation comme une règle sourcée — cohérent avec le Principe
+IV (honnêteté plutôt que fiction silencieuse), appliqué ici au code et à la conception, pas seulement au
+runtime. Décision explicite de l'utilisateur (2026-09-21, après le cas `long_ride` `f167769` puis la
+détection de reprise après coupure) : ce comportement doit être systématique, pas une réaction ponctuelle.
+
 ### SQLAlchemy JSON
 Mutations non auto-détectées → obligatoire :
 ```python
@@ -1009,6 +1020,24 @@ fonction que `fit_template()` utilise en interne, donc la durée qui ressort cor
 demandée (pas de dérive entre deux constantes zone/TSS différentes). Une durée demandée (`available_minutes`)
 au-dessus du plancher est honorée telle quelle ; en dessous, le plancher gagne — `fit_template()` refuse
 honnêtement plutôt que de servir une « longue » plus courte que ce mot ne veut dire (Principe IV).
+
+**Reprise après coupure — TSB seul ne suffit pas** (`days_since_return_from_break()`, trouvé en test live
+2026-09-21) : après une longue coupure (ex. 11 jours sans rouler), le TSB remonte fort par manque de charge
+récente — exactement comme après un vrai taper, alors que l'athlète est en réalité déconditionné, pas
+reposé. Constaté en conditions réelles : coupure du 01/09 au 12/09, reprise légère (1h le 12/09 et le
+19/09), longue sortie Z2 le 20/09, puis demande d'une séance libre le 21/09 → l'algorithme proposait du
+zone 5 (3×4min) alors que l'athlète sortait tout juste d'une reprise progressive. Corrigé en cherchant la
+littérature coaching (BikeRadar, Roadman Cycling, TrainerRoad — voir § "Sourcer avant de coder") avant de
+fixer un seuil : convergence sur « 1-2 semaines en Zone 2 seule après une coupure non planifiée, l'intensité
+revient en dernier » — pas de formule précise publiée reliant durée de coupure et durée de reprise, donc
+`RETURN_FROM_BREAK_GAP_DAYS=10` (ce qui définit "une coupure") et `RETURN_FROM_BREAK_WINDOW_DAYS=14` (durée
+de la fenêtre de prudence, borne haute du "1-2 semaines" trouvé) restent des jugements d'ingénierie
+documentés comme tels, même statut que `_TSS_CTL_MULTIPLIER`. Effet : le choix par défaut (sans demande
+explicite) exclut `intervals` tant que la fenêtre est active — `endurance`/`recovery`/`long_ride` restent
+inchangés (l'endurance est justement ce qui revient en premier). Une demande explicite d'intervalles reste
+honorée (jamais silencieusement ignorée, même doctrine que `avoid_workout_types`), mais accompagnée d'une
+mise en garde dans `reasoning_summary` plutôt qu'un blocage — cohérent avec le reste du projet où les
+garde-fous sont toujours consultatifs, jamais bloquants (voir § Garde-fous d'entraînement).
 
 **Feedback post-activité en mode libre** (`app/services/activity_feedback.py`) : l'outcome `"no_plan"` est
 retiré, remplacé par `"freestyle"` — `_assemble_freestyle_feedback()` logge la séance

@@ -57,6 +57,58 @@ HARD_EFFORT_COOLDOWN_DAYS = 2
 # the way a `SessionLog` does — TSS/hour is the one intensity signal both types share.
 _HARD_EFFORT_TSS_PER_HOUR = 70.0
 
+# A gap of this many days with no logged ride is treated as "a break" worth flagging —
+# distinct from ordinary rest days. No single sourced number ties a break's length to a
+# reintroduction duration (checked 2026-09-21: TrainerRoad/BikeRadar/Roadman Cycling all
+# describe unplanned time off in terms of weeks, not a precise day-count formula) — this
+# is an engineering judgment, same status as `_TSS_CTL_MULTIPLIER`, picked to catch a
+# real 11-day gap found live rather than derived from a table.
+RETURN_FROM_BREAK_GAP_DAYS = 10
+
+# How many days after resuming the default suggestion still avoids `intervals` (VO2max/
+# threshold work), regardless of TSB. Sourced directionally, not as an exact number:
+# multiple coaching sources (BikeRadar "lessons of detraining", Roadman Cycling's comeback
+# guide) converge on "easy Zone 2 rides for the first 1-2 weeks back, add intensity only
+# after that" — endurance is the *last* system detraining affects and the *first* to
+# safely return, while high-intensity capacity is the first lost and should be the last
+# reintroduced. 14 days = the upper end of that "1-2 weeks" window, kept as the safer
+# (longer) side deliberately.
+RETURN_FROM_BREAK_WINDOW_DAYS = 14
+
+
+def days_since_return_from_break(items: list, today: date) -> int | None:
+    """`None` when the athlete isn't in an early return-to-training window right now —
+    no gap of `RETURN_FROM_BREAK_GAP_DAYS`+ days ended within the last
+    `RETURN_FROM_BREAK_WINDOW_DAYS` days. `0` means they're still mid-gap (no ride yet
+    since the break started) — today would be their first day back.
+
+    TSB alone can't distinguish "tapered and fresh" from "detrained after a layoff" — both
+    read as a high TSB, since it only measures recent load, not how it got low. This walks
+    the athlete's own ride dates instead, the same way `days_since_hard_effort` does,
+    rather than trusting a derived fitness number that doesn't carry this distinction."""
+    dates = sorted({
+        d for it in items
+        if (d := (getattr(it, "logged_date", None) or getattr(it, "activity_date", None)))
+        is not None and d <= today
+    })
+    if not dates:
+        return None
+
+    current_gap = (today - dates[-1]).days
+    if current_gap >= RETURN_FROM_BREAK_GAP_DAYS:
+        return 0  # still mid-break — no ride logged since it started
+
+    return_date = None
+    for later, earlier in zip(reversed(dates[1:]), reversed(dates[:-1])):
+        if (later - earlier).days >= RETURN_FROM_BREAK_GAP_DAYS:
+            return_date = later
+            break
+    if return_date is None:
+        return None
+
+    days_since_return = (today - return_date).days
+    return days_since_return if days_since_return <= RETURN_FROM_BREAK_WINDOW_DAYS else None
+
 
 def days_since_hard_effort(items: list, today: date) -> int | None:
     """Duck-types over `SessionLog`/`Activity` (same pattern as `weekly_snapshot.py`).
@@ -161,6 +213,7 @@ def choose_workout_type(
     coaching_mode: str = "power",
     ftp: int | None = None,
     available_minutes: int | None = None,
+    days_since_return_from_break: int | None = None,
 ) -> WorkoutTypeChoice:
     """Pure decision: given fitness state + recent load, which workout type and target
     TSS to suggest. Never references a periodization phase or week (SC-005) — the only
@@ -173,9 +226,17 @@ def choose_workout_type(
     caller whether this diverges from what fitness alone would have suggested, so the
     coach can say so honestly instead of presenting it as the natural choice (FR-002).
 
+    `days_since_return_from_break` (not `None` = within the reintroduction window, see
+    `days_since_return_from_break()`) excludes `intervals` from the **default** pick only
+    — a high TSB after a long layoff reads as "fresh" exactly like a real taper would, but
+    the athlete is detrained, not rested, and shouldn't be defaulted onto VO2max/threshold
+    work. An explicit request still wins outright (never silently overridden, same as
+    `avoid_workout_types`) — the caution becomes a spoken note instead of a block.
+
     `coaching_mode`/`ftp`/`available_minutes` only feed `_long_ride_target_tss()` — every
     other workout type's target stays the CTL-multiplier estimate above, untouched."""
     preferences = _tsb_bucket_preferences(fitness.tsb, days_since_hard_effort)
+    in_return_window = days_since_return_from_break is not None
 
     was_requested = (
         requested_workout_type is not None and requested_workout_type in VALID_WORKOUT_TYPES
@@ -183,14 +244,22 @@ def choose_workout_type(
     if was_requested:
         chosen = requested_workout_type
         overridden = False
+        return_capped = False
     else:
-        chosen = next((wt for wt in preferences if wt not in avoid_workout_types), None)
+        baseline_choice = next((wt for wt in preferences if wt not in avoid_workout_types), None)
+        effective_avoid = (
+            avoid_workout_types | {"intervals"} if in_return_window else avoid_workout_types
+        )
+        chosen = next((wt for wt in preferences if wt not in effective_avoid), None)
         overridden = chosen is None
         if chosen is None:
             # Every preferred type is on the avoid list — honesty over silence: pick the
             # top preference anyway rather than refusing to answer, and say so (the tool
             # layer surfaces `preference_overridden` to the athlete).
             chosen = preferences[0]
+        return_capped = (
+            in_return_window and baseline_choice == "intervals" and chosen != "intervals"
+        )
 
     if chosen == "long_ride":
         target_tss = _long_ride_target_tss(available_minutes, coaching_mode, ftp)
@@ -203,6 +272,18 @@ def choose_workout_type(
         f"TSB {fitness.tsb:+.0f}, charge des 7 derniers jours {snapshot.tss_7d:.0f} TSS "
         f"→ séance de type {chosen}."
     )
+    if in_return_window and chosen == "intervals":
+        reasoning += (
+            f" Tu sors d'une coupure (reprise il y a {days_since_return_from_break} jours) — "
+            "je te garde cette séance intense puisque tu l'as demandée, mais vas-y "
+            "progressivement, ton système cardio n'a pas suivi ta mémoire musculaire."
+        )
+    elif return_capped:
+        reasoning += (
+            f" Tu sors d'une coupure (reprise il y a {days_since_return_from_break} jours) — "
+            "j'évite les intervalles pour l'instant, le temps de refaire de la base "
+            "aérobie avant de remettre de l'intensité."
+        )
     return WorkoutTypeChoice(
         workout_type=chosen,
         target_tss=target_tss,
@@ -237,6 +318,7 @@ def build_freestyle_suggestion(
     available_minutes: int | None = None,
     requested_workout_type: str | None = None,
     requested_template_id: str | None = None,
+    days_since_return_from_break: int | None = None,
 ) -> FreestyleSuggestion:
     """End to end: choose a workout type (`choose_workout_type`), pick a template for it
     (rotated deterministically by `day_ordinal` — same day, same ask, same answer; a new
@@ -258,6 +340,7 @@ def build_freestyle_suggestion(
         coaching_mode=coaching_mode,
         ftp=ftp,
         available_minutes=available_minutes,
+        days_since_return_from_break=days_since_return_from_break,
     )
     candidates = candidates_for(choice.workout_type)
     # Start from the day-rotated candidate for variety, but a fixed-duration template

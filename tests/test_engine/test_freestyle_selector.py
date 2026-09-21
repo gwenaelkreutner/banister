@@ -6,17 +6,20 @@ receives an already-resolved FitnessMetrics).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
 from app.engine.atl_ctl import FitnessMetrics
 from app.engine.freestyle_selector import (
     LONG_RIDE_MIN_MINUTES,
+    RETURN_FROM_BREAK_GAP_DAYS,
+    RETURN_FROM_BREAK_WINDOW_DAYS,
     NoSuitableTemplateError,
     build_freestyle_suggestion,
     choose_workout_type,
     days_since_hard_effort,
+    days_since_return_from_break,
 )
 from app.engine.weekly_snapshot import WeeklySnapshot
 
@@ -65,6 +68,67 @@ class TestDaysSinceHardEffort:
     def test_future_dated_item_is_ignored(self):
         items = [_FakeLog(logged_date=date(2026, 9, 20), tss_actual=95, duration_minutes_actual=60)]
         assert days_since_hard_effort(items, date(2026, 9, 18)) is None
+
+
+class TestDaysSinceReturnFromBreak:
+    def test_no_items_returns_none(self):
+        assert days_since_return_from_break([], date(2026, 9, 21)) is None
+
+    def test_no_gap_ever_reaches_the_threshold(self):
+        items = [
+            _FakeLog(logged_date=date(2026, 9, 19), tss_actual=50, duration_minutes_actual=60),
+            _FakeLog(logged_date=date(2026, 9, 20), tss_actual=150, duration_minutes_actual=180),
+        ]
+        assert days_since_return_from_break(items, date(2026, 9, 21)) is None
+
+    def test_still_mid_break_returns_zero(self):
+        """No ride at all since the gap started — today would be the first day back."""
+        items = [
+            _FakeLog(
+                logged_date=date(2026, 9, 21 - RETURN_FROM_BREAK_GAP_DAYS),
+                tss_actual=100, duration_minutes_actual=90,
+            )
+        ]
+        assert days_since_return_from_break(items, date(2026, 9, 21)) == 0
+
+    def test_real_scenario_break_then_ramp_back(self):
+        """Reported live 2026-09-21: last ride 2026-09-01, then 2026-09-12 (1h), a
+        second smaller gap to 2026-09-19 (1h), 2026-09-20 (long Z2 ride), asking today
+        2026-09-21. The break that matters is the 11-day one (09-01 -> 09-12) — the
+        6-day gap after it never reaches the threshold on its own."""
+        items = [
+            _FakeLog(logged_date=date(2026, 9, 1), tss_actual=200, duration_minutes_actual=240),
+            _FakeLog(logged_date=date(2026, 9, 12), tss_actual=40, duration_minutes_actual=60),
+            _FakeLog(logged_date=date(2026, 9, 19), tss_actual=40, duration_minutes_actual=60),
+            _FakeLog(logged_date=date(2026, 9, 20), tss_actual=120, duration_minutes_actual=170),
+        ]
+        assert days_since_return_from_break(items, date(2026, 9, 21)) == 9
+
+    def test_outside_the_window_returns_none(self):
+        """A break resolved long enough ago (and ridden through since) no longer
+        matters — distinct from `test_still_mid_break_returns_zero`, where the gap is
+        still open today."""
+        today = date(2026, 9, 21)
+        return_date = today - timedelta(days=RETURN_FROM_BREAK_WINDOW_DAYS + 1)
+        break_start = return_date - timedelta(days=RETURN_FROM_BREAK_GAP_DAYS)
+        items = [
+            _FakeLog(logged_date=break_start, tss_actual=200, duration_minutes_actual=240),
+            _FakeLog(logged_date=return_date, tss_actual=40, duration_minutes_actual=60),
+            # Ridden regularly since, no individual gap reaching the break threshold again.
+            _FakeLog(
+                logged_date=return_date + timedelta(days=8),
+                tss_actual=60, duration_minutes_actual=60,
+            ),
+            _FakeLog(
+                logged_date=today - timedelta(days=1),
+                tss_actual=60, duration_minutes_actual=60,
+            ),
+        ]
+        assert days_since_return_from_break(items, today) is None
+
+    def test_future_dated_item_is_ignored(self):
+        items = [_FakeLog(logged_date=date(2026, 9, 22), tss_actual=50, duration_minutes_actual=60)]
+        assert days_since_return_from_break(items, date(2026, 9, 21)) is None
 
 
 class TestChooseWorkoutType:
@@ -217,6 +281,50 @@ class TestChooseWorkoutType:
             requested_workout_type="long_ride", available_minutes=180,
         )
         assert suggestion.duration_minutes == 180
+
+    def test_return_from_break_caps_default_away_from_intervals(self):
+        """Reported live 2026-09-21: a long-break-induced high TSB reads as freshness
+        exactly like a real taper, but the athlete is detrained, not rested. The
+        default pick must not default onto intervals during the reintroduction window,
+        even though fitness alone would pick it (same fixture as the unguarded test
+        `test_fresh_legs_and_good_form_suggests_intervals`)."""
+        fitness = FitnessMetrics(atl=50, ctl=60, tsb=10)
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=5, days_since_return_from_break=9,
+        )
+        assert choice.workout_type != "intervals"
+        assert "coupure" in choice.reasoning_summary.lower()
+
+    def test_return_from_break_does_not_affect_non_intervals_default(self):
+        """The caution is scoped to intervals only — endurance/long_ride/recovery
+        defaults are untouched, matching the sourced guidance that endurance work is
+        safe to resume immediately."""
+        fitness = FitnessMetrics(atl=90, ctl=60, tsb=-40)  # would default to recovery anyway
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=1, days_since_return_from_break=9,
+        )
+        assert choice.workout_type == "recovery"
+        assert "coupure" not in choice.reasoning_summary.lower()
+
+    def test_explicit_intervals_request_honored_but_flagged_during_return_window(self):
+        """An explicit ask still wins outright (never silently overridden, spec 011
+        FR-009 precedent) — the caution becomes a spoken warning instead of a block."""
+        fitness = FitnessMetrics(atl=50, ctl=60, tsb=10)
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=5,
+            requested_workout_type="intervals", days_since_return_from_break=9,
+        )
+        assert choice.workout_type == "intervals"
+        assert "coupure" in choice.reasoning_summary.lower()
+        assert "progressivement" in choice.reasoning_summary.lower()
+
+    def test_no_return_window_leaves_default_selection_unchanged(self):
+        fitness = FitnessMetrics(atl=50, ctl=60, tsb=10)
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=5, days_since_return_from_break=None,
+        )
+        assert choice.workout_type == "intervals"
+        assert "coupure" not in choice.reasoning_summary.lower()
 
     def test_unsupported_requested_type_is_ignored(self):
         """A value outside VALID_WORKOUT_TYPES (should never happen once the tool

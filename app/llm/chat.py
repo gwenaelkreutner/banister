@@ -684,6 +684,7 @@ async def _tool_get_freestyle_session_suggestion(
         candidates_for,
         choose_workout_type,
         days_since_hard_effort,
+        days_since_return_from_break,
     )
     from app.engine.session_library import SessionLibraryError
     from app.engine.weekly_snapshot import compute_weekly_snapshot
@@ -710,6 +711,7 @@ async def _tool_get_freestyle_session_suggestion(
 
     snapshot = compute_weekly_snapshot(all_items, today)
     hard_gap = days_since_hard_effort(all_items, today)
+    return_gap = days_since_return_from_break(all_items, today)
 
     profile_orm = await profile_repo.get_by_user_id(session, user.id)
     avoid_raw = (
@@ -731,6 +733,7 @@ async def _tool_get_freestyle_session_suggestion(
                 days_since_hard_effort=hard_gap,
                 avoid_workout_types=avoid_workout_types,
                 requested_workout_type=requested_workout_type,
+                days_since_return_from_break=return_gap,
             )
             template_id = await pick_template(style_preference, candidates_for(choice.workout_type))
         except SessionLibraryError as exc:
@@ -748,6 +751,7 @@ async def _tool_get_freestyle_session_suggestion(
             available_minutes=args.get("max_duration_minutes"),
             requested_workout_type=requested_workout_type,
             requested_template_id=template_id,
+            days_since_return_from_break=return_gap,
         )
     except (SessionLibraryError, NoSuitableTemplateError) as exc:
         logger.warning("Suggestion mode libre indisponible : %s", exc)
