@@ -49,14 +49,15 @@ _REPLY_CONTEXT_MAX_CHARS = 500
 
 
 async def _send_meal_log(message: Message, meal_log: str | None) -> None:
-    """Deuxième message Telegram, séparé de la réponse du coach — trace déterministe de
-    ce que `log_meal`/`undo_last_meal_entry` ont réellement écrit en base ce tour (voir
-    app/llm/chat.py::_format_meal_ledger). `None` → rien n'est envoyé, aucun outil
-    nutrition n'a tourné (décision utilisateur 2026-09-21 : pas de message sur les tours
-    qui n'ont rien à voir avec la nutrition)."""
+    """Deuxième message Telegram, séparé de la réponse du coach — confirmation déterministe
+    de ce que `log_meal`/`undo_last_meal_entry` ont réellement écrit en base ce tour (voir
+    app/llm/chat.py::_format_meal_ledger). Texte normal, pas de bloc monospace — format
+    minimaliste (✅/🗑️/❌ + total 🧾) choisi par l'utilisateur, pas une trace technique brute.
+    `None` → rien n'est envoyé, aucun outil nutrition n'a tourné (décision utilisateur
+    2026-09-21 : pas de message sur les tours qui n'ont rien à voir avec la nutrition)."""
     if not meal_log:
         return
-    await message.answer(f"<pre>{escape(meal_log)}</pre>", parse_mode="HTML")
+    await message.answer(escape(meal_log), parse_mode="HTML")
 
 
 # ── Handler principal — tout message libre en mode ACTIVE ─────────────────────

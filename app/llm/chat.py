@@ -785,19 +785,33 @@ _MEAL_SLOT_LABELS_FR = {
 }
 
 
+def _format_short_date(iso_date: str) -> str:
+    """"2026-09-21" -> "21/09" — format court FR pour le message de confirmation."""
+    try:
+        return date.fromisoformat(iso_date).strftime("%d/%m")
+    except (TypeError, ValueError):
+        return iso_date
+
+
 def _format_meal_ledger(tool_calls_log: list[dict]) -> str | None:
-    """Trace déterministe, façon log, de ce qui a RÉELLEMENT été écrit en base ce tour —
+    """Confirmation déterministe de ce qui a RÉELLEMENT été écrit en base ce tour —
     construite depuis les résultats de `log_meal`/`undo_last_meal_entry`, jamais depuis
     le texte du modèle (qui peut décrire une entrée comme enregistrée sans qu'elle le
     soit, ou l'inverse — bug réel vu en conditions réelles, 2026-09-21).
 
     Destinée à un second message Telegram séparé, pas fusionnée à la réponse du coach
-    (décision utilisateur) : une ligne par tool call réellement exécuté, préfixée par
-    son nom comme une vraie trace d'appel, pas une phrase de confirmation UX. `None` si
-    aucun outil nutrition n'a tourné ce tour — l'absence du message EST le signal que
-    rien n'a été écrit (au lieu d'un texte ambigu qui laisse croire le contraire)."""
-    lines: list[str] = []
-    last_day_total: tuple[str, object] | None = None
+    (décision utilisateur) — format minimaliste choisi par l'utilisateur après plusieurs
+    itérations : une ligne "✅ Enregistré" groupée par date, une ligne "🗑️ Supprimé" par
+    annulation, une ligne "❌ Non enregistré" par échec, un total 🧾 par date concernée.
+    `None` si aucun outil nutrition n'a tourné ce tour — l'absence du message EST le
+    signal que rien n'a été écrit (le code n'a aucun moyen de savoir que le LLM *aurait
+    dû* appeler l'outil et ne l'a pas fait — seule l'absence de message le trahit)."""
+    from collections import defaultdict
+
+    entries_by_date: dict[str, list[str]] = defaultdict(list)
+    day_totals: dict[str, object] = {}
+    removals: list[tuple[str, object]] = []
+    failures: list[str] = []
 
     for call in tool_calls_log:
         name = call.get("name")
@@ -814,29 +828,33 @@ def _format_meal_ledger(tool_calls_log: list[dict]) -> str | None:
                     label = "récap journée"
                 else:
                     label = _MEAL_SLOT_LABELS_FR.get(args.get("meal_slot"), "repas")
-                suffix = " (remplace le jour)" if result.get("replaced_existing_entries") else ""
-                lines.append(f"[log_meal] ok — {label} ~{cal} cal · {entry_date}{suffix}")
-                last_day_total = (entry_date, result.get("day_total_estimated_calories"))
+                entries_by_date[entry_date].append(f"{label} ({cal} cal)")
+                if result.get("day_total_estimated_calories") is not None:
+                    day_totals[entry_date] = result.get("day_total_estimated_calories")
             else:
-                lines.append(f"[log_meal] échec — {result.get('error', 'erreur inconnue')}")
+                failures.append(result.get("error", "erreur inconnue"))
 
         elif name == "undo_last_meal_entry":
             if result.get("ok"):
-                cal = result.get("removed_estimated_calories")
                 entry_date = result.get("entry_date")
-                lines.append(f"[undo_last_meal_entry] ok — -{cal} cal · {entry_date}")
-                last_day_total = (entry_date, result.get("day_total_estimated_calories"))
+                removals.append((entry_date, result.get("removed_estimated_calories")))
+                if result.get("day_total_estimated_calories") is not None:
+                    day_totals[entry_date] = result.get("day_total_estimated_calories")
             else:
-                err = result.get("error", "erreur inconnue")
-                lines.append(f"[undo_last_meal_entry] échec — {err}")
+                failures.append(result.get("error", "erreur inconnue"))
 
-    if not lines:
+    if not entries_by_date and not removals and not failures:
         return None
 
-    if last_day_total is not None:
-        entry_date, total = last_day_total
-        if total is not None:
-            lines.append(f"[DB] total {entry_date} = ~{total} cal")
+    lines: list[str] = []
+    for items in entries_by_date.values():
+        lines.append(f"✅ Enregistré — {', '.join(items)}")
+    for _entry_date, cal in removals:
+        lines.append(f"🗑️ Supprimé — -{cal} cal")
+    for error in failures:
+        lines.append(f"❌ Non enregistré — {error}")
+    for entry_date, total in day_totals.items():
+        lines.append(f"🧾 Total du {_format_short_date(entry_date)} : {total} cal")
 
     return "\n".join(lines)
 

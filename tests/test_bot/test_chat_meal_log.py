@@ -69,9 +69,7 @@ async def test_meal_log_sent_as_separate_message_after_the_normal_reply(
     db_session, monkeypatch
 ):
     user = await _make_user(db_session, 9001)
-    meal_log_trace = (
-        "[log_meal] ok — déjeuner ~850 cal · 2026-09-21\n[DB] total 2026-09-21 = ~850 cal"
-    )
+    meal_log_trace = "✅ Enregistré — déjeuner (850 cal)\n🧾 Total du 21/09 : 850 cal"
 
     async def _fake_run_chat(**kwargs):
         return (
@@ -96,7 +94,7 @@ async def test_meal_log_sent_as_separate_message_after_the_normal_reply(
     assert main_markup is None
 
     log_text, log_markup = message.sent[1]
-    assert log_text == f"<pre>{meal_log_trace}</pre>"
+    assert log_text == meal_log_trace
     assert log_markup is None
 
 

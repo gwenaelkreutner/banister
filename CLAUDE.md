@@ -931,16 +931,19 @@ libre du bot n'a jamais été une preuve fiable de ce qui est réellement en bas
 tour (nom/args/résultat), pas seulement le dernier (`last_tool_result` écrasait les précédents).
 
 **Message Telegram séparé, pas fusionné à la réponse du coach** (décision utilisateur explicite — un
-retour "façon log", pas une phrase UX collée à la réponse) : `run_chat()` renvoie `meal_log` comme élément
+retour dédié, pas une phrase UX collée à la réponse) : `run_chat()` renvoie `meal_log` comme élément
 séparé du tuple (`response_text` reste la réponse normale du coach, inchangée). `app/llm/chat.py::
 _format_meal_ledger()` construit `meal_log` depuis les résultats VRAIS de `log_meal`/
-`undo_last_meal_entry` — une ligne par tool call façon trace (`[log_meal] ok — déjeuner ~850 cal ·
-2026-09-21`, ou `[log_meal] échec — <raison>`), jamais depuis ce que le modèle prétend avoir fait. `None`
-si aucun outil nutrition n'a tourné ce tour — **l'absence du second message est elle-même le signal** que
-rien n'a été écrit en base (le code n'a aucun moyen de savoir que le LLM *aurait dû* appeler l'outil et ne
-l'a pas fait — seule l'absence de message le trahit). `app/bot/routers/chat.py::_send_meal_log()` l'envoie
-en `<pre>` (monospace, effet trace de log) juste après le message normal, sur les 3 chemins de réponse
-(normal, `pending_proposal` plan, `freestyle_publish`).
+`undo_last_meal_entry`, jamais depuis ce que le modèle prétend avoir fait. Format minimaliste (itéré
+plusieurs fois avec l'utilisateur, 2026-09-21) : une ligne `✅ Enregistré — item (cal), item (cal)`
+groupée par date, `🗑️ Supprimé — -N cal` par annulation, `❌ Non enregistré — <raison>` par échec, et
+`🧾 Total du JJ/MM : N cal` par date concernée (`_format_short_date()` convertit l'ISO en JJ/MM) — texte
+normal, pas de bloc monospace (rejeté par l'utilisateur, jugé moins agréable à lire qu'un format court à
+emojis). `None` si aucun outil nutrition n'a tourné ce tour — **l'absence du second message est elle-même
+le signal** que rien n'a été écrit en base (le code n'a aucun moyen de savoir que le LLM *aurait dû*
+appeler l'outil et ne l'a pas fait — seule l'absence de message le trahit).
+`app/bot/routers/chat.py::_send_meal_log()` l'envoie juste après le message normal, sur les 3 chemins de
+réponse (normal, `pending_proposal` plan, `freestyle_publish`).
 
 **Rappel du soir** — `app/main.py::_nutrition_reminder_scheduler` envoie un message vers 22h00 heure de
 Paris (`PARIS_TZ`, même `ZoneInfo("Europe/Paris")` que `_run_session_reminders` depuis la correction du
