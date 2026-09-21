@@ -35,9 +35,22 @@ ACWR_SAFE_LOW = 0.80
 # relative to the chronic base (a taper, or detraining if sustained).
 
 ACWR_SAFE_HIGH = 1.30
-# Upper bound. Same source. Above this, recent load is out of proportion to what the
-# athlete has absorbed — the US1 warning. FR-003 / SC-008: recommendations above this
-# bound MUST reduce load.
+# Upper bound of the sweet spot. Same source. Above this, recent load is out of
+# proportion to what the athlete has absorbed — the "relatively high" caution band
+# starts here (below `ACWR_DANGER_HIGH`), advisory but not yet the hard reduction
+# mandate.
+
+ACWR_DANGER_HIGH = 1.50
+# Gabbett (2016)'s own "danger zone" cutoff, distinct from the sweet-spot upper bound —
+# the literature bands the ratio in four, not two: <0.8 low, 0.8–1.30 sweet spot,
+# 1.30–1.50 relatively high (caution), >1.50 high (danger) — see e.g. Hulin et al.'s
+# banding as summarized in Frontiers in Physiology 2020 (10.3389/fphys.2020.01034) and
+# ScienceForSport's ACWR primer, checked 2026-09-21 after the user recalled this exact
+# split from a third-party project and asked for it to be verified against the
+# literature rather than trusted as-is (see CLAUDE.md "Sourcer avant de coder"). FR-003 /
+# SC-008's "recommendations MUST reduce load" mandate is anchored here, not at
+# `ACWR_SAFE_HIGH` — the 1.30–1.50 band gets a softer caution instead (mirrors the
+# existing `RAMP_RATE_CAUTION`/`RAMP_RATE_HIGH` two-tier pattern below).
 
 ACWR_MIN_CTL = 25.0
 # Below this chronic level the ratio is reported "not yet meaningful" rather than

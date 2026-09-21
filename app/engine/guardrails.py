@@ -18,9 +18,9 @@ from dataclasses import dataclass
 from datetime import date
 
 from app.engine.guardrail_thresholds import (
+    ACWR_DANGER_HIGH,
     ACWR_MIN_CTL,
     ACWR_SAFE_HIGH,
-    ACWR_SAFE_LOW,
     HRV_DROP_PCT,
     MONOTONY_HIGH,
     OUTLIER_SD,
@@ -88,6 +88,13 @@ def evaluate_acwr(
     taper produces exactly that and must not be read as detraining (the spec's own edge
     case); sustained under-load shows up in the ramp rate instead.
 
+    Two tiers, not one (added 2026-09-21, same pattern as `evaluate_ramp_rate()` below):
+    the literature's own banding distinguishes "relatively high" (1.30–1.50, caution) from
+    "high"/danger zone (>1.50) — see `ACWR_DANGER_HIGH`'s docstring. Only the danger band
+    carries the hard "must reduce load" mandate (FR-003/SC-008, `has_load_reduction_finding`
+    in `guardrail_service.py`); the caution band is advisory only, same status as
+    `ramp_rate_caution`.
+
     Returns `None` when CTL is below `ACWR_MIN_CTL` — on a thin chronic base the ratio
     reflects the base, not a real spike (the messaging for that lands in US5/T048).
     """
@@ -96,21 +103,35 @@ def evaluate_acwr(
     if ctl < ACWR_MIN_CTL:
         return None
     ratio = atl / ctl
-    if ratio <= ACWR_SAFE_HIGH:
-        return None  # within (or below) range — no manufactured warning (FR-005)
-    return GuardrailFinding(
-        kind="acwr_high",
-        observed=f"{ratio:.2f}",
-        reference=f"{ACWR_SAFE_LOW:.2f} – {ACWR_SAFE_HIGH:.2f}",
-        threshold=f"{ACWR_SAFE_HIGH:.2f}",
-        action=(
-            "réduis la charge des prochains jours plutôt que de l'augmenter — garde une "
-            "séance de qualité, remplace les autres par du Z2 court, jusqu'à ce que le "
-            "rapport redescende dans la plage"
-        ),
-        severity=SEVERITY_HIGH,
-        occurrence_key=_occurrence_key("acwr_high", finding_date),
-    )
+    if ratio >= ACWR_DANGER_HIGH:
+        return GuardrailFinding(
+            kind="acwr_high",
+            observed=f"{ratio:.2f}",
+            reference=f"> {ACWR_DANGER_HIGH:.2f} = zone de danger (Gabbett 2016)",
+            threshold=f"{ACWR_DANGER_HIGH:.2f}",
+            action=(
+                "réduis la charge des prochains jours plutôt que de l'augmenter — garde "
+                "une séance de qualité, remplace les autres par du Z2 court, jusqu'à ce "
+                "que le rapport redescende sous la zone de danger"
+            ),
+            severity=SEVERITY_HIGH,
+            occurrence_key=_occurrence_key("acwr_high", finding_date),
+        )
+    if ratio > ACWR_SAFE_HIGH:
+        return GuardrailFinding(
+            kind="acwr_caution",
+            observed=f"{ratio:.2f}",
+            reference=f"{ACWR_SAFE_HIGH:.2f} – {ACWR_DANGER_HIGH:.2f} = prudence",
+            threshold=f"{ACWR_SAFE_HIGH:.2f}",
+            action=(
+                "tu es au-dessus du sweet spot mais pas encore en zone de danger — "
+                "n'ajoute pas de charge supplémentaire d'ici demain, laisse le rapport "
+                "se stabiliser avant de reprendre de l'intensité"
+            ),
+            severity=SEVERITY_MEDIUM,
+            occurrence_key=_occurrence_key("acwr_caution", finding_date),
+        )
+    return None  # within (or below) the sweet spot — no manufactured warning (FR-005)
 
 
 def evaluate_ramp_rate(

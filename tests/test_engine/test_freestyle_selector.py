@@ -326,6 +326,57 @@ class TestChooseWorkoutType:
         assert choice.workout_type == "intervals"
         assert "coupure" not in choice.reasoning_summary.lower()
 
+    def test_acwr_caution_caps_default_away_from_intervals_only(self):
+        """1.30-1.50 (relatively high, not yet Gabbett's danger zone) excludes
+        `intervals` from the default pick but leaves `long_ride` available."""
+        fitness = FitnessMetrics(atl=50, ctl=60, tsb=10)
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=5, acwr_finding_kind="acwr_caution",
+        )
+        assert choice.workout_type != "intervals"
+        assert "sweet spot" in choice.reasoning_summary.lower()
+
+    def test_acwr_high_caps_default_away_from_intervals_and_long_ride(self):
+        """>1.50 = the actual danger zone — a long ride is, by definition, the week's
+        biggest single load addition, which would defeat the guardrail's own
+        "réduis la charge" action, so it's excluded too, not just intervals."""
+        fitness = FitnessMetrics(atl=50, ctl=60, tsb=20)  # would default to intervals
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=5,
+            requested_workout_type=None, acwr_finding_kind="acwr_high",
+        )
+        assert choice.workout_type not in {"intervals", "long_ride"}
+        assert "danger" in choice.reasoning_summary.lower()
+
+    def test_acwr_high_explicit_request_honored_but_flagged(self):
+        fitness = FitnessMetrics(atl=50, ctl=60, tsb=10)
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=5,
+            requested_workout_type="long_ride", acwr_finding_kind="acwr_high",
+        )
+        assert choice.workout_type == "long_ride"
+        assert "danger" in choice.reasoning_summary.lower()
+
+    def test_no_acwr_finding_leaves_default_selection_unchanged(self):
+        fitness = FitnessMetrics(atl=50, ctl=60, tsb=10)
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=5, acwr_finding_kind=None,
+        )
+        assert choice.workout_type == "intervals"
+        assert "aiguë" not in choice.reasoning_summary.lower()
+
+    def test_break_and_acwr_caps_combine_and_both_notes_appear(self):
+        """The two safety caps are independent and can both apply at once — an
+        over-eager ramp-back after a break is exactly how an athlete lands in both."""
+        fitness = FitnessMetrics(atl=50, ctl=60, tsb=10)
+        choice = choose_workout_type(
+            fitness, _SNAPSHOT, days_since_hard_effort=5,
+            days_since_return_from_break=9, acwr_finding_kind="acwr_high",
+        )
+        assert choice.workout_type not in {"intervals", "long_ride"}
+        assert "coupure" in choice.reasoning_summary.lower()
+        assert "danger" in choice.reasoning_summary.lower()
+
     def test_unsupported_requested_type_is_ignored(self):
         """A value outside VALID_WORKOUT_TYPES (should never happen once the tool
         schema's enum constrains it, but defended here too) falls back to the

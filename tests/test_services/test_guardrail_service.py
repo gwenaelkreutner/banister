@@ -35,18 +35,30 @@ async def test_no_wellness_no_findings(db_session):
 
 async def test_high_ratio_and_ramp_produce_findings_most_severe_first(db_session):
     u = await _user(db_session)
-    # The athlete's real 2026-08-25 shape: ATL/CTL ≈ 1.44, ramp 6.43.
+    # The athlete's real 2026-08-25 shape: ATL/CTL ≈ 1.44, ramp 6.43. 1.44 sits in the
+    # literature's "relatively high" caution band (1.30–1.50), not yet the Gabbett
+    # danger zone (>1.50) — see `evaluate_acwr()`'s two-tier banding (2026-09-21).
     await wellness_repo.upsert(
         db_session, u.id, TODAY, ctl=44.0, atl=63.5, ramp_rate=6.43
     )
     findings = await assemble_workload_findings(db_session, u.id, today=TODAY)
 
     kinds = [f.kind for f in findings]
-    assert "acwr_high" in kinds
+    assert "acwr_caution" in kinds
     assert "ramp_rate_caution" in kinds  # 6.43 is in the 5–7 caution band
     assert findings == sorted(findings, key=lambda f: f.severity, reverse=True)
-    assert has_load_reduction_finding(findings)  # acwr_high requires load down
+    assert not has_load_reduction_finding(findings)  # caution-only, not the danger zone
     assert all(f.action for f in findings)  # SC-003
+
+
+async def test_ratio_above_the_danger_zone_requires_load_down(db_session):
+    u = await _user(db_session)
+    await wellness_repo.upsert(db_session, u.id, TODAY, ctl=100.0, atl=170.0)  # ratio 1.70
+    findings = await assemble_workload_findings(db_session, u.id, today=TODAY)
+
+    kinds = [f.kind for f in findings]
+    assert "acwr_high" in kinds
+    assert has_load_reduction_finding(findings)
 
 
 async def test_normal_load_produces_no_manufactured_warning(db_session):

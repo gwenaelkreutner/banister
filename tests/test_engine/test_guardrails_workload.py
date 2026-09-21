@@ -9,6 +9,7 @@ from datetime import date
 import pytest
 
 from app.engine.guardrail_thresholds import (
+    ACWR_DANGER_HIGH,
     ACWR_SAFE_HIGH,
     MONOTONY_HIGH,
     RAMP_RATE_CAUTION,
@@ -66,13 +67,34 @@ def test_acwr_below_range_is_not_raised_as_a_warning():
     assert evaluate_acwr(atl=60.0, ctl=100.0, finding_date=D) is None  # ratio 0.6
 
 
-def test_acwr_above_range_fires_with_a_load_reducing_action():
+def test_acwr_in_caution_band_fires_medium_without_a_reduction_mandate():
+    """1.30–1.50 = "relatively high" in the literature, not yet the danger zone
+    (Gabbett 2016 / Hulin et al. banding) — advisory only, same status as
+    `ramp_rate_caution`, and must NOT be picked up by `has_load_reduction_finding`."""
     f = evaluate_acwr(atl=141.0, ctl=100.0, finding_date=D)  # ratio 1.41
     assert f is not None
-    assert f.kind == "acwr_high"
+    assert f.kind == "acwr_caution"
     assert f.observed == "1.41"
-    assert str(ACWR_SAFE_HIGH) in f.threshold or f"{ACWR_SAFE_HIGH:.2f}" in f.threshold
+    assert f.severity == 2  # SEVERITY_MEDIUM
+    assert "réduis" not in f.action.lower()
+
+
+def test_acwr_above_danger_fires_high_with_a_load_reducing_action():
+    f = evaluate_acwr(atl=165.0, ctl=100.0, finding_date=D)  # ratio 1.65
+    assert f is not None
+    assert f.kind == "acwr_high"
+    assert f.observed == "1.65"
+    assert str(ACWR_DANGER_HIGH) in f.threshold or f"{ACWR_DANGER_HIGH:.2f}" in f.threshold
     assert "réduis" in f.action.lower() or "réduire" in f.action.lower()
+
+
+def test_acwr_right_at_the_danger_boundary_fires_high():
+    f = evaluate_acwr(atl=ACWR_DANGER_HIGH * 100.0, ctl=100.0, finding_date=D)
+    assert f is not None and f.kind == "acwr_high"
+
+
+def test_acwr_right_at_the_sweet_spot_boundary_fires_nothing():
+    assert evaluate_acwr(atl=ACWR_SAFE_HIGH * 100.0, ctl=100.0, finding_date=D) is None
 
 
 def test_acwr_none_when_ctl_below_minimum():

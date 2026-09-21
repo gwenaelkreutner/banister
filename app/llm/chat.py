@@ -690,6 +690,7 @@ async def _tool_get_freestyle_session_suggestion(
     from app.engine.weekly_snapshot import compute_weekly_snapshot
     from app.llm.template_picker import pick_template
     from app.services.fitness import get_current_fitness
+    from app.services.guardrail_service import assemble_workload_findings
 
     today = _date.today()
     all_items = list(activities) + list(logs)
@@ -712,6 +713,18 @@ async def _tool_get_freestyle_session_suggestion(
     snapshot = compute_weekly_snapshot(all_items, today)
     hard_gap = days_since_hard_effort(all_items, today)
     return_gap = days_since_return_from_break(all_items, today)
+    # Rendu contraignant côté freestyle (2026-09-21) — jusqu'ici l'ACWR n'existait que
+    # comme texte consultatif dans le prompt (GUARDRAIL_LOAD_REDUCTION_RULE), sans
+    # garantie que le modèle le respecte. Ici c'est une exclusion dure dans le sélecteur
+    # déterministe lui-même — voir choose_workout_type().
+    acwr_finding_kind: str | None = None
+    try:
+        workload_findings = await assemble_workload_findings(session, user.id, today=today)
+        acwr_finding_kind = next(
+            (f.kind for f in workload_findings if f.kind.startswith("acwr_")), None
+        )
+    except Exception:
+        logger.warning("Impossible de calculer l'ACWR pour la suggestion freestyle")
 
     profile_orm = await profile_repo.get_by_user_id(session, user.id)
     avoid_raw = (
@@ -734,6 +747,7 @@ async def _tool_get_freestyle_session_suggestion(
                 avoid_workout_types=avoid_workout_types,
                 requested_workout_type=requested_workout_type,
                 days_since_return_from_break=return_gap,
+                acwr_finding_kind=acwr_finding_kind,
             )
             template_id = await pick_template(style_preference, candidates_for(choice.workout_type))
         except SessionLibraryError as exc:
@@ -752,6 +766,7 @@ async def _tool_get_freestyle_session_suggestion(
             requested_workout_type=requested_workout_type,
             requested_template_id=template_id,
             days_since_return_from_break=return_gap,
+            acwr_finding_kind=acwr_finding_kind,
         )
     except (SessionLibraryError, NoSuitableTemplateError) as exc:
         logger.warning("Suggestion mode libre indisponible : %s", exc)

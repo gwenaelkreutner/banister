@@ -28,7 +28,9 @@ async def _user(session) -> User:
 
 
 async def _seed_overload(session, user_id):
-    await wellness_repo.upsert(session, user_id, TODAY, ctl=44.0, atl=64.0, ramp_rate=6.5)
+    # ratio 72/44 ≈ 1.64 — comfortably above ACWR_DANGER_HIGH (1.50), not just the
+    # caution band, so these tests keep exercising the load-reduction-mandate path.
+    await wellness_repo.upsert(session, user_id, TODAY, ctl=44.0, atl=72.0, ramp_rate=6.5)
 
 
 # ── FR-023 / SC-006: zero writes from a firing guardrail ─────────────────────
@@ -42,7 +44,7 @@ async def test_assembling_findings_writes_nothing(db_session):
             db_session, u.id, TODAY - timedelta(days=2 + i), resting_hr=50
         )
     await wellness_repo.upsert(
-        db_session, u.id, TODAY, ctl=44.0, atl=64.0, ramp_rate=6.5, resting_hr=58
+        db_session, u.id, TODAY, ctl=44.0, atl=72.0, ramp_rate=6.5, resting_hr=58
     )
     await db_session.commit()
 
@@ -128,7 +130,7 @@ async def test_decline_does_not_carry_across_a_day_boundary(db_session):
     await _seed_overload(db_session, u.id)
     # A wellness row for tomorrow too, so tomorrow's evaluation has data.
     await wellness_repo.upsert(
-        db_session, u.id, TODAY + timedelta(days=1), ctl=44.0, atl=64.0, ramp_rate=6.5
+        db_session, u.id, TODAY + timedelta(days=1), ctl=44.0, atl=72.0, ramp_rate=6.5
     )
     await db_session.commit()
 

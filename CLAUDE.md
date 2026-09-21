@@ -272,7 +272,14 @@ dont l'`action` est vide est **inconstructible** (SC-003).
 **Signaux de charge** (`assemble_workload_findings`) :
 - ratio aigu/chronique = `ATL / CTL` **lu depuis la table `wellness`** (autoritaire, dédupliqué, présent les
   jours de repos — pas recalculé depuis une série locale qui double-compte, R3). Se déclenche uniquement
-  au-dessus de la plage ; un taper (ratio bas) n'est jamais signalé comme désentraînement.
+  au-dessus de la plage ; un taper (ratio bas) n'est jamais signalé comme désentraînement. **Deux paliers**
+  depuis le 2026-09-21 (aligné sur la littérature, qui distingue 4 bandes et pas 2 — Gabbett 2016/Hulin et
+  al.) : `acwr_caution` entre `ACWR_SAFE_HIGH` (1.30) et `ACWR_DANGER_HIGH` (1.50, sévérité moyenne,
+  consultatif) et `acwr_high` au-dessus de 1.50 (sévérité haute, seul palier qui déclenche
+  `GUARDRAIL_LOAD_REDUCTION_RULE`) — même pattern à deux niveaux que `ramp_rate_caution`/`ramp_rate_high`.
+  Vérifié auprès de la littérature avant d'implémenter (§ "Sourcer avant de coder") après que l'utilisateur
+  a retrouvé ce même seuil de 1.50 sur un projet tiers et a demandé une vérification indépendante plutôt
+  que de le prendre pour argent comptant.
 - `ramp_rate` = gain de CTL/semaine calculé par la source (R4), signal indépendant.
 - monotonie Foster **corrigée** (voir Snapshot hebdo ci-dessous).
 - si un signal exige de baisser la charge → `GUARDRAIL_LOAD_REDUCTION_RULE` ajoutée au system prompt : la
@@ -1038,6 +1045,22 @@ inchangés (l'endurance est justement ce qui revient en premier). Une demande ex
 honorée (jamais silencieusement ignorée, même doctrine que `avoid_workout_types`), mais accompagnée d'une
 mise en garde dans `reasoning_summary` plutôt qu'un blocage — cohérent avec le reste du projet où les
 garde-fous sont toujours consultatifs, jamais bloquants (voir § Garde-fous d'entraînement).
+
+**ACWR rendu contraignant côté freestyle — exception volontaire à "consultatif seulement"**
+(`choose_workout_type(acwr_finding_kind=…)`, 2026-09-21) : partout ailleurs (chat, `/forme`, `/review`),
+un garde-fou n'est que du texte que le LLM est censé respecter (`GUARDRAIL_LOAD_REDUCTION_RULE`), sans
+garantie mécanique — un modèle qui saute l'appel d'outil ou ignore la consigne (voir § Fiabilité tool-
+calling dans le backlog) peut quand même proposer une séance intense. Pour le sélecteur freestyle
+spécifiquement, l'ACWR (`acwr_caution`/`acwr_high`, cf. § Garde-fous ci-dessus) est maintenant une
+**exclusion dure dans `choose_workout_type()`** lui-même, sur le même mécanisme de "safety caps" que la
+reprise après coupure (les deux se combinent — une reprise trop rapide après une coupure est justement le
+cas où les deux se déclenchent ensemble) : `acwr_caution` exclut `intervals` du choix par défaut,
+`acwr_high` exclut aussi `long_ride` (une sortie longue est par définition le plus gros ajout de charge de
+la semaine — la garder disponible contredirait l'action même du garde-fou, "réduis la charge"). Une
+demande explicite reste honorée, avec un avertissement au lieu d'un blocage, même doctrine que la coupure.
+`_tool_get_freestyle_session_suggestion()` (`app/llm/chat.py`) appelle `assemble_workload_findings()`
+(déjà utilisé par le chat pour le texte consultatif) et transmet uniquement le `kind` du finding ACWR —
+aucun calcul dupliqué, le moteur pur ne fait toujours aucune requête DB.
 
 **Feedback post-activité en mode libre** (`app/services/activity_feedback.py`) : l'outcome `"no_plan"` est
 retiré, remplacé par `"freestyle"` — `_assemble_freestyle_feedback()` logge la séance

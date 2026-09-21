@@ -214,6 +214,7 @@ def choose_workout_type(
     ftp: int | None = None,
     available_minutes: int | None = None,
     days_since_return_from_break: int | None = None,
+    acwr_finding_kind: str | None = None,
 ) -> WorkoutTypeChoice:
     """Pure decision: given fitness state + recent load, which workout type and target
     TSS to suggest. Never references a periodization phase or week (SC-005) — the only
@@ -226,17 +227,39 @@ def choose_workout_type(
     caller whether this diverges from what fitness alone would have suggested, so the
     coach can say so honestly instead of presenting it as the natural choice (FR-002).
 
-    `days_since_return_from_break` (not `None` = within the reintroduction window, see
-    `days_since_return_from_break()`) excludes `intervals` from the **default** pick only
-    — a high TSB after a long layoff reads as "fresh" exactly like a real taper would, but
-    the athlete is detrained, not rested, and shouldn't be defaulted onto VO2max/threshold
-    work. An explicit request still wins outright (never silently overridden, same as
-    `avoid_workout_types`) — the caution becomes a spoken note instead of a block.
+    Two independent **safety caps** narrow the *default* pick only — never a silent block
+    on an explicit request, which always wins outright (same doctrine as
+    `avoid_workout_types`); the caution becomes a spoken note instead:
+
+    - `days_since_return_from_break` (not `None` = within the reintroduction window, see
+      `days_since_return_from_break()`) excludes `intervals` — a high TSB after a long
+      layoff reads as "fresh" exactly like a real taper would, but the athlete is
+      detrained, not rested.
+    - `acwr_finding_kind` (the `GuardrailFinding.kind` from `evaluate_acwr()`, 2026-09-21)
+      excludes `intervals` when `"acwr_caution"` (1.30–1.50, relatively high) and both
+      `intervals` **and** `long_ride` when `"acwr_high"` (>1.50, Gabbett's danger zone) —
+      a long ride is, by definition, the week's biggest single load addition, which
+      defeats the guardrail's own "réduis la charge" action at that severity. Unlike the
+      guardrail's system-prompt-only `GUARDRAIL_LOAD_REDUCTION_RULE` (which merely asks
+      the model not to recommend more load), this is a hard exclusion in the deterministic
+      selector itself — not dependent on the model reliably honoring a text rule.
+
+    Both caps can apply at once (a break followed by an over-eager ramp-back is exactly
+    how an athlete lands in both) — each fires its own note if it actually changed the
+    outcome.
 
     `coaching_mode`/`ftp`/`available_minutes` only feed `_long_ride_target_tss()` — every
     other workout type's target stays the CTL-multiplier estimate above, untouched."""
     preferences = _tsb_bucket_preferences(fitness.tsb, days_since_hard_effort)
-    in_return_window = days_since_return_from_break is not None
+
+    safety_caps: list[tuple[str, frozenset[str]]] = []
+    if days_since_return_from_break is not None:
+        safety_caps.append(("break", frozenset({"intervals"})))
+    if acwr_finding_kind == "acwr_high":
+        safety_caps.append(("acwr_high", frozenset({"intervals", "long_ride"})))
+    elif acwr_finding_kind == "acwr_caution":
+        safety_caps.append(("acwr_caution", frozenset({"intervals"})))
+    cap_excluded = frozenset().union(*(excluded for _, excluded in safety_caps))
 
     was_requested = (
         requested_workout_type is not None and requested_workout_type in VALID_WORKOUT_TYPES
@@ -244,12 +267,10 @@ def choose_workout_type(
     if was_requested:
         chosen = requested_workout_type
         overridden = False
-        return_capped = False
+        triggered_caps = [name for name, excluded in safety_caps if chosen in excluded]
     else:
         baseline_choice = next((wt for wt in preferences if wt not in avoid_workout_types), None)
-        effective_avoid = (
-            avoid_workout_types | {"intervals"} if in_return_window else avoid_workout_types
-        )
+        effective_avoid = avoid_workout_types | cap_excluded
         chosen = next((wt for wt in preferences if wt not in effective_avoid), None)
         overridden = chosen is None
         if chosen is None:
@@ -257,9 +278,10 @@ def choose_workout_type(
             # top preference anyway rather than refusing to answer, and say so (the tool
             # layer surfaces `preference_overridden` to the athlete).
             chosen = preferences[0]
-        return_capped = (
-            in_return_window and baseline_choice == "intervals" and chosen != "intervals"
-        )
+        triggered_caps = [
+            name for name, excluded in safety_caps
+            if baseline_choice in excluded and chosen != baseline_choice
+        ]
 
     if chosen == "long_ride":
         target_tss = _long_ride_target_tss(available_minutes, coaching_mode, ftp)
@@ -272,18 +294,42 @@ def choose_workout_type(
         f"TSB {fitness.tsb:+.0f}, charge des 7 derniers jours {snapshot.tss_7d:.0f} TSS "
         f"→ séance de type {chosen}."
     )
-    if in_return_window and chosen == "intervals":
-        reasoning += (
-            f" Tu sors d'une coupure (reprise il y a {days_since_return_from_break} jours) — "
-            "je te garde cette séance intense puisque tu l'as demandée, mais vas-y "
-            "progressivement, ton système cardio n'a pas suivi ta mémoire musculaire."
-        )
-    elif return_capped:
-        reasoning += (
-            f" Tu sors d'une coupure (reprise il y a {days_since_return_from_break} jours) — "
-            "j'évite les intervalles pour l'instant, le temps de refaire de la base "
-            "aérobie avant de remettre de l'intensité."
-        )
+    for cap_name in triggered_caps:
+        if cap_name == "break" and was_requested:
+            reasoning += (
+                f" Tu sors d'une coupure (reprise il y a {days_since_return_from_break} "
+                "jours) — je te garde cette séance intense puisque tu l'as demandée, "
+                "mais vas-y progressivement, ton système cardio n'a pas suivi ta mémoire "
+                "musculaire."
+            )
+        elif cap_name == "break":
+            reasoning += (
+                f" Tu sors d'une coupure (reprise il y a {days_since_return_from_break} "
+                "jours) — j'évite les intervalles pour l'instant, le temps de refaire de "
+                "la base aérobie avant de remettre de l'intensité."
+            )
+        elif cap_name == "acwr_high" and was_requested:
+            reasoning += (
+                " Ton rapport de charge aiguë/chronique est en zone de danger (Gabbett) — "
+                "je te la garde puisque tu l'as demandée, mais sache que tu ajoutes de la "
+                "charge alors qu'il faudrait plutôt la faire redescendre."
+            )
+        elif cap_name == "acwr_high":
+            reasoning += (
+                " Ton rapport de charge aiguë/chronique est en zone de danger (Gabbett) — "
+                "j'évite l'intensité et les grosses sorties tant qu'il n'est pas redescendu."
+            )
+        elif cap_name == "acwr_caution" and was_requested:
+            reasoning += (
+                " Ton rapport de charge aiguë/chronique est déjà au-dessus du sweet spot — "
+                "je te la garde puisque tu l'as demandée, mais sois attentif, ne l'enchaîne "
+                "pas avec d'autres séances intenses avant que ça redescende."
+            )
+        elif cap_name == "acwr_caution":
+            reasoning += (
+                " Ton rapport de charge aiguë/chronique est déjà au-dessus du sweet spot — "
+                "j'évite d'ajouter de l'intensité aujourd'hui, le temps qu'il se stabilise."
+            )
     return WorkoutTypeChoice(
         workout_type=chosen,
         target_tss=target_tss,
@@ -319,6 +365,7 @@ def build_freestyle_suggestion(
     requested_workout_type: str | None = None,
     requested_template_id: str | None = None,
     days_since_return_from_break: int | None = None,
+    acwr_finding_kind: str | None = None,
 ) -> FreestyleSuggestion:
     """End to end: choose a workout type (`choose_workout_type`), pick a template for it
     (rotated deterministically by `day_ordinal` — same day, same ask, same answer; a new
@@ -341,6 +388,7 @@ def build_freestyle_suggestion(
         ftp=ftp,
         available_minutes=available_minutes,
         days_since_return_from_break=days_since_return_from_break,
+        acwr_finding_kind=acwr_finding_kind,
     )
     candidates = candidates_for(choice.workout_type)
     # Start from the day-rotated candidate for variety, but a fixed-duration template
