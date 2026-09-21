@@ -827,6 +827,39 @@ reply-quote sur un message hors chat (`/review`, `/recap`, notification) n'a tou
 messages ne sont pas dans la fenêtre courte des 8 derniers `chat_messages`. Signalé par l'utilisateur en
 conditions réelles, pas encore scopé en solution plus large (résumé/mémoire des messages hors chat).
 
+## Contexte de forme du chat — corriger la donnée, pas brider le modèle (hors spec, 2026-09-21)
+
+⚠️ **Bug réel trouvé en discussion libre** (pas via l'outil freestyle, cette fois) : à la question "tu
+penses quoi de ma forme ?", le coach a répondu "t'es dans une fenêtre où t'es frais et performant..." et a
+proposé de "tester ce que le moteur a dans le ventre" — alors que l'athlète sortait tout juste d'une
+reprise après coupure (même contexte réel que le correctif `days_since_return_from_break` de la section
+"Mode libre" ci-dessus, mais ici c'est le **chat général** qui régresse, pas le sélecteur freestyle).
+
+**Piste écartée par l'utilisateur, explicitement** : ajouter encore un signal/une règle système au prompt
+("si coupure récente, ne dis pas X") — refusé pour deux raisons données en conditions réelles : (1) ça
+empile des cas particuliers un par un au lieu de traiter la classe de problème, (2) "la source de l'erreur
+c'est nous, pas le LLM" — on lui donnait des données trompeuses présentées comme des faits, pas une
+information insuffisante qu'il fallait lui apprendre à contourner par une consigne. Décision : corriger ce
+qui est montré pour que ce soit vrai, jamais ajouter une règle de plus pour compenser une donnée fausse.
+
+Trois corrections dans `app/llm/tools.py::build_system_prompt()`, aucune n'est une consigne comportementale :
+
+1. **Le TSB n'est plus accompagné d'un libellé narratif.** `tsb_label()` ("✨ Forme de pointe", zone cible
+   affûtage) suppose un athlète qui s'entraîne régulièrement et amorce un affûtage délibéré — il ne peut
+   pas distinguer ça d'un TSB gonflé par un manque de charge après une coupure, et son vocabulaire
+   ("Pic de forme") est presque identique à celui de la phase *prescriptive* du plan, donc les deux se
+   renforcent au lieu de se contredire. Le chat affiche maintenant `TSB +12` nu — seule `detected_phase`
+   (calculée sur le comportement réel, pas le calendrier) porte la lecture qualitative. `tsb_label()`
+   lui-même n'est pas touché — il reste utilisé tel quel par `/forme`/`/recap`/les notifications, hors
+   scope de ce fix (chaque prompt reste une fonction séparée, voir plus haut).
+2. **L'écart en jours depuis la séance précédente est chiffré sur chaque ligne** du bloc 7 DERNIÈRES
+   SÉANCES (`[+11j]`, etc.) — un LLM ne fait pas fiablement d'arithmétique de dates en silence ; un trou
+   de 11 jours entre deux lignes passait inaperçu alors que la donnée était techniquement déjà là.
+3. **Le taux de ressenti renseigné devient un chiffre affiché** ("Ressenti (RPE) renseigné sur 1/7 de ces
+   séances") plutôt qu'une série de tirets qu'on peut glisser dessus sans y prêter attention.
+
+**Import supprimé** : `tsb_label` n'est plus importé dans `tools.py` (un seul usage, maintenant retiré).
+
 ## Mesure du coût LLM (hors spec — construit le 2026-09-18)
 
 Chaque appel API renvoie ses tokens (`usage.prompt_tokens`/`.completion_tokens`), mais rien ne les gardait

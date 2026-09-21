@@ -5,7 +5,7 @@ Définitions des outils LLM (format OpenAI-compatible) pour le chat agentique.
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from app.engine.atl_ctl import FitnessMetrics, compute_fitness, tsb_label
+from app.engine.atl_ctl import FitnessMetrics, compute_fitness
 from app.engine.freestyle_selector import VALID_WORKOUT_TYPES
 from app.engine.rpe import rpe_emoji as _rpe_emoji_for
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
@@ -587,13 +587,20 @@ def build_system_prompt(
         lines.append("")
         lines.extend(wrap_untrusted_block(mem_lines))
 
-    # Métriques de forme
+    # Métriques de forme — TSB montré en chiffre nu, sans libellé narratif (trouvé en
+    # test live 2026-09-21, voir CLAUDE.md § "TSB seul ne suffit pas") : `tsb_label()`
+    # ("✨ Forme de pointe" etc.) suppose un athlète qui s'entraîne régulièrement et
+    # amorce un affûtage — il ne sait pas distinguer ça d'un TSB gonflé par une coupure,
+    # et son vocabulaire ("Pic de forme") se confond avec celui de la phase prescriptive
+    # du plan, renforçant à tort la même lecture au lieu de la contredire. La phase
+    # détectée ci-dessous, elle, est calculée sur le comportement réel — c'est elle qui
+    # porte la lecture qualitative, pas le TSB seul.
     if metrics:
-        label = tsb_label(metrics.tsb)
         lines += [
             "",
             "FORME ACTUELLE :",
-            f"CTL {metrics.ctl:.0f} (fitness) | ATL {metrics.atl:.0f} (fatigue) | TSB {metrics.tsb:+.0f} {label}",
+            f"CTL {metrics.ctl:.0f} (fitness) | ATL {metrics.atl:.0f} (fatigue) | "
+            f"TSB {metrics.tsb:+.0f}",
         ]
     else:
         lines += ["", "FORME ACTUELLE : pas encore de données (aucune séance loggée)."]
@@ -633,19 +640,29 @@ def build_system_prompt(
         if w_parts:
             lines.append(f"Wellness du jour (échelle 1-4, 1=meilleur état) : {' | '.join(w_parts)}")
 
-    # 7 dernières séances (SessionLog ou Activity pré-plan, déjà triés et limités à 7)
+    # 7 dernières séances (SessionLog ou Activity pré-plan, déjà triés et limités à 7).
+    # Deux faits rendus explicites plutôt que laissés à déduire (trouvé en test live
+    # 2026-09-21, voir CLAUDE.md) : l'écart en jours depuis la séance précédente — un
+    # LLM ne fait pas fiablement l'arithmétique de dates tout seul, donc un trou de 11
+    # jours entre deux lignes passait inaperçu — et le taux de ressenti renseigné, pour
+    # qu'un manque de RPE massif soit un chiffre visible plutôt qu'une série de tirets
+    # qu'on peut glisser dessus sans y prêter attention.
     if recent_logs:
         lines += ["", "7 DERNIÈRES SÉANCES :"]
+        rpe_known = 0
+        previous_date = None
         for item in recent_logs:
             if hasattr(item, "logged_date"):  # SessionLog
                 item_date = item.logged_date
                 dur_str = f"{item.duration_minutes_actual}min" if item.duration_minutes_actual else "—"
                 rpe_str = _rpe_emoji_for(item.rpe)
+                if item.rpe is not None:
+                    rpe_known += 1
                 tss_str = f"{item.tss_actual:.0f}" if item.tss_actual else "—"
                 hr_str = f"{item.avg_heart_rate}bpm" if item.avg_heart_rate else "—"
                 pw_str = f"{item.avg_power}W" if item.avg_power else "—"
                 env_str = f" ({item.environment})" if getattr(item, "environment", None) else ""
-            else:  # Activity (importée, pré-plan)
+            else:  # Activity (importée, pré-plan) — jamais de RPE côté source
                 item_date = item.activity_date
                 dur_str = f"{item.duration_seconds // 60}min" if item.duration_seconds else "—"
                 rpe_str = "—"
@@ -653,9 +670,14 @@ def build_system_prompt(
                 hr_str = f"{int(item.avg_heartrate)}bpm" if item.avg_heartrate else "—"
                 pw_str = f"{int(item.avg_watts)}W" if item.avg_watts else "—"
                 env_str = f" ({item.environment})" if item.environment else ""
+            gap = (item_date - previous_date).days if previous_date is not None else None
+            gap_str = f" [+{gap}j]" if gap is not None else ""
+            previous_date = item_date
             lines.append(
-                f"- {item_date.strftime('%d/%m')} | {dur_str} | RPE {rpe_str} | TSS {tss_str} | {hr_str} | {pw_str}{env_str}"
+                f"- {item_date.strftime('%d/%m')}{gap_str} | {dur_str} | RPE {rpe_str} | "
+                f"TSS {tss_str} | {hr_str} | {pw_str}{env_str}"
             )
+        lines.append(f"Ressenti (RPE) renseigné sur {rpe_known}/{len(recent_logs)} de ces séances.")
     else:
         lines += ["", "7 DERNIÈRES SÉANCES : aucune séance enregistrée."]
 
