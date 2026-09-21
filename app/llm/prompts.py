@@ -495,6 +495,31 @@ REVIEW_VOCAB_RULE = (
     "dans le bot (/forme, /recap)."
 )
 
+# Blocs de données optionnels du message utilisateur — chacun indépendamment togglable
+# (False = retiré du prompt, zéro autre changement) si un bloc s'avère bruyant ou
+# trompeur en usage réel, sans repasser par le code qui construit les lignes. Ajouté
+# 2026-09-21 après une relecture des logs /review : les champs sources ci-dessous
+# existaient déjà sur SessionLog (calculés à l'ingestion, mapper.py) mais n'étaient
+# jamais montés dans ce prompt — pas une exclusion documentée, juste jamais branché.
+REVIEW_DATA_BLOCKS = {
+    # normalized_power, intensity_factor — mêmes libellés/notes que activity_analysis.py
+    # (bloc [PUISSANCE]), pour rester cohérent avec le reste de l'app.
+    "raw_power": True,
+    # cardiac_drift_index, intervals_consistency_index, respect_zones_score,
+    # variability_index — idem, mêmes libellés que activity_analysis.py (bloc [QUALITÉ]).
+    "quality_signals": True,
+}
+
+# elevation_gain_m / average_temp_c / kilojoules / athlete_count existent sur SessionLog
+# et sont acceptés par session_log_repo.create(), mais AUCUN appelant réel du pipeline
+# intervals.icu (mapper.py → AnalyzedSession → activity_feedback.py) ne les renseigne —
+# AnalyzedSession n'a même pas ces champs. Vestiges de l'ère Strava (athlete_count
+# dépendait de Strava, confirmé mort après spec 002 — l'utilisateur l'a signalé en
+# testant en conditions réelles) : toujours NULL pour toute séance loguée depuis. Pas de
+# bloc "contexte environnemental" ici tant que ce n'est pas rebranché à l'ingestion
+# (chantier séparé, pas fait ici) — un bloc togglable sur une donnée qui n'existe jamais
+# ne servirait à rien.
+
 REVIEW_RPE_MISSING_RULE = """RÈGLE NON-NÉGOCIABLE — ressenti (RPE) absent sur cette séance :
 Les chiffres seuls (durée, TSS, zones, puissance) ne suffisent JAMAIS à juger si une
 séance "s'est bien passée" — ils ne disent rien de la fatigue ressentie, de la
@@ -568,10 +593,31 @@ def build_review_user_message(ctx, dfa=None) -> str:
         lines.append(f"- Puissance moyenne : {log.avg_power} W")
     if log.avg_heart_rate is not None:
         lines.append(f"- FC moyenne : {log.avg_heart_rate} bpm")
+
+    if REVIEW_DATA_BLOCKS["raw_power"]:
+        if log.normalized_power:
+            lines.append(f"- Puissance normalisée (NP) : {log.normalized_power} W")
+        if log.intensity_factor is not None:
+            lines.append(f"- Intensity Factor (IF) : {log.intensity_factor:.2f}")
+        # VI ignoré si durée < 30 min — pas représentatif sur courtes sorties (même règle
+        # que activity_analysis.py).
+        if log.variability_index is not None and (log.duration_minutes_actual or 0) >= 30:
+            lines.append(f"- Variability Index (VI) : {log.variability_index:.2f}")
+
     if log.efficiency_factor is not None:
         lines.append(f"- Efficiency factor : {log.efficiency_factor:.2f}")
     if log.hrr is not None:
         lines.append(f"- HRRc (récupération FC 60s) : {log.hrr:.0f}")
+
+    if REVIEW_DATA_BLOCKS["quality_signals"]:
+        if log.respect_zones_score is not None:
+            lines.append(f"- Respect de la zone cible : {log.respect_zones_score:.0f}/100")
+        if log.cardiac_drift_index is not None:
+            lines.append(f"- Dérive cardiaque : {log.cardiac_drift_index * 100:+.1f}%")
+        if log.intervals_consistency_index is not None:
+            lines.append(
+                f"- Consistance des intervalles : {round(log.intervals_consistency_index * 100)}%"
+            )
     if dfa is not None and dfa.quality.sufficient:
         dfa_line = f"- DFA α1 moyen : {dfa.avg:.2f}"
         if dfa.lt1_crossing is not None and dfa.lt1_crossing.avg_hr is not None:
