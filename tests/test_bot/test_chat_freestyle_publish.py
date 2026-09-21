@@ -36,6 +36,7 @@ class _Message:
         self.text = text
         self.bot = _Bot()
         self.chat = _Chat()
+        self.reply_to_message = None
         self.sent: list[tuple[str, object]] = []
 
     async def answer(self, text, **kw):

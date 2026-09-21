@@ -42,6 +42,11 @@ _FALLBACK_ERROR = (
     "Réessaie dans quelques instants ou utilise /forme pour consulter tes métriques."
 )
 
+# Plafond du contexte de reply injecté au LLM — Telegram va jusqu'à 4096 caractères par
+# message, mais on ne veut que de quoi identifier de quoi l'athlète parle, pas rejouer
+# l'intégralité d'une synthèse /review dans chaque tour de chat.
+_REPLY_CONTEXT_MAX_CHARS = 500
+
 
 # ── Handler principal — tout message libre en mode ACTIVE ─────────────────────
 
@@ -61,12 +66,19 @@ async def handle_chat_message(
 
     await message.bot.send_chat_action(message.chat.id, "typing")
 
+    reply_context: str | None = None
+    if message.reply_to_message is not None:
+        reply_context = message.reply_to_message.text or message.reply_to_message.caption
+        if reply_context:
+            reply_context = reply_context[:_REPLY_CONTEXT_MAX_CHARS]
+
     try:
         from app.llm.chat import run_chat
         response_text, intent, tool_used, pending_proposal, usage = await run_chat(
             user_message=message.text,
             user=user,
             session=session,
+            reply_context=reply_context,
         )
     except Exception:
         logger.exception("Erreur chat agentique")

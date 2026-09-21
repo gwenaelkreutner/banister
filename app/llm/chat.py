@@ -38,6 +38,7 @@ async def run_chat(
     user_message: str,
     user: User,
     session: AsyncSession,
+    reply_context: str | None = None,
 ) -> tuple[str, str | None, str | None, dict | None, dict]:
     """
     Exécute le cycle de chat agentique pour un message utilisateur.
@@ -46,6 +47,11 @@ async def run_chat(
     intent est déterminé a posteriori selon l'outil appelé. `usage` (tokens
     prompt/completion/total, nombre d'appels API) sert à mesurer le coût réel d'un tour
     de chat — voir app/services/token_usage.py et scripts/token_usage_state.py.
+
+    `reply_context` : texte du message Telegram auquel l'athlète a répondu en reply-quote
+    (n'importe quel message du bot — chat, /review, /recap, notification — puisque
+    Telegram renvoie ce texte brut dans le payload, indépendamment de ce que Banister a
+    lui-même loggé dans `chat_messages`). `None` si le message n'est pas une réponse.
     """
     # 1. Charger le contexte
     profile_row = await repo.profile_repo.get_by_user_id(session, user.id)
@@ -242,7 +248,13 @@ async def run_chat(
         registry.register(_name, _value)
 
     messages = build_context_messages(history)
-    messages.append({"role": "user", "content": user_message})
+    turn_content = user_message
+    if reply_context:
+        turn_content = (
+            f'[L\'athlète répond directement à ce message précédent : "{reply_context}"]\n'
+            f"{user_message}"
+        )
+    messages.append({"role": "user", "content": turn_content})
 
     # 3. Définir le tool_executor (fermeture sur session/plan/profile)
     async def tool_executor(name: str, args: dict) -> dict:
