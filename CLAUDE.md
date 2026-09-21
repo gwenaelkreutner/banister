@@ -515,6 +515,27 @@ points d'écart, pas une nuance.
   insertions séparées, chacune dans sa fonction de prompt jetable ; **pas** dans `build_system_prompt()`
   (le chat) pour l'instant
 
+### Phase diagnostique — `phase_detection` (`app/engine/phase_detection.py`, 2026-09-21, porté de Section11)
+- **Distincte de la phase prescriptive** `app/engine/periodization.py`/`week.phase` (qui construit le plan
+  au moment de sa génération). Celle-ci est **diagnostique** : inférée du comportement récent réel. Même
+  vocabulaire FR (`narrator.PHASE_FR`, réutilisé tel quel) mais jamais nommé `phase` — toujours
+  `detected_phase`, pour ne jamais entrer en collision là où les deux pourraient apparaître ensemble
+- **Port simplifié, pas une parité ligne à ligne** : le script source (Section11, fourni par l'utilisateur)
+  fait ~700 lignes de règles à deux flux. Cette v1 garde un flux principal obligatoire (comportemental,
+  `_primary_phase()` — tendance de charge 7j vs moyenne 6 semaines + nombre de jours durs, réutilise
+  `compute_weekly_snapshot()`) et un flux secondaire best-effort (phase du plan actif si disponible, sinon
+  proximité de la date cible de l'objectif) — recoupement noté (`streams_agree`), jamais caché
+- Seuils du flux principal (`_TAPER_LOAD_DROP_PCT`, `_BUILD_LOAD_RISE_PCT`, `_PEAK_MIN_HARD_DAYS_7D`) et du
+  flux secondaire (bandes de jours avant la date cible) : **adaptation propre au module, aucune source
+  publiée identifiée** pour ces bornes précises — documentés comme jugement dans le module lui-même
+- `detect_training_phase(logs, today, plan_week_phase=None, target_date=None)` → `PhaseDetectionResult |
+  None` — `None` si `logs` est vide, jamais une phase par défaut hallucinée
+- Coexiste sans changement avec `app/engine/freestyle_selector.py` (portée différente : choix d'une séance
+  unique vs classification macro/hebdomadaire) — pas d'intégration entre les deux dans ce chantier
+- Surface : **prompt du chat uniquement** (`app/llm/tools.py::build_system_prompt()`), bloc positionné
+  avant les signaux journaliers (`recovery_index`, wellness qualitatif) — volatilité hebdomadaire, pas
+  quotidienne. `/review` et `/recap` ne sont pas concernés
+
 ### Analyse LLM post-séance (`app/llm/activity_analysis.py`)
 - `generate_activity_analysis(**kwargs)` — prompt structuré en 5 blocs : Séance / Puissance / Qualité / Contexte / Forme & Charge
 - 3 paramètres optionnels Variable Reward : `highlight_category`, `personal_record`, `storytelling_mode`
@@ -999,6 +1020,7 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Projection CTL théorique (suivi plan) | `app/engine/atl_ctl.py` — `project_fitness_from_plan()` |
 | Modifier snapshot hebdo (monotonie, tendance) | `app/engine/weekly_snapshot.py` |
 | Modifier le TID / indice de polarisation | `app/engine/tid.py` — seuils dans `app/engine/guardrail_thresholds.py` |
+| Modifier la phase diagnostique (`detected_phase`, distincte de `week.phase`) | `app/engine/phase_detection.py` |
 | Modifier récap hebdo (logique + LLM) | `app/services/weekly_recap.py` |
 | Lire/écrire l'adhérence hebdomadaire | `app/db/repositories/weekly_adherence_repo.py` |
 | Modifier le scheduler dimanche 20h | `app/main.py` — `_weekly_recap_scheduler()` |

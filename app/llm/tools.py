@@ -529,6 +529,7 @@ def build_system_prompt(
     recovery_insufficiency: str | None = None,
     wellness_today: object | None = None,
     recovery_index: float | None = None,
+    detected_phase: object | None = None,
 ) -> str:
     p = profile
 
@@ -597,6 +598,17 @@ def build_system_prompt(
         ]
     else:
         lines += ["", "FORME ACTUELLE : pas encore de données (aucune séance loggée)."]
+
+    if detected_phase is not None:
+        from app.llm.narrator import PHASE_FR  # même vocabulaire FR que week.phase (prescriptif)
+
+        phase_label = PHASE_FR.get(detected_phase.detected_phase, detected_phase.detected_phase)
+        agree_note = ""
+        if detected_phase.streams_agree is False:
+            secondary = detected_phase.secondary_phase
+            secondary_label = PHASE_FR.get(secondary, secondary)
+            agree_note = f" (plan déclare : {secondary_label})"
+        lines.append(f"Phase détectée (comportement récent) : {phase_label}{agree_note}")
 
     if recovery_index is not None:
         lines.append(f"Indice de récupération : {recovery_index:.2f}")

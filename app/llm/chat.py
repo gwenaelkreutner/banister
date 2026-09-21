@@ -160,6 +160,29 @@ async def run_chat(
     except Exception:
         logger.warning("Impossible de charger le wellness du jour")
 
+    # Phase diagnostique (2026-09-21, porté de Section11) — distincte de week.phase
+    # (prescriptif, choisi à la construction du plan) : inférée du comportement récent,
+    # recoupée avec la phase déclarée par le plan actif ou la proximité de la date cible.
+    detected_phase_result = None
+    try:
+        from app.engine.phase_detection import detect_training_phase
+
+        _plan_week_phase: str | None = None
+        if plan_schema and plan_schema.start_date:
+            _wk_num = (date.today() - plan_schema.start_date).days // 7 + 1
+            _cur_week = next((w for w in plan_schema.weeks if w.week_number == _wk_num), None)
+            if _cur_week:
+                _plan_week_phase = _cur_week.phase
+        _target_date = profile.objective.target_date if profile else None
+        detected_phase_result = detect_training_phase(
+            all_items,
+            today=date.today(),
+            plan_week_phase=_plan_week_phase,
+            target_date=_target_date,
+        )
+    except Exception:
+        logger.warning("Impossible de calculer la phase diagnostique")
+
     # Calculé une seule fois : sert à la fois l'affichage FORME ACTUELLE (recovery_index)
     # et le MetricRegistry plus bas (mêmes valeurs, pas une seconde requête).
     registry_metrics: dict[str, float] = {}
@@ -185,6 +208,7 @@ async def run_chat(
         recovery_insufficiency=recovery_gap,
         wellness_today=wellness_today,
         recovery_index=registry_metrics.get("recovery_index"),
+        detected_phase=detected_phase_result,
     )
     system = f"{ux_rules}\n\n---\n\n{coaching_ctx}"
     if has_load_reduction_finding(guardrail_findings):
