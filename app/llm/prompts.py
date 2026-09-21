@@ -497,12 +497,22 @@ REVIEW_VOCAB_RULE = (
 REVIEW_RPE_MISSING_RULE = """RÈGLE NON-NÉGOCIABLE — ressenti (RPE) absent sur cette séance :
 Les chiffres seuls (durée, TSS, zones, puissance) ne suffisent JAMAIS à juger si une
 séance "s'est bien passée" — ils ne disent rien de la fatigue ressentie, de la
-récupération ou du contexte de vie. Si le ressenti de l'athlète n'est pas fourni :
-- Réponds à "ça s'est bien passé ?" avec le seul constat factuel (durée, TSS, zone
-  dominante) et dis explicitement qu'il n'y a pas assez d'éléments pour juger.
-- Ne dis JAMAIS "séance réussie" / "bien géré" / "parfait" à partir des seules stats.
-- Ne change JAMAIS la recommandation pour la prochaine séance sur cette seule base —
-  demande le ressenti à la place de trancher.
+récupération ou du contexte de vie.
+- Le point 1, et UNIQUEMENT le point 1, répond à "ça s'est bien passé ?" avec le seul
+  constat factuel (durée, TSS, zone dominante) et dit explicitement qu'il n'y a pas
+  assez d'éléments pour juger. Ne dis JAMAIS "séance réussie" / "bien géré" / "parfait"
+  à partir des seules stats.
+- Les points 2 et 3 NE RÉPÈTENT PAS que le ressenti manque — demander le RPE une seule
+  fois (au point 1) suffit. Utilise plutôt les autres signaux déjà fournis (tendance de
+  charge, TSB, monotonie, cohérence avec les séances précédentes, respect des zones,
+  distribution d'intensité) pour un point concret (2) et une implication pour la
+  prochaine séance (3). Si vraiment aucun de ces signaux n'offre quoi que ce soit de
+  concret, dis-le UNE fois, jamais deux ou trois.
+- Le point 3 ne prescrit jamais un changement ferme d'entraînement sur la seule base
+  des stats (ex. "augmente l'intensité") — une observation générale ancrée dans un
+  signal fourni (ex. "ta charge est stable sur 7 jours, tu peux garder ce rythme si tu
+  te sens bien") reste possible et encouragée, ce n'est pas la même chose qu'une
+  prescription ferme.
 """
 
 

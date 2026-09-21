@@ -595,6 +595,34 @@ points d'écart, pas une nuance.
   pas de bruit dans le prompt pour une donnée inexploitable). Même décision que power-curve : pas de
   `MetricRegistry`/vérification post-hoc sur cette valeur
 
+### RPE — deux sources, jamais confondues (trouvé en testant `/review` en conditions réelles, 2026-09-21)
+⚠️ **Bug réel trouvé en direct** : un ressenti saisi par l'athlète directement sur intervals.icu
+(`icu_rpe`, échelle numérique type Borg) n'était **jamais lu nulle part** dans Banister — `mapper.py`
+ne le mappait pas, donc `/review` affichait "ressenti non renseigné" même après que l'athlète l'ait
+explicitement renseigné côté source.
+
+- `app/providers/intervals/mapper.py::rpe_emoji_from_icu_rpe()` : convertit `icu_rpe` (numérique) vers le
+  vocabulaire 3 valeurs de Banister (`hard`/`normal`/`easy`) — bandes `RPE_HARD_MIN=7.0`/`RPE_EASY_MAX=3.0`,
+  **jugement, pas une échelle publiée qui tombe pile sur ces bornes**, documenté comme tel dans le module.
+  Mappé à l'ingestion (`AnalyzedSession.rpe_emoji`, les 3 branches de `activity_feedback.py`) — corrige les
+  séances loguées à partir de maintenant.
+- **Le clavier Telegram (`cb_rpe`, `app/bot/routers/session_log.py`) reste toujours prioritaire** (décision
+  owner) — la valeur intervals.icu n'est qu'un point de départ à l'ingestion, jamais une correction qui
+  écrase une réponse déjà donnée sur Telegram.
+- **Rattrapage pour les séances déjà loguées avant ce fix** : `app/bot/routers/review.py::
+  _backfill_rpe_from_source()` — un appel `client.get_activity()` best-effort au moment de `/review`, ne
+  touche `log.rpe_emoji` que s'il est encore vide, persiste la correction (mutation in-place, committée par
+  `session.begin()` du middleware). Silencieux si pas d'activité source, appel en échec, ou pas de valeur
+  côté source.
+- **Écriture-retour (Telegram → intervals.icu) explicitement pas faite** — même doctrine que la correction
+  FTP (spec 007 FR-007, voir § Flux de configuration ci-dessous) : lecture seule pour l'instant, décision
+  owner 2026-09-21, pas de PUT vérifié contre l'API réelle.
+- Au passage, `REVIEW_RPE_MISSING_RULE` (`app/llm/prompts.py`) corrigée : elle forçait les points 2 et 3 de
+  la structure `/review` à répéter "ressenti manquant" (vu en direct — 3 paragraphes sur le même fait, zéro
+  analyse utile). Maintenant : seul le point 1 énonce l'absence de RPE ; les points 2/3 doivent puiser dans
+  les autres signaux déjà fournis (tendance de charge, TSB, monotonie, cohérence historique, zones) plutôt
+  que de se répéter.
+
 ### Analyse LLM post-séance (`app/llm/activity_analysis.py`)
 - `generate_activity_analysis(**kwargs)` — prompt structuré en 5 blocs : Séance / Puissance / Qualité / Contexte / Forme & Charge
 - 3 paramètres optionnels Variable Reward : `highlight_category`, `personal_record`, `storytelling_mode`
@@ -1082,6 +1110,7 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Modifier la phase diagnostique (`detected_phase`, distincte de `week.phase`) | `app/engine/phase_detection.py` |
 | Modifier power-curve delta / sustainability_profile | `app/engine/power_curve.py` — endpoint dans `client.get_power_curves()`, câblé dans `app/bot/routers/forme.py::_fetch_power_profile()` |
 | Modifier l'analyse DFA α1 | `app/engine/dfa.py` — normalisation streams dans `app/providers/intervals/streams.py`, câblé dans `app/bot/routers/review.py::_fetch_dfa()` |
+| Modifier la conversion RPE intervals.icu → Banister, ou le rattrapage `/review` | `app/providers/intervals/mapper.py::rpe_emoji_from_icu_rpe()` ; rattrapage dans `app/bot/routers/review.py::_backfill_rpe_from_source()` |
 | Modifier récap hebdo (logique + LLM) | `app/services/weekly_recap.py` |
 | Lire/écrire l'adhérence hebdomadaire | `app/db/repositories/weekly_adherence_repo.py` |
 | Modifier le scheduler dimanche 20h | `app/main.py` — `_weekly_recap_scheduler()` |

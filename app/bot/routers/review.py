@@ -41,6 +41,25 @@ def _client() -> IntervalsClient:
     )
 
 
+async def _backfill_rpe_from_source(log: SessionLog) -> None:
+    """Rattrapage pour les séances déjà loguées avant que `icu_rpe` soit mappé à
+    l'ingestion (2026-09-21) — ou pour un ressenti ajouté sur intervals.icu après coup.
+    Le clavier Telegram (`cb_rpe`) reste prioritaire : ne touche `log.rpe_emoji` que s'il
+    est encore vide (décision owner). Mute `log` en place — même transaction que le
+    reste du handler, committée par le middleware (`session.begin()`), donc persisté."""
+    if log.rpe_emoji is not None or not log.source_activity_id:
+        return
+    try:
+        from app.providers.intervals.mapper import rpe_emoji_from_icu_rpe
+
+        activity = await _client().get_activity(log.source_activity_id)
+        rpe = rpe_emoji_from_icu_rpe(activity.get("icu_rpe"))
+        if rpe is not None:
+            log.rpe_emoji = rpe
+    except Exception:
+        logger.warning("Impossible de rattraper le RPE depuis intervals.icu pour /review")
+
+
 async def _fetch_dfa(log: SessionLog):
     """Best-effort : un appel réseau intervals.icu en plus, séparé du reste de /review
     (DB uniquement) — jamais bloquant. `None` si pas d'activité source (log manuel), si
@@ -87,6 +106,7 @@ async def _run_review(
     # dans app/bot/routers/chat.py.
     from app.llm.review import generate_session_review
 
+    await _backfill_rpe_from_source(log)
     ctx = await assemble_review_context(session, user, log)
     dfa = await _fetch_dfa(log)
     text = await generate_session_review(ctx, dfa=dfa)

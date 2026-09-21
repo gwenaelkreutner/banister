@@ -58,6 +58,10 @@ class AnalyzedSession(BaseModel):
     # aucune conversion d'unité contrairement à decoupling/cardiac_drift_index.
     efficiency_factor: float | None = None
     hrr: float | None = None
+    # RPE renseigné directement sur intervals.icu, converti vers hard/normal/easy
+    # (mapper.py::rpe_emoji_from_icu_rpe) — valeur de départ seulement, le clavier
+    # Telegram (cb_rpe) reste prioritaire s'il a déjà répondu.
+    rpe_emoji: str | None = None
 
     planned_session_id: str | None = None
     planned_workout_type: str | None = None

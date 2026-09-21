@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from app.bot.routers.review import _fetch_dfa, cb_review_pick, cmd_review
+from app.bot.routers.review import (
+    _backfill_rpe_from_source,
+    _fetch_dfa,
+    cb_review_pick,
+    cmd_review,
+)
 from app.db.models.session_log import SessionLog
 from app.db.models.user import User
 
@@ -210,3 +215,84 @@ async def test_fetch_dfa_computes_block_when_alphahrv_data_present(db_session, m
     assert result is not None
     assert result.quality.sufficient is True
     assert result.avg == 0.9
+
+
+# ── _backfill_rpe_from_source (2026-09-21) — rattrapage RPE depuis intervals.icu ─────
+
+
+class _FakeActivityClient:
+    def __init__(self, activity: dict):
+        self._activity = activity
+        self.calls: list[str] = []
+
+    async def get_activity(self, activity_id, **kw):
+        self.calls.append(activity_id)
+        return self._activity
+
+
+async def test_backfill_does_nothing_when_rpe_already_set(db_session, monkeypatch):
+    fake = _FakeActivityClient({"icu_rpe": 9})
+    monkeypatch.setattr("app.bot.routers.review._client", lambda: fake)
+
+    user = await _make_user(db_session)
+    log = await _make_log(
+        db_session, user.id, days_ago=1, source_activity_id="i123", rpe_emoji="easy"
+    )
+
+    await _backfill_rpe_from_source(log)
+
+    assert log.rpe_emoji == "easy"  # Telegram (déjà répondu) l'emporte
+    assert fake.calls == []  # jamais appelé — pas la peine
+
+
+async def test_backfill_does_nothing_without_source_activity_id(db_session, monkeypatch):
+    fake = _FakeActivityClient({"icu_rpe": 9})
+    monkeypatch.setattr("app.bot.routers.review._client", lambda: fake)
+
+    user = await _make_user(db_session)
+    log = await _make_log(db_session, user.id, days_ago=1)  # source_activity_id absent
+
+    await _backfill_rpe_from_source(log)
+
+    assert log.rpe_emoji is None
+    assert fake.calls == []
+
+
+async def test_backfill_fills_rpe_from_icu_rpe_when_empty(db_session, monkeypatch):
+    fake = _FakeActivityClient({"icu_rpe": 8})  # >= RPE_HARD_MIN
+    monkeypatch.setattr("app.bot.routers.review._client", lambda: fake)
+
+    user = await _make_user(db_session)
+    log = await _make_log(db_session, user.id, days_ago=1, source_activity_id="i123")
+
+    await _backfill_rpe_from_source(log)
+
+    assert log.rpe_emoji == "hard"
+    assert fake.calls == ["i123"]
+
+
+async def test_backfill_leaves_rpe_none_when_source_has_no_value(db_session, monkeypatch):
+    fake = _FakeActivityClient({"icu_rpe": None})
+    monkeypatch.setattr("app.bot.routers.review._client", lambda: fake)
+
+    user = await _make_user(db_session)
+    log = await _make_log(db_session, user.id, days_ago=1, source_activity_id="i123")
+
+    await _backfill_rpe_from_source(log)
+
+    assert log.rpe_emoji is None
+
+
+async def test_backfill_swallows_network_errors(db_session, monkeypatch):
+    class _RaisingClient:
+        async def get_activity(self, activity_id, **kw):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr("app.bot.routers.review._client", lambda: _RaisingClient())
+
+    user = await _make_user(db_session)
+    log = await _make_log(db_session, user.id, days_ago=1, source_activity_id="i123")
+
+    await _backfill_rpe_from_source(log)  # ne lève pas
+
+    assert log.rpe_emoji is None
