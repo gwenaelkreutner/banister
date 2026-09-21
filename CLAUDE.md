@@ -922,6 +922,19 @@ Trois outils LLM de plus (8 au total) dans `app/llm/tools.py` / `app/llm/chat.py
 d'entraînement (CTL/ATL/TSB/FTP/ACWR/monotonie/VFC/FC repos) et le rester tant que le suivi calorique reste
 standalone. Aucun changement à `/recap` ni au system prompt du chat — intégration explicitement différée.
 
+**Confirmation déterministe de ce qui a été enregistré** (hors spec, 2026-09-21) : ⚠️ bug réel remonté par
+l'utilisateur — un repas décrit en langage naturel pouvait ne déclencher **aucun** appel `log_meal` (le
+modèle se contentait de commenter le repas, sans rien persister), et un tour explicite ("ajoute ça") pouvait
+n'en logger qu'une partie tout en laissant le texte du modèle suggérer que tout était enregistré. Le texte
+libre du bot n'a jamais été une preuve fiable de ce qui est réellement en base. `run_agentic_loop()`
+(`app/llm/chat_client.py`) retourne maintenant `tool_calls_log` — chaque tool call réellement exécuté ce
+tour (nom/args/résultat), pas seulement le dernier (`last_tool_result` écrasait les précédents). `run_chat()`
+(`app/llm/chat.py::_format_meal_ledger()`) construit depuis ces résultats VRAIS un bloc « 📋 Base de
+données » (✅/❌ par entrée + total du jour recalculé en SQL) et l'ajoute après la vérification de réponse
+(spec 006 US3, pour ne jamais être retiré par elle) — jamais depuis ce que le modèle prétend avoir fait. Si
+aucun outil nutrition n'a été appelé ce tour, aucun bloc n'apparaît : l'absence du bloc est elle-même le
+signal que rien n'a été sauvegardé.
+
 **Rappel du soir** — `app/main.py::_nutrition_reminder_scheduler` envoie un message vers 22h00 heure de
 Paris (`PARIS_TZ`, même `ZoneInfo("Europe/Paris")` que `_run_session_reminders` depuis la correction du
 2026-09-18 — c'était un décalage UTC+1 fixe avant, voir research R4 de spec 008) si rien n'a été loggé ce
@@ -1225,6 +1238,7 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Modifier la résolution de voix / le fallback | `app/services/coach_voice.py` — `resolve_voice()` |
 | Modifier le suivi calorique (`log_meal`, `undo_last_meal_entry`, `get_calorie_history`) | `app/llm/tools.py` (schémas) + `_tool_log_meal()`/`_tool_undo_last_meal_entry()`/`_tool_get_calorie_history()` dans `app/llm/chat.py` |
 | Modifier l'agrégation calorique (total du jour, historique) | `app/db/repositories/meal_entry_repo.py` — `daily_totals()` |
+| Modifier la confirmation déterministe « Base de données » (nutrition) | `app/llm/chat.py` — `_format_meal_ledger()` ; capture des tool calls dans `app/llm/chat_client.py::run_agentic_loop()` (`tool_calls_log`) |
 | Modifier le rappel calorique du soir | `app/main.py` — `_nutrition_reminder_scheduler()` / `_run_nutrition_reminders()` ; sélection dans `app/services/nutrition_reminder.py` |
 | Modifier la dérivation du mode (libre/objectif) | `app/services/coaching_mode.py` — `get_coaching_mode()`, `mode_from_plan()` |
 | Modifier la bascule `/goal` (libre ↔ objectif) | `app/bot/routers/goal.py` — `_enter_freestyle_mode()`, `_goal_kb()` |
