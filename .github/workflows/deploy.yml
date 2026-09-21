@@ -17,5 +17,6 @@ jobs:
           script: |
             set -e
             cd ~/banister
-            git pull
+            git fetch origin master
+            git reset --hard origin/master
             make up
