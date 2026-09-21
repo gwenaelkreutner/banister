@@ -8,13 +8,13 @@ Sources de données (sans double-comptage) :
 
 import logging
 from datetime import date, timedelta
-from html import escape
 
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.text_format import to_telegram_html
 from app.config import settings
 from app.db import repositories as repo
 from app.db.models.user import User
@@ -129,7 +129,7 @@ async def cmd_forme(message: Message, session: AsyncSession, user: User):
     profile_db = await repo.profile_repo.get_by_user_id(session, user.id)
     user_level: int = (profile_db.profile or {}).get("user_level", 0) if profile_db else 0
     interpretation = await _generate_fitness_interpretation(metrics, logs, pre_plan_acts, recent, user_level=user_level)
-    await message.answer(escape(interpretation), parse_mode="HTML")
+    await message.answer(to_telegram_html(interpretation), parse_mode="HTML")
 
     # Profil de puissance (power-curve delta + sustainability_profile, 2026-09-21) —
     # best-effort, message séparé, silencieux si indisponible (pas de FTP, endpoint en

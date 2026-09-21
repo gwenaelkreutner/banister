@@ -14,13 +14,13 @@ même implémentation.
 import asyncio
 import logging
 import uuid
-from html import escape
 from datetime import date, timedelta
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.text_format import to_telegram_html
 from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any, estimate_initial_ctl
@@ -176,13 +176,13 @@ def _build_coach_message(
     session_interp = blocks.get("session_interpretation", "")
     advice = blocks.get("next_advice", "")
     if form:
-        parts.append(f"📉 État de forme\n{escape(form)}")
+        parts.append(f"📉 État de forme\n{to_telegram_html(form)}")
     if session_interp:
         gain = f"  <b>+{pts_weekly} pts</b> ✨" if pts_weekly is not None else ""
-        parts.append(f"🎯 Ta séance\n{escape(session_interp)}{gain}")
+        parts.append(f"🎯 Ta séance\n{to_telegram_html(session_interp)}{gain}")
     next_label = f"📅 Prochaine étape{' — ' + next_day if next_day else ''}"
     if advice:
-        parts.append(f"{next_label}\n{escape(advice)}")
+        parts.append(f"{next_label}\n{to_telegram_html(advice)}")
     text = "\n\n".join(parts)
     if kpi_block:
         text += f"\n\n{kpi_block}"

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.plan import overview_keyboard, week_navigation_keyboard
 from app.bot.states import PlanStates
+from app.bot.text_format import to_telegram_html
 from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.schemas import TrainingPlanSchema, WeekPlan
@@ -157,10 +158,6 @@ async def _send_week(message, plan: TrainingPlanSchema, week_num: int, edit: boo
         await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
-def _escape_html(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
 def _format_week(week: WeekPlan, weeks_count: int) -> str:
     phase = PHASE_FR.get(week.phase, week.phase)
     phase_emoji = PHASE_EMOJI.get(week.phase, "📌")
@@ -169,14 +166,14 @@ def _format_week(week: WeekPlan, weeks_count: int) -> str:
 
     lines = [
         f"📅 <b>Semaine {week.week_number}/{weeks_count}</b>{date_str}",
-        f"{phase_emoji} <b>{_escape_html(phase)}</b>{recovery_tag}  ·  TSS cible : <b>{week.total_tss_target:.0f}</b>",
+        f"{phase_emoji} <b>{to_telegram_html(phase)}</b>{recovery_tag}  ·  TSS cible : <b>{week.total_tss_target:.0f}</b>",
         "",
     ]
 
     for s in week.sessions:
         day = DAY_NAMES_SHORT[s.day_of_week]
         workout = WORKOUT_FR.get(s.workout_type, s.workout_type)
-        desc = _escape_html(s.description_fr or "")
+        desc = to_telegram_html(s.description_fr or "")
         lines.append(
             f"<b>{day}</b>  ·  {workout} <b>{s.zone_code}</b>  ·  ⏱️ {_format_duration_fr(s.duration_minutes)}  ·  ~{s.tss_target:.0f} TSS"
         )
@@ -191,7 +188,7 @@ def _build_overview(plan: TrainingPlanSchema, llm_intro: str) -> str:
     lines = [f"📊 <b>Plan {plan.weeks_count} semaines</b>\n"]
 
     if llm_intro:
-        lines.append(_escape_html(llm_intro))
+        lines.append(to_telegram_html(llm_intro))
         lines.append("")
 
     lines.append("<b>Phases</b>")
@@ -207,7 +204,7 @@ def _build_overview(plan: TrainingPlanSchema, llm_intro: str) -> str:
         start_week = phase_weeks[0].week_number
         end_week = phase_weeks[-1].week_number
         week_range = f"Sem. {start_week}" if start_week == end_week else f"Sem. {start_week}–{end_week}"
-        lines.append(f"{phase_emoji} <b>{_escape_html(phase_fr)}</b>  ·  {week_range}  ·  ~{avg_tss:.0f} TSS/sem")
+        lines.append(f"{phase_emoji} <b>{to_telegram_html(phase_fr)}</b>  ·  {week_range}  ·  ~{avg_tss:.0f} TSS/sem")
 
     lines += [
         "",

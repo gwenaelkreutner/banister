@@ -7,7 +7,8 @@ Appelle le cycle agentique (Tool Use) via app/llm/chat.py.
 
 import logging
 import re
-from html import escape
+
+from app.bot.text_format import to_telegram_html
 
 # Supprime les blocs de caractères CJK (chinois/japonais/coréen) parasites
 _CJK_RE = re.compile(r'[\u3000-\u9fff\uf900-\ufaff\ufe30-\ufe4f]+')
@@ -57,7 +58,7 @@ async def _send_meal_log(message: Message, meal_log: str | None) -> None:
     2026-09-21 : pas de message sur les tours qui n'ont rien à voir avec la nutrition)."""
     if not meal_log:
         return
-    await message.answer(escape(meal_log), parse_mode="HTML")
+    await message.answer(to_telegram_html(meal_log), parse_mode="HTML")
 
 
 # ── Handler principal — tout message libre en mode ACTIVE ─────────────────────
@@ -131,7 +132,7 @@ async def handle_chat_message(
                 callback_data=f"freestyle:publish:{pending_proposal['id']}",
             ),
         ]])
-        proposal_text = escape(_strip_cjk(response_text)).strip() or _FALLBACK_ERROR
+        proposal_text = to_telegram_html(_strip_cjk(response_text)).strip() or _FALLBACK_ERROR
         await message.answer(proposal_text, reply_markup=kb, parse_mode="HTML")
         await _send_meal_log(message, meal_log)
         return
@@ -144,12 +145,12 @@ async def handle_chat_message(
             InlineKeyboardButton(text="✅ Appliquer", callback_data="chat:apply"),
             InlineKeyboardButton(text="❌ Annuler", callback_data="chat:cancel"),
         ]])
-        proposal_text = escape(_strip_cjk(response_text)).strip() or _FALLBACK_ERROR
+        proposal_text = to_telegram_html(_strip_cjk(response_text)).strip() or _FALLBACK_ERROR
         await message.answer(proposal_text, reply_markup=kb, parse_mode="HTML")
         await _send_meal_log(message, meal_log)
         return
 
-    text = escape(_strip_cjk(response_text)).strip()
+    text = to_telegram_html(_strip_cjk(response_text)).strip()
     if not text:
         text = _FALLBACK_ERROR
     await message.answer(text, parse_mode="HTML")
@@ -213,7 +214,7 @@ async def cb_apply_modification(
             summary = proposal.get("summary", "Séance modifiée")
             await callback.message.edit_text(
                 f"✅ <b>Séance mise à jour !</b>\n\n"
-                f"{escape(summary)}\n"
+                f"{to_telegram_html(summary)}\n"
                 f"Utilise /plan pour voir le planning.",
                 parse_mode="HTML",
             )

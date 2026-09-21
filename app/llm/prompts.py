@@ -33,7 +33,9 @@ CE QUE PACE NE FAIT PAS :
 
 CONTRAINTES TECHNIQUES (inchangées) :
 • Français, tutoiement, 2 paragraphes max pour les questions simples
-• Texte brut — pas de **, *, #, balises HTML
+• Mise en forme : **gras** autorisé (converti en gras Telegram) pour un mot ou un
+  chiffre clé, jamais plus de 1-2 par réponse — pas de *, _, #, listes, titres ni
+  balises HTML
 • Emojis sobres pour structurer (🎯 📈 ⚠️ ✅ •)
 • N'invente jamais de chiffres — utilise les outils
 • Contrainte 1 jour → propose_session_adjustment
@@ -194,7 +196,8 @@ def build_narrative_system_prompt(user_level: int, mode: str) -> str:
         f"{acronym_ban}"
         "Règle absolue : tu interprètes les données fournies, tu ne recalcules jamais. "
         f"Structure de ta réponse : {style} "
-        "Réponses : français, texte brut + emojis sobres (✅ ⚡️ ⚠️ 📈 🏆)."
+        "Réponses : français, **gras** autorisé avec parcimonie pour un chiffre clé "
+        "(rien d'autre comme mise en forme), emojis sobres (✅ ⚡️ ⚠️ 📈 🏆)."
     )
 
 
@@ -211,6 +214,7 @@ Règles absolues :
 - Utilise TOUJOURS "tu" — jamais "vous"
 - Réponds UNIQUEMENT en français
 - Texte fluide uniquement — pas de sections, pas de labels, pas de tirets
+- **gras** autorisé pour un chiffre clé, avec parcimonie — rien d'autre comme mise en forme
 - Ne commence pas ta réponse par un titre ou un label (le bot envoie déjà un en-tête)
 - Emojis sobres : 🚴 📈 ⚠️ 💪 🎯 ✅"""
 
@@ -234,7 +238,7 @@ WEEKLY_RECAP_COACH_TEMPLATE = (
 - TSB : {tsb:+.1f} ({tsb_label})
 - Directive tonalité : {tone_directive}
 
-Génère 2-3 phrases d'analyse coach, en texte brut et continu.
+Génère 2-3 phrases d'analyse coach, en texte continu (pas de liste).
 Commence directement par une observation ancrée dans les chiffres — pas de label, pas de titre.
 Si user_level < 2, ne mentionne pas CTL/ATL/TSB."""
 )
@@ -247,7 +251,7 @@ PROGRAMME SEMAINE PROCHAINE (pour contexte — ne pas le redécrire) :
 Phase : {next_phase} {recovery_flag} | TSS cible : {next_tss_target}
 {next_sessions_detail}
 
-Génère exactement 2 phrases, en texte brut et continu, sans label ni titre.
+Génère exactement 2 phrases, en texte continu (pas de liste), sans label ni titre.
 Ton rôle : faire le PONT entre la semaine écoulée et la semaine qui arrive.
 Ce que le sportif sait déjà (ne pas répéter) : les séances sont détaillées dans /week — pas besoin de les redécrire.
 Ce qui a de la valeur : comment l'état de forme actuel (TSB, compliance) doit influencer son approche.
@@ -378,7 +382,8 @@ def build_ux_system_prompt(user_level: int, persona=None, first_name: str | None
         f"{acronym_ban}"
         "Interprète les données, ne recalcule jamais. "
         f"{SCOPE_OF_ADVICE_RULES} "
-        "Format : texte brut, emojis sobres (🎯 📈 ⚠️ ✅ 🚴). "
+        "Format : **gras** autorisé avec parcimonie pour un mot/chiffre clé (rien d'autre "
+        "comme mise en forme), emojis sobres (🎯 📈 ⚠️ ✅ 🚴). "
         "Réponds à la dernière question en utilisant le contexte de l'échange si nécessaire, mais sans répéter ce qui a déjà été dit. "
         "Si la question ne concerne pas l'entraînement ou le vélo, réponds directement et brièvement sans utiliser les données sportives. "
         "Écris exclusivement en français — n'utilise jamais de caractères chinois, japonais, arabes ou d'une autre langue."
@@ -570,6 +575,7 @@ Règles absolues :
 - {REVIEW_VOCAB_RULE}
 - Maximum {REVIEW_WORD_BUDGET}. Prose uniquement — pas de tableau, pas de liste à puces.
 - Tutoiement, direct, pas de formules de politesse en ouverture.
+- **gras** autorisé avec parcimonie pour un chiffre clé — rien d'autre comme mise en forme.
 
 Structure obligatoire, dans cet ordre :
 1. Ça s'est bien passé ? (1-2 phrases, le ressenti global)

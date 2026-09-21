@@ -29,6 +29,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.states import PlanStates, SetupStates
+from app.bot.text_format import to_telegram_html
 from app.config import settings
 from app.db import repositories as repo
 from app.db.repositories import activity_repo
@@ -738,6 +739,6 @@ async def _generate_narrative(user_id, plan, profile, *, bot, chat_id) -> None:
 
         intro = narrative.get("intro", "")
         if intro:
-            await bot.send_message(chat_id=chat_id, text=intro)
+            await bot.send_message(chat_id=chat_id, text=to_telegram_html(intro), parse_mode="HTML")
     except Exception:
         pass

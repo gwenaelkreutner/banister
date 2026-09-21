@@ -20,6 +20,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.review import recent_sessions_keyboard
+from app.bot.text_format import to_telegram_html
 from app.config import settings
 from app.db import repositories as repo
 from app.db.models.session_log import SessionLog
@@ -110,7 +111,7 @@ async def _run_review(
     ctx = await assemble_review_context(session, user, log)
     dfa = await _fetch_dfa(log)
     text = await generate_session_review(ctx, dfa=dfa)
-    await edit_target.edit_text(text, parse_mode="HTML")
+    await edit_target.edit_text(to_telegram_html(text), parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("review:pick:"))

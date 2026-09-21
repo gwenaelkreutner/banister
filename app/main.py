@@ -3,13 +3,13 @@ import logging
 import logging.config
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
-from html import escape
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.bot.setup import create_bot, create_dispatcher, register_bot_commands
+from app.bot.text_format import to_telegram_html
 from app.config import settings
 from app.db.client import get_session
 from app.db.lifecycle import (
@@ -236,7 +236,7 @@ async def _run_weekly_recap_broadcast(bot):
             await asyncio.sleep(0.8)
             await bot.send_message(
                 user.telegram_id,
-                f"🧠 <b>Analyse coach</b>\n\n{escape(recap.coach_section)}",
+                f"🧠 <b>Analyse coach</b>\n\n{to_telegram_html(recap.coach_section)}",
                 parse_mode="HTML",
             )
             await asyncio.sleep(0.8)
@@ -247,7 +247,7 @@ async def _run_weekly_recap_broadcast(bot):
             )
             await bot.send_message(
                 user.telegram_id,
-                f"🎯 <b>Semaine prochaine</b>\n\n{escape(recap.next_week_section)}{nextweek_footer}",
+                f"🎯 <b>Semaine prochaine</b>\n\n{to_telegram_html(recap.next_week_section)}{nextweek_footer}",
                 parse_mode="HTML",
             )
             await asyncio.sleep(0.1)  # rate limit entre utilisateurs

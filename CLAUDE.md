@@ -448,6 +448,18 @@ donc `_build_race_week` ne se déclenche jamais et le marqueur de course dispara
 ### Telegram / parse_mode
 - `parse_mode="HTML"` partout où les messages contiennent des underscores (identifiants, chemins)
 - `parse_mode="Markdown"` uniquement si le texte est garanti sans underscore hors italique
+- **Gras du LLM** (`app/bot/text_format.py::to_telegram_html()`, 2026-09-22) : bug réel remonté par
+  l'utilisateur — tout texte LLM (chat, `/recap`, `/forme`, `/review`, plan) était `html.escape()`-é puis
+  envoyé en `parse_mode="HTML"` sans jamais convertir le `**gras**` que le modèle écrit malgré la consigne
+  "texte brut" — Telegram affichait les astérisques tels quels (HTML n'interprète aucune syntaxe markdown).
+  Solution alignée sur ce que font les autres bots LLM→Telegram (vérifié avant d'écrire quoi que ce soit) :
+  garder HTML (déjà la convention de tout le reste du bot — `<b>` écrits à la main dans `plan.py`/
+  `setup.py`/etc.), mais escape() puis convertir `**gras**`/`__gras__` en `<b>...</b>` avant envoi. Tous les
+  prompts/personas ont été mis à jour en conséquence : la consigne "texte brut, pas de **" est remplacée
+  par "**gras** autorisé avec parcimonie (1-2 par réponse), rien d'autre comme mise en forme". `review.py`
+  n'échappait même pas du tout avant ce fix (risque de plantage `parse_mode="HTML"` si le LLM écrivait un
+  `<`/`&`) — corrigé au passage. `plan.py` avait sa propre fonction d'échappement dupliquée (`_escape_html`)
+  — retirée au profit de la fonction partagée.
 
 ### FSM aiogram
 - `MemoryStorage` → états perdus au redémarrage — `UserLoaderMiddleware` restaure `PlanStates.ACTIVE` depuis la DB
@@ -1339,6 +1351,7 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Modifier l'assemblage des signaux / la raison d'insuffisance | `app/services/guardrail_service.py` |
 | Modifier la vérification des chiffres de la réponse LLM (ancrage, tolérance, retrait) | `app/services/response_verification.py` |
 | Modifier le disclaimer ou les règles no-diagnostic | `app/llm/prompts.py` — `DISCLAIMER_TEXT`, `SCOPE_OF_ADVICE_RULES` |
+| Modifier la conversion markdown LLM → HTML Telegram (gras) | `app/bot/text_format.py` — `to_telegram_html()` |
 | Modifier la lecture du profil source (setup) | `app/providers/intervals/athlete_profile.py` — `map_athlete_profile()` |
 | Modifier l'écran de confirmation / `_build_profile` (setup) | `app/bot/routers/setup.py` |
 | Modifier la question des jours disponibles (setup) | `app/bot/routers/setup.py` — `available_days_keyboard()`, `setup_days_toggle()`/`setup_days_confirm()` |

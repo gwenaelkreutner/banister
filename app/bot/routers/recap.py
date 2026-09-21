@@ -9,13 +9,13 @@ Envoie 3 messages séquentiels :
 
 import asyncio
 import logging
-from html import escape
 
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.text_format import to_telegram_html
 from app.db.models.user import User
 from app.services.weekly_recap import compute_weekly_recap
 
@@ -51,7 +51,7 @@ async def cmd_recap(message: Message, session: AsyncSession, user: User):
     await message.answer(recap.stats_section, parse_mode="HTML")
     await asyncio.sleep(0.8)
     await message.answer(
-        f"🧠 <b>Analyse coach</b>\n\n{escape(recap.coach_section)}",
+        f"🧠 <b>Analyse coach</b>\n\n{to_telegram_html(recap.coach_section)}",
         parse_mode="HTML",
     )
     await asyncio.sleep(0.8)
@@ -62,6 +62,6 @@ async def cmd_recap(message: Message, session: AsyncSession, user: User):
         else ""
     )
     await message.answer(
-        f"🎯 <b>Semaine prochaine</b>\n\n{escape(recap.next_week_section)}{nextweek_footer}",
+        f"🎯 <b>Semaine prochaine</b>\n\n{to_telegram_html(recap.next_week_section)}{nextweek_footer}",
         parse_mode="HTML",
     )
