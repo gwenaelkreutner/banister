@@ -772,6 +772,24 @@ spécial pour `coach_memory`/`athlete_notes`).
 Lecture manuelle (hors Telegram) : `python -m scripts.coach_memory_state --describe` — lit directement
 `athlete_profiles.coach_memory`/`.athlete_notes`, même chemin que `build_system_prompt()`.
 
+## Contexte de reply Telegram (hors spec — construit le 2026-09-21)
+
+Avant ça, `message.reply_to_message` n'était lu nulle part (vérifié par grep) — un athlète qui
+reply-quote un message du bot (chat, `/review`, `/recap`, une notification) pour poser une question dessus
+était traité exactement comme un message libre, sans que le LLM sache à quoi ça se rapportait.
+
+`app/bot/routers/chat.py::handle_chat_message` lit `message.reply_to_message.text`/`.caption` (tronqué à
+`_REPLY_CONTEXT_MAX_CHARS`=500) et le passe à `run_chat(reply_context=…)`, qui l'injecte comme préfixe du
+tour utilisateur (`app/llm/chat.py`, juste avant `messages.append`). **Aucune recherche en DB** : Telegram
+renvoie déjà le texte du message cité dans le payload, donc ça marche pour n'importe quel message du bot,
+pas seulement ceux loggés dans `chat_messages` (qui ne contient que les tours du chat — voir
+`app/bot/routers/chat.py:77-93` — pas `/review`/`/recap`/les notifications).
+
+**Limite assumée, pas corrigée** : ça ne couvre que le reply explicite. Un follow-up tapé normalement sans
+reply-quote sur un message hors chat (`/review`, `/recap`, notification) n'a toujours aucun contexte — ces
+messages ne sont pas dans la fenêtre courte des 8 derniers `chat_messages`. Signalé par l'utilisateur en
+conditions réelles, pas encore scopé en solution plus large (résumé/mémoire des messages hors chat).
+
 ## Mesure du coût LLM (hors spec — construit le 2026-09-18)
 
 Chaque appel API renvoie ses tokens (`usage.prompt_tokens`/`.completion_tokens`), mais rien ne les gardait
@@ -1147,6 +1165,7 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Modifier vue plan+réalisé pour le LLM (system prompt) | `app/llm/tools.py` — `build_activity_session_pairs()` + `_format_week_pairs()` |
 | Ajouter outil LLM | `app/llm/tools.py` (définition JSON Schema) + `_execute_tool()` dans `app/llm/chat.py` |
 | Modifier la mesure du coût LLM (tokens) | `app/llm/chat_client.py::run_agentic_loop()` (cumul) + `app/db/repositories/chat_repo.py::token_usage_by_day()` (lecture) |
+| Modifier le contexte de reply Telegram (chat) | `app/bot/routers/chat.py::handle_chat_message()` (extraction) + `app/llm/chat.py::run_chat(reply_context=…)` (injection) |
 | Modifier le rendu DSL d'une séance (texte envoyé à intervals.icu) | `app/providers/intervals/workout_dsl.py` — `render_dsl()` |
 | Modifier le diff idempotent de publication (create/update/conflict) | `app/providers/intervals/calendar.py` — `publish_sessions()` |
 | Modifier la barrière de consentement / le hash de plan | `app/services/publication.py` — `authorize_publication()`, `plan_content_hash()` |
