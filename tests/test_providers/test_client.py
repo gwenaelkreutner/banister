@@ -247,3 +247,75 @@ class TestListWellness:
 
         assert seen["params"] == {"oldest": "2026-08-01", "newest": "2026-08-08"}
         assert isinstance(result, list)
+
+
+class TestGetActivityStreams:
+    """The real API returns a LIST of {type, data} objects, not a dict — verified
+    against the live API 2026-09-21 (this method's old `assert isinstance(result, dict)`
+    would have raised on every real call, never having been exercised before)."""
+
+    async def test_returns_a_list_not_a_dict(self, patch_transport):
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/api/v1/activity/i188613791/streams"
+            assert dict(request.url.params) == {"types": "watts,heartrate,time"}
+            return httpx.Response(
+                200,
+                json=[
+                    {"type": "time", "data": [0, 1, 2]},
+                    {"type": "watts", "data": [100, 110, 120]},
+                    {"type": "heartrate", "data": [140, 141, 142]},
+                ],
+            )
+
+        patch_transport(handler)
+        client = IntervalsClient("test-key", athlete_id="i000000")
+
+        result = await client.get_activity_streams(
+            "i188613791", types=["watts", "heartrate", "time"]
+        )
+
+        assert isinstance(result, list)
+        assert {s["type"] for s in result} == {"time", "watts", "heartrate"}
+
+
+class TestGetPowerCurves:
+    async def test_power_curves_passes_type_and_joined_windows(self, patch_transport):
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["params"] = dict(request.url.params)
+            assert request.url.path == "/api/v1/athlete/i000000/power-curves"
+            return httpx.Response(200, json={"list": [], "activities": []})
+
+        patch_transport(handler)
+        client = IntervalsClient("test-key", athlete_id="i000000")
+
+        result = await client.get_power_curves(
+            curve_type="power",
+            windows=[("2026-08-25", "2026-09-21"), ("2026-07-28", "2026-08-24")],
+            activity_type="Ride",
+        )
+
+        assert seen["params"] == {
+            "curves": "r.2026-08-25.2026-09-21,r.2026-07-28.2026-08-24",
+            "type": "Ride",
+        }
+        assert result == {"list": [], "activities": []}
+
+    async def test_hr_curves_endpoint_and_no_type_param(self, patch_transport):
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["path"] = request.url.path
+            seen["params"] = dict(request.url.params)
+            return httpx.Response(200, json={"list": [], "activities": []})
+
+        patch_transport(handler)
+        client = IntervalsClient("test-key", athlete_id="i000000")
+
+        await client.get_power_curves(
+            curve_type="hr", windows=[("2026-08-25", "2026-09-21")]
+        )
+
+        assert seen["path"] == "/api/v1/athlete/i000000/hr-curves"
+        assert "type" not in seen["params"]

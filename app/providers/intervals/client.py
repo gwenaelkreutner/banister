@@ -122,12 +122,44 @@ class IntervalsClient:
         assert isinstance(result, dict)
         return result
 
-    async def get_activity_streams(self, activity_id: str, *, types: list[str]) -> dict:
-        """Fetch raw time-series streams for one activity."""
+    async def get_activity_streams(self, activity_id: str, *, types: list[str]) -> list[dict]:
+        """Fetch raw time-series streams for one activity — a list of `{type, data}`
+        objects, one per requested stream that actually has data (verified against the
+        real API 2026-09-21: NOT a dict, contrary to what this method's signature
+        claimed until then, having never been called anywhere in the app before)."""
         result = await self._get(
             f"/activity/{activity_id}/streams",
             params={"types": ",".join(types)},
         )
+        assert isinstance(result, list)
+        return result
+
+    async def get_power_curves(
+        self,
+        *,
+        curve_type: str,
+        windows: list[tuple[str, str]],
+        activity_type: str | None = None,
+    ) -> dict:
+        """Fetch power (`curve_type="power"`) or HR (`curve_type="hr"`) curves for one
+        or more date windows in a single call — `windows` is a list of `(oldest,
+        newest)` yyyy-MM-dd pairs, joined as intervals.icu's `r.<oldest>.<newest>` curve
+        spec (verified against the real API 2026-09-21). Response shape:
+        `{"list": [{"id": "r.<oldest>.<newest>", "secs": [...], "watts": [...], ...}],
+        "activities": [...]}` — curves are matched by `id`, not list position (a window
+        with zero qualifying activities is simply omitted from `list`, per research).
+        `activity_type` filters power curves to one intervals.icu activity type (e.g.
+        "Ride", "VirtualRide") — a caller wanting indoor+outdoor merged (like
+        `app/engine/power_curve.py::compute_sustainability_profile`) calls this once per
+        type and merges the responses; ignored for `curve_type="hr"` (verified: the
+        hr-curves endpoint accepts no `type` filter)."""
+        endpoint = "power-curves" if curve_type == "power" else "hr-curves"
+        params: dict = {
+            "curves": ",".join(f"r.{oldest}.{newest}" for oldest, newest in windows)
+        }
+        if curve_type == "power" and activity_type:
+            params["type"] = activity_type
+        result = await self._get(f"/athlete/{self._athlete_id}/{endpoint}", params=params)
         assert isinstance(result, dict)
         return result
 

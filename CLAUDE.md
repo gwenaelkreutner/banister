@@ -536,6 +536,56 @@ points d'écart, pas une nuance.
   avant les signaux journaliers (`recovery_index`, wellness qualitatif) — volatilité hebdomadaire, pas
   quotidienne. `/review` et `/recap` ne sont pas concernés
 
+### Power-curve delta / sustainability_profile (`app/engine/power_curve.py`, 2026-09-21, porté de Section11)
+- **Endpoint vérifié contre l'API réelle** (pas seulement contre le script source) le jour de l'implémentation
+  — `client.get_power_curves(curve_type="power"|"hr", windows=[(oldest,newest),...], activity_type=None)` →
+  `GET /athlete/{id}/power-curves` ou `/hr-curves`, params `type` (cyclisme uniquement) + `curves=
+  r.<oldest>.<newest>,...` (plusieurs fenêtres en un seul appel). Réponse `{"list": [{"id": "r.<oldest>.
+  <newest>", "secs": [...], "watts": [...], ...}], "activities": [...]}` — courbes retrouvées par `id`,
+  jamais par position (une fenêtre sans activité qualifiante est simplement omise)
+- `compute_power_curve_delta()` : 5 ancrages (5s/60s/300s/1200s/3600s) sur deux fenêtres 28j, `rotation_index`
+  = moyenne(deltas courts 5s/60s) − moyenne(deltas longs 1200s/3600s), 300s exclu. Garde-fou : minimum 3
+  ancrages valides par fenêtre, sinon `note` explicite plutôt qu'un delta halluciné sur données clairsemées
+- `compute_sustainability_profile()` (cyclisme uniquement — Banister ne suit pas ski/rowing) : fusionne le
+  meilleur watt par ancrage entre types d'activité (Ride + VirtualRide, l'appelant fait un fetch par type et
+  passe la liste des réponses) sur une fenêtre unique de 42j, comparé à deux modèles fermés — Coggan
+  (`COGGAN_DURATION_FACTORS`, Allen & Coggan 3e éd., facteurs de FTP par durée 300s-7200s) et Skiba CP/W'
+  (`P = CP + W'/t`, CP approximé par la FTP, W' lu depuis `power_model.w_prime` de l'athlète) — aucun fitting,
+  formules fermées uniquement. `model_divergence_pct = (réel − modèle_CP) / modèle_CP × 100`
+- Calcul **à la demande**, pas de nouvelle colonne wellness/session_log ni d'appel à chaque tick du poller
+  (ce n'est pas une donnée journalière) — décision : éviter un appel API de plus par jour pour un signal
+  utile ponctuellement
+- ⚠️ **Pas encore câblé à une surface** (`/review`/`/forme`/chat) — le moteur + le client sont livrés et
+  testés contre la vraie forme de réponse API, mais où afficher exactement `rotation_index`/
+  `model_divergence_pct` reste une décision produit à prendre séparément (si un jour généré en texte libre
+  par le LLM, `MetricRegistry`/`_ANCHORS`/`_METRIC_FR` devront être étendus avant, pas après)
+
+### DFA α1 (`app/engine/dfa.py`, 2026-09-21, porté de Section11 — AlphaHRV)
+- **Consomme, ne recalcule pas** (Principe IV) : AlphaHRV (champ Garmin Connect IQ) calcule déjà l'exposant
+  DFA α1 sur la montre ; le stream `dfa_a1` remonte pré-calculé via `client.get_activity_streams()`. Ce
+  module filtre le bruit et détecte des franchissements de seuil sur la série déjà calculée — aucune
+  ré-analyse DFA depuis des intervalles RR bruts
+- 🐛 **Bug pré-existant trouvé et corrigé au passage** : `get_activity_streams()` faisait `assert
+  isinstance(result, dict)` — la vraie réponse de `GET /activity/{id}/streams` est une **liste**
+  `[{"type":..., "data":...}, ...]`, jamais un dict. Cette méthode existait depuis un moment mais n'avait
+  jamais été appelée nulle part dans l'app — l'assert n'avait donc jamais été exercé en conditions réelles
+  avant cette vérification. Normalisation liste→dict extraite dans
+  `app/providers/intervals/streams.py::streams_to_dict()`
+- `compute_dfa_block(streams)` → `DFABlock | None` — `None` si le stream `dfa_a1` est absent (pas
+  d'enregistrement AlphaHRV sur cette activité), distinct d'un bloc présent avec `quality.sufficient=False`
+  (AlphaHRV a tourné mais données inutilisables — trop court ou trop bruité)
+- Filtres (ordre) : rejette les zéros-sentinelles AlphaHRV (`dfa_a1 < 0.01`), puis les secondes où
+  `artifacts% > 5` (convention Altini). `DFA_LT1 = 1.0` / `DFA_LT2 = 0.5` (validés cyclisme — Rowlands et al.
+  2017, Gronwald 2020, Mateo-March et al. 2023, cités dans le script source) : franchissements de bande
+  (±0.05, dwell minimum 60s), TIZ à 4 bandes, dérive premier/dernier tiers (interprétable seulement si
+  <15% du temps supra-LT2 — sinon c'est de l'intervalle, pas du steady-state)
+- ⚠️ **Aucune activité AlphaHRV réelle sur le compte de test au moment de l'implémentation** — vérifié
+  2026-09-21 : `dfa_a1` absent des streams disponibles sur la dernière sortie. L'algorithme est porté
+  fidèlement et testé sur des séries synthétiques (`tests/test_engine/test_dfa.py`), la plomberie
+  (`get_activity_streams`, confirmée fonctionnelle contre l'API réelle) est prête, mais **rien n'est encore
+  validé contre une vraie lecture AlphaHRV** — à revisiter dès la première activité réelle enregistrée
+- Pas encore câblé à une surface, même statut que power-curve ci-dessus
+
 ### Analyse LLM post-séance (`app/llm/activity_analysis.py`)
 - `generate_activity_analysis(**kwargs)` — prompt structuré en 5 blocs : Séance / Puissance / Qualité / Contexte / Forme & Charge
 - 3 paramètres optionnels Variable Reward : `highlight_category`, `personal_record`, `storytelling_mode`
@@ -1021,6 +1071,8 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Modifier snapshot hebdo (monotonie, tendance) | `app/engine/weekly_snapshot.py` |
 | Modifier le TID / indice de polarisation | `app/engine/tid.py` — seuils dans `app/engine/guardrail_thresholds.py` |
 | Modifier la phase diagnostique (`detected_phase`, distincte de `week.phase`) | `app/engine/phase_detection.py` |
+| Modifier power-curve delta / sustainability_profile | `app/engine/power_curve.py` — endpoint dans `client.get_power_curves()` |
+| Modifier l'analyse DFA α1 | `app/engine/dfa.py` — normalisation streams dans `app/providers/intervals/streams.py` |
 | Modifier récap hebdo (logique + LLM) | `app/services/weekly_recap.py` |
 | Lire/écrire l'adhérence hebdomadaire | `app/db/repositories/weekly_adherence_repo.py` |
 | Modifier le scheduler dimanche 20h | `app/main.py` — `_weekly_recap_scheduler()` |
