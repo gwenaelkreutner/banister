@@ -44,6 +44,13 @@ class ReviewContext:
     # donc réutilisables telles quelles ici (2026-09-21, voir CLAUDE.md § /review).
     recovery_index: float | None = None
     detected_phase: PhaseDetectionResult | None = None
+    # Wellness du jour de la séance — hydratation/calories mangées telles que renseignées
+    # sur intervals.icu (pas via notre suivi calorique chat, table séparée — voir
+    # app/services/meal_entry_repo.py). Champs bruts déjà stockés depuis le chantier
+    # "signaux enrichis intervals.icu" (2026-09-21) mais jamais montrés nulle part avant
+    # ce câblage (2026-09-21, session suivante).
+    hydration_volume_l: float | None = None
+    kcal_consumed: int | None = None
 
 
 async def assemble_review_context(
@@ -97,6 +104,10 @@ async def assemble_review_context(
         target_date=target_date,
     )
 
+    wellness_at_session = await repo.wellness_repo.get_by_date(session, user.id, log.logged_date)
+    hydration_volume_l = wellness_at_session.hydration_volume_l if wellness_at_session else None
+    kcal_consumed = wellness_at_session.kcal_consumed if wellness_at_session else None
+
     return ReviewContext(
         log=log,
         session_spec=session_spec,
@@ -105,4 +116,6 @@ async def assemble_review_context(
         tid=tid,
         recovery_index=recovery_index,
         detected_phase=detected_phase,
+        hydration_volume_l=hydration_volume_l,
+        kcal_consumed=kcal_consumed,
     )

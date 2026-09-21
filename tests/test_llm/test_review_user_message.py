@@ -1,6 +1,6 @@
 """build_review_user_message() (app/llm/prompts.py) — blocs de données optionnels
-raw_power/quality_signals/environmental/form_context (2026-09-21). Purement synchrone,
-pas de DB/LLM.
+raw_power/quality_signals/environmental/form_context/nutrition_context (2026-09-21).
+Purement synchrone, pas de DB/LLM.
 """
 from __future__ import annotations
 
@@ -20,7 +20,11 @@ def _snapshot() -> WeeklySnapshot:
     )
 
 
-def _ctx(recovery_index=None, detected_phase=None, **log_kwargs) -> ReviewContext:
+def _ctx(
+    recovery_index=None, detected_phase=None,
+    hydration_volume_l=None, kcal_consumed=None,
+    **log_kwargs,
+) -> ReviewContext:
     defaults = dict(
         logged_date=date.today(), status="done", tss_actual=60.0,
         duration_minutes_actual=60,
@@ -31,6 +35,7 @@ def _ctx(recovery_index=None, detected_phase=None, **log_kwargs) -> ReviewContex
         log=log, session_spec=None, fitness_at_session=None,
         weekly_snapshot=_snapshot(), tid=None,
         recovery_index=recovery_index, detected_phase=detected_phase,
+        hydration_volume_l=hydration_volume_l, kcal_consumed=kcal_consumed,
     )
 
 
@@ -91,6 +96,15 @@ def test_form_context_block_included_by_default():
     )
 
 
+def test_nutrition_context_block_included_by_default():
+    ctx = _ctx(kcal_consumed=2400, hydration_volume_l=2.5)
+
+    message = prompts.build_review_user_message(ctx)
+
+    assert "Calories mangées ce jour-là (source intervals.icu) : 2400 kcal" in message
+    assert "Eau bue ce jour-là (source intervals.icu) : 2.5 L" in message
+
+
 def test_blocks_can_be_toggled_off(monkeypatch):
     phase = PhaseDetectionResult(
         detected_phase="base", confidence="low", reason_codes=[],
@@ -99,11 +113,13 @@ def test_blocks_can_be_toggled_off(monkeypatch):
     ctx = _ctx(
         normalized_power=210, respect_zones_score=87.0, elevation_gain_m=509.0,
         recovery_index=0.87, detected_phase=phase,
+        kcal_consumed=2400, hydration_volume_l=2.5,
     )
     monkeypatch.setitem(prompts.REVIEW_DATA_BLOCKS, "raw_power", False)
     monkeypatch.setitem(prompts.REVIEW_DATA_BLOCKS, "quality_signals", False)
     monkeypatch.setitem(prompts.REVIEW_DATA_BLOCKS, "environmental", False)
     monkeypatch.setitem(prompts.REVIEW_DATA_BLOCKS, "form_context", False)
+    monkeypatch.setitem(prompts.REVIEW_DATA_BLOCKS, "nutrition_context", False)
 
     message = prompts.build_review_user_message(ctx)
 
@@ -112,3 +128,5 @@ def test_blocks_can_be_toggled_off(monkeypatch):
     assert "Dénivelé" not in message
     assert "Indice de récupération" not in message
     assert "Phase détectée" not in message
+    assert "Calories mangées" not in message
+    assert "Eau bue" not in message

@@ -518,6 +518,10 @@ REVIEW_DATA_BLOCKS = {
     # comme le chat), voir assemble_review_context(). `None` sur ce compte de test tant
     # qu'il n'a pas de VFC/FC repos récentes (recovery_index) ou d'historique (phase).
     "form_context": True,
+    # hydration_volume_l, kcal_consumed — wellness du jour de la séance tel que renseigné
+    # sur intervals.icu (pas notre suivi calorique chat, table séparée — /log_meal). Champs
+    # bruts déjà stockés côté wellness mais jamais montrés avant ce câblage (2026-09-21).
+    "nutrition_context": True,
 }
 
 # athlete_count reste hors scope, lui, pour une raison différente des trois champs
@@ -677,6 +681,16 @@ def build_review_user_message(ctx, dfa=None) -> str:
                 secondary_label = PHASE_FR.get(secondary, secondary)
                 agree_note = f" (plan déclare : {secondary_label})"
             lines.append(f"- Phase détectée (comportement récent) : {phase_label}{agree_note}")
+
+    if REVIEW_DATA_BLOCKS["nutrition_context"]:
+        if ctx.kcal_consumed is not None:
+            lines.append(
+                f"- Calories mangées ce jour-là (source intervals.icu) : {ctx.kcal_consumed} kcal"
+            )
+        if ctx.hydration_volume_l is not None:
+            lines.append(
+                f"- Eau bue ce jour-là (source intervals.icu) : {ctx.hydration_volume_l:.1f} L"
+            )
 
     snap = ctx.weekly_snapshot
     if snap.monotony_index is not None:

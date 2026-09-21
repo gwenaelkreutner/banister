@@ -231,3 +231,48 @@ async def test_detected_phase_uses_the_sessions_own_plan_week_not_todays(db_sess
 
     assert ctx.detected_phase is not None
     assert ctx.detected_phase.secondary_phase == "peak"
+
+
+async def test_nutrition_context_reads_wellness_at_the_session_date_not_today(db_session):
+    """hydration_volume_l/kcal_consumed must come from intervals.icu's wellness row for
+    the session's own date — never today's, same rule as recovery_index/detected_phase."""
+    user = await _make_user(db_session, 9011)
+    session_date = date.today() - timedelta(days=10)
+    db_session.add(
+        Wellness(
+            user_id=user.id, date=session_date,
+            hydration_volume_l=2.5, kcal_consumed=2400,
+        )
+    )
+    db_session.add(
+        Wellness(
+            user_id=user.id, date=date.today(),
+            hydration_volume_l=0.1, kcal_consumed=100,
+        )
+    )
+    log = SessionLog(
+        user_id=user.id, plan_id=None, week_number=None, day_of_week=None,
+        logged_date=session_date, status="done", tss_actual=60.0,
+    )
+    db_session.add(log)
+    await db_session.flush()
+
+    ctx = await assemble_review_context(db_session, user, log)
+
+    assert ctx.hydration_volume_l == 2.5
+    assert ctx.kcal_consumed == 2400
+
+
+async def test_nutrition_context_is_none_without_a_wellness_row(db_session):
+    user = await _make_user(db_session, 9012)
+    log = SessionLog(
+        user_id=user.id, plan_id=None, week_number=None, day_of_week=None,
+        logged_date=date.today(), status="done", tss_actual=60.0,
+    )
+    db_session.add(log)
+    await db_session.flush()
+
+    ctx = await assemble_review_context(db_session, user, log)
+
+    assert ctx.hydration_volume_l is None
+    assert ctx.kcal_consumed is None
