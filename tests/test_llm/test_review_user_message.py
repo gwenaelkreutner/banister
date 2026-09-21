@@ -1,11 +1,13 @@
 """build_review_user_message() (app/llm/prompts.py) — blocs de données optionnels
-raw_power/quality_signals/environmental (2026-09-21). Purement synchrone, pas de DB/LLM.
+raw_power/quality_signals/environmental/form_context (2026-09-21). Purement synchrone,
+pas de DB/LLM.
 """
 from __future__ import annotations
 
 from datetime import date
 
 from app.db.models.session_log import SessionLog
+from app.engine.phase_detection import PhaseDetectionResult
 from app.engine.weekly_snapshot import WeeklySnapshot
 from app.llm import prompts
 from app.services.session_review import ReviewContext
@@ -18,7 +20,7 @@ def _snapshot() -> WeeklySnapshot:
     )
 
 
-def _ctx(**log_kwargs) -> ReviewContext:
+def _ctx(recovery_index=None, detected_phase=None, **log_kwargs) -> ReviewContext:
     defaults = dict(
         logged_date=date.today(), status="done", tss_actual=60.0,
         duration_minutes_actual=60,
@@ -28,6 +30,7 @@ def _ctx(**log_kwargs) -> ReviewContext:
     return ReviewContext(
         log=log, session_spec=None, fitness_at_session=None,
         weekly_snapshot=_snapshot(), tid=None,
+        recovery_index=recovery_index, detected_phase=detected_phase,
     )
 
 
@@ -72,16 +75,40 @@ def test_environmental_block_included_by_default():
     assert "Énergie dépensée : 1049 kJ" in message
 
 
+def test_form_context_block_included_by_default():
+    phase = PhaseDetectionResult(
+        detected_phase="build", confidence="medium", reason_codes=["load_trend_+22pct_rising"],
+        secondary_phase="peak", streams_agree=False,
+    )
+    ctx = _ctx(recovery_index=0.87, detected_phase=phase)
+
+    message = prompts.build_review_user_message(ctx)
+
+    assert "Indice de récupération ce jour-là : 0.87" in message
+    assert (
+        "Phase détectée (comportement récent) : Construction (plan déclare : Pic de forme)"
+        in message
+    )
+
+
 def test_blocks_can_be_toggled_off(monkeypatch):
+    phase = PhaseDetectionResult(
+        detected_phase="base", confidence="low", reason_codes=[],
+        secondary_phase=None, streams_agree=None,
+    )
     ctx = _ctx(
         normalized_power=210, respect_zones_score=87.0, elevation_gain_m=509.0,
+        recovery_index=0.87, detected_phase=phase,
     )
     monkeypatch.setitem(prompts.REVIEW_DATA_BLOCKS, "raw_power", False)
     monkeypatch.setitem(prompts.REVIEW_DATA_BLOCKS, "quality_signals", False)
     monkeypatch.setitem(prompts.REVIEW_DATA_BLOCKS, "environmental", False)
+    monkeypatch.setitem(prompts.REVIEW_DATA_BLOCKS, "form_context", False)
 
     message = prompts.build_review_user_message(ctx)
 
     assert "Puissance normalisée" not in message
     assert "Respect de la zone cible" not in message
     assert "Dénivelé" not in message
+    assert "Indice de récupération" not in message
+    assert "Phase détectée" not in message

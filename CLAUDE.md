@@ -1125,15 +1125,23 @@ fatigue ressentie) — il doit le dire explicitement plutôt que de trancher à 
 **Blocs de données togglables** (`REVIEW_DATA_BLOCKS`, `app/llm/prompts.py`, ajouté 2026-09-21) : les
 champs déjà calculés à l'ingestion (mapper.py) mais jamais montés dans `build_review_user_message()` —
 `raw_power` (NP, IF, VI — VI ignoré <30min, même règle que `activity_analysis.py`), `quality_signals`
-(dérive cardiaque, consistance des intervalles, respect de zone) et `environmental` (dénivelé, température,
-kJ — voir § Contexte externe ci-dessus pour pourquoi ces trois-là ne l'étaient pas non plus). Chaque bloc
-est un flag indépendant dans le dict — `False` le retire du prompt sans toucher au reste du code, si un
-bloc s'avère bruyant ou trompeur en usage réel. `recovery_index`/`phase_detection` (spec "signaux enrichis
-intervals.icu") en restent délibérément exclus pour l'instant : ce sont des fonctions pures paramétrées par
-une date (`today=...`), pas techniquement bloquées de `/review`, mais toujours appelées avec
-`today=date.today()` depuis le chat — les brancher correctement sur une relecture d'une séance passée
-demanderait de les recalculer à `log.logged_date` (wellness/baselines à cette date-là), pas de réutiliser
-l'état "aujourd'hui" que `/forme` calcule. Pas fait ici, décision à prendre séparément.
+(dérive cardiaque, consistance des intervalles, respect de zone), `environmental` (dénivelé, température,
+kJ — voir § Contexte externe ci-dessus pour pourquoi ces trois-là ne l'étaient pas non plus) et
+`form_context` (`recovery_index`, `detected_phase` — voir juste en-dessous). Chaque bloc est un flag
+indépendant dans le dict — `False` le retire du prompt sans toucher au reste du code, si un bloc s'avère
+bruyant ou trompeur en usage réel.
+
+**`recovery_index`/`detected_phase` — recalculés à la date de la séance, pas "aujourd'hui"**
+(`assemble_review_context()`, `app/services/session_review.py`, câblé 2026-09-21) : contrairement au chat
+(`app/llm/chat.py`, toujours `today=date.today()`), `/review` relit une séance passée — réutiliser l'état
+d'aujourd'hui serait trompeur. Les deux fonctions sources (`collect_registry_metrics()`,
+`detect_training_phase()`) se sont avérées déjà pleinement paramétrées par `today` (pas de refonte
+nécessaire, contrairement à ce qui avait été supposé avant vérification) : appelées avec
+`today=log.logged_date` telles quelles. `plan_week_phase` (flux secondaire de `detect_training_phase`) est
+dérivé de `log.week_number` (déjà connu sur le log) plutôt que d'un recalcul date/`plan.start_date` comme
+le fait le chat — plus exact pour une séance passée puisque la semaine exacte est déjà connue, pas
+seulement approximée depuis la date. `None` sur ce compte de test tant qu'il n'a pas de VFC/FC repos
+récentes (`recovery_index`, aucune donnée depuis juillet 2025) ou d'historique suffisant (`detected_phase`).
 
 ## Variables d'environnement
 

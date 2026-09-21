@@ -3,10 +3,13 @@ pour /review, zéro LLM. Aiogram-free, comme test_activity_feedback.py.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+
+import pytest
 
 from app.db.models.session_log import SessionLog
 from app.db.models.user import User
+from app.db.models.wellness import Wellness
 from app.db.repositories import plan_repo
 from app.services.session_review import assemble_review_context
 
@@ -175,3 +178,56 @@ async def test_tid_is_computed_from_time_in_zones(db_session):
 
     assert ctx.tid is not None
     assert ctx.tid.classification == "polarized"
+
+
+async def test_recovery_index_is_computed_at_the_session_date_not_today(db_session):
+    """recovery_index must reflect the athlete's state on the logged session's own date —
+    never "today" (app/llm/chat.py's own usage) — that would be a different day's
+    recovery state attached to a past session's review."""
+    user = await _make_user(db_session, 9009)
+    session_date = date.today() - timedelta(days=10)
+    for offset in range(1, 6):
+        db_session.add(
+            Wellness(
+                user_id=user.id, date=session_date - timedelta(days=offset),
+                hrv=60.0, resting_hr=50,
+            )
+        )
+    db_session.add(Wellness(user_id=user.id, date=session_date, hrv=54.0, resting_hr=50))
+    # Une lecture "aujourd'hui" volontairement différente — ne doit jamais fuiter dans le
+    # calcul si le wiring utilise bien log.logged_date.
+    db_session.add(Wellness(user_id=user.id, date=date.today(), hrv=30.0, resting_hr=70))
+    log = SessionLog(
+        user_id=user.id, plan_id=None, week_number=None, day_of_week=None,
+        logged_date=session_date, status="done", tss_actual=60.0,
+    )
+    db_session.add(log)
+    await db_session.flush()
+
+    ctx = await assemble_review_context(db_session, user, log)
+
+    assert ctx.recovery_index is not None
+    assert ctx.recovery_index == pytest.approx(0.9, abs=0.01)
+
+
+async def test_detected_phase_uses_the_sessions_own_plan_week_not_todays(db_session):
+    """plan_week_phase must come from the plan week the LOGGED SESSION belonged to
+    (log.week_number), not whatever week the plan is on today."""
+    user = await _make_user(db_session, 9010)
+    plan_technical = _plan_technical()
+    plan_technical["weeks"][0]["phase"] = "peak"
+    plan = await plan_repo.create(
+        db_session, user_id=user.id, plan_technical=plan_technical,
+        start_date=date.today(), end_date=date.today(),
+    )
+    log = SessionLog(
+        user_id=user.id, plan_id=plan.id, week_number=1, day_of_week=2,
+        logged_date=date.today() - timedelta(days=30), status="done", tss_actual=60.0,
+    )
+    db_session.add(log)
+    await db_session.flush()
+
+    ctx = await assemble_review_context(db_session, user, log)
+
+    assert ctx.detected_phase is not None
+    assert ctx.detected_phase.secondary_phase == "peak"

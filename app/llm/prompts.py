@@ -514,6 +514,10 @@ REVIEW_DATA_BLOCKS = {
     # total_elevation_gain/average_temp/icu_joules existent bien, déjà dans les bonnes
     # unités). None sur une sortie indoor (VirtualRide, pas de capteur météo) — jamais 0.
     "environmental": True,
+    # recovery_index, detected_phase — recalculés à log.logged_date (pas "aujourd'hui"
+    # comme le chat), voir assemble_review_context(). `None` sur ce compte de test tant
+    # qu'il n'a pas de VFC/FC repos récentes (recovery_index) ou d'historique (phase).
+    "form_context": True,
 }
 
 # athlete_count reste hors scope, lui, pour une raison différente des trois champs
@@ -656,6 +660,23 @@ def build_review_user_message(ctx, dfa=None) -> str:
             f"- Forme au moment de la séance : TSB {f.tsb:+.0f} ({tsb_label(f.tsb)}), "
             f"CTL {f.ctl:.0f}, ATL {f.atl:.0f}"
         )
+
+    if REVIEW_DATA_BLOCKS["form_context"]:
+        if ctx.recovery_index is not None:
+            lines.append(f"- Indice de récupération ce jour-là : {ctx.recovery_index:.2f}")
+        if ctx.detected_phase is not None:
+            # Même vocabulaire FR que le chat (app/llm/tools.py) — voir narrator.PHASE_FR.
+            from app.llm.narrator import PHASE_FR
+
+            phase_label = PHASE_FR.get(
+                ctx.detected_phase.detected_phase, ctx.detected_phase.detected_phase
+            )
+            agree_note = ""
+            if ctx.detected_phase.streams_agree is False:
+                secondary = ctx.detected_phase.secondary_phase
+                secondary_label = PHASE_FR.get(secondary, secondary)
+                agree_note = f" (plan déclare : {secondary_label})"
+            lines.append(f"- Phase détectée (comportement récent) : {phase_label}{agree_note}")
 
     snap = ctx.weekly_snapshot
     if snap.monotony_index is not None:
