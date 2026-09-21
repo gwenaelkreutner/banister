@@ -85,6 +85,28 @@ RHR_RISE_BPM = 5
 # fatigue signal (spec 006 FR-008). A morning RHR elevation of ≥5 bpm is a classic
 # overreaching / incipient-illness marker.
 
+# ── Recovery: composite index ────────────────────────────────────────────────
+
+RECOVERY_INDEX_BASELINE_WINDOW_DAYS = 7
+# Fenêtre courte volontairement distincte de BASELINE_WINDOW_DAYS (28j, pour HRV_DROP_PCT/
+# RHR_RISE_BPM) : recovery_index compare l'aujourd'hui à "la dernière semaine", pas à la
+# normale de fond sur un mois — cohérent avec la formule reçue de l'utilisateur.
+
+RECOVERY_INDEX_BASELINE_MIN_SAMPLES = 4
+# Moitié de la fenêtre de 7j, même ratio que BASELINE_MIN_SAMPLES (14/28) — jugement, pas
+# une source publiée (aucune littérature identifiée pour ce ratio composite spécifique).
+
+RECOVERY_INDEX_LOW = 0.90
+# recovery_index = (HRV_jour/HRV_baseline_7j) / (RHR_jour/RHR_baseline_7j) — un ratio
+# composite propre à ce projet (inspiré de Section11, un projet tiers), PAS une valeur de
+# la littérature publiée : aucune source académique n'a été identifiée pour ce ratio
+# précis (contrairement à HRV_DROP_PCT/RHR_RISE_BPM ci-dessus, qui le sont). Traité comme
+# ACWR_MIN_CTL — un jugement par défaut documenté comme tel, à ajuster avec de la donnée
+# réelle plutôt que remplacé par une fausse citation. En dessous de 0.90, HRV et RHR
+# divergent tous les deux de la normale dans le sens défavorable (HRV bas ET/OU RHR haut)
+# — un signal composite, pas un doublon de HRV_DROP_PCT/RHR_RISE_BPM qui évaluent chaque
+# métrique séparément.
+
 # ── Recovery: baselines ──────────────────────────────────────────────────────
 
 BASELINE_WINDOW_DAYS = 28

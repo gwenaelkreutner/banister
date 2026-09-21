@@ -21,16 +21,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import repositories as repo
 from app.engine.baselines import rolling_baseline_stats
-from app.engine.guardrail_thresholds import BASELINE_MIN_SAMPLES, BASELINE_WINDOW_DAYS
+from app.engine.guardrail_thresholds import (
+    BASELINE_MIN_SAMPLES,
+    BASELINE_WINDOW_DAYS,
+    RECOVERY_INDEX_BASELINE_MIN_SAMPLES,
+    RECOVERY_INDEX_BASELINE_WINDOW_DAYS,
+)
 from app.engine.guardrails import (
     RECOVERY_KINDS,
     GuardrailFinding,
     as_signal_only,
     combine_recovery_findings,
+    compute_recovery_index,
     evaluate_acwr,
     evaluate_hrv,
     evaluate_monotony,
     evaluate_ramp_rate,
+    evaluate_recovery_index,
     evaluate_resting_hr,
     state_conflict_with_plan,
     sustained_recovery_finding,
@@ -113,8 +120,9 @@ async def assemble_recovery_findings(
     prescribed_zone: str | None = None,
     today: date | None = None,
 ) -> list[GuardrailFinding]:
-    """Evaluate today's HRV and resting HR against the athlete's own rolling baselines
-    and return the findings that fired (US2).
+    """Evaluate today's HRV and resting HR against the athlete's own rolling baselines,
+    plus the composite `recovery_index` (7d baseline, 2026-09-21) — return the findings
+    that fired (US2).
 
     - Baselines come from `wellness` history over `BASELINE_WINDOW_DAYS`; below
       `BASELINE_MIN_SAMPLES` readings a baseline is `None` and nothing fires (FR-013).
@@ -157,6 +165,26 @@ async def assemble_recovery_findings(
     hrv_mean, hrv_sd = hrv_stats if hrv_stats is not None else (None, None)
     rhr_mean, rhr_sd = rhr_stats if rhr_stats is not None else (None, None)
 
+    # recovery_index — fenêtre courte (7j) distincte de la baseline HRV/RHR 28j ci-dessus,
+    # calculée sur les mêmes séries déjà chargées (pas de requête DB en plus).
+    hrv_stats_7d = rolling_baseline_stats(
+        hrv_series,
+        today=today,
+        window_days=RECOVERY_INDEX_BASELINE_WINDOW_DAYS,
+        min_samples=RECOVERY_INDEX_BASELINE_MIN_SAMPLES,
+    )
+    rhr_stats_7d = rolling_baseline_stats(
+        rhr_series,
+        today=today,
+        window_days=RECOVERY_INDEX_BASELINE_WINDOW_DAYS,
+        min_samples=RECOVERY_INDEX_BASELINE_MIN_SAMPLES,
+    )
+    hrv_baseline_7d = hrv_stats_7d[0] if hrv_stats_7d is not None else None
+    rhr_baseline_7d = rhr_stats_7d[0] if rhr_stats_7d is not None else None
+    recovery_index = compute_recovery_index(
+        _hrv(today_row), hrv_baseline_7d, _rhr(today_row), rhr_baseline_7d
+    )
+
     raw = [
         sustained_recovery_finding(
             evaluate_hrv, _hrv(today_row), _hrv(y_row), hrv_mean, hrv_sd, finding_date=today
@@ -164,6 +192,7 @@ async def assemble_recovery_findings(
         sustained_recovery_finding(
             evaluate_resting_hr, _rhr(today_row), _rhr(y_row), rhr_mean, rhr_sd, finding_date=today
         ),
+        evaluate_recovery_index(recovery_index, finding_date=today),
     ]
     findings = combine_recovery_findings([f for f in raw if f is not None])
 
@@ -270,6 +299,49 @@ async def collect_registry_metrics(
             out["acwr"] = round(latest.atl / latest.ctl, 2)
         if latest.ramp_rate is not None:
             out["ramp_rate"] = round(latest.ramp_rate, 1)
+
+    # hrv/rhr bruts + recovery_index — enregistrés ici pour la première fois (2026-09-21) :
+    # les regex d'ancrage hrv/rhr existaient déjà dans response_verification.py sans que
+    # rien ne les alimente jamais (unretrieved systématique si le LLM les mentionne).
+    window_start = today - timedelta(days=RECOVERY_INDEX_BASELINE_WINDOW_DAYS + 1)
+    history = await repo.wellness_repo.get_range(session, user_id, window_start, today)
+    today_row = await repo.wellness_repo.get_by_date(session, user_id, today)
+    hrv_series = [(w.date, w.hrv) for w in history if w.hrv is not None and w.date < today]
+    rhr_series = [
+        (w.date, float(w.resting_hr))
+        for w in history
+        if w.resting_hr is not None and w.date < today
+    ]
+    hrv_stats_7d = rolling_baseline_stats(
+        hrv_series,
+        today=today,
+        window_days=RECOVERY_INDEX_BASELINE_WINDOW_DAYS,
+        min_samples=RECOVERY_INDEX_BASELINE_MIN_SAMPLES,
+    )
+    rhr_stats_7d = rolling_baseline_stats(
+        rhr_series,
+        today=today,
+        window_days=RECOVERY_INDEX_BASELINE_WINDOW_DAYS,
+        min_samples=RECOVERY_INDEX_BASELINE_MIN_SAMPLES,
+    )
+    hrv_today = today_row.hrv if today_row is not None else None
+    rhr_today = (
+        float(today_row.resting_hr)
+        if (today_row is not None and today_row.resting_hr is not None)
+        else None
+    )
+    if hrv_today is not None:
+        out["hrv"] = round(hrv_today, 1)
+    if rhr_today is not None:
+        out["rhr"] = round(rhr_today, 1)
+    recovery_index = compute_recovery_index(
+        hrv_today,
+        hrv_stats_7d[0] if hrv_stats_7d is not None else None,
+        rhr_today,
+        rhr_stats_7d[0] if rhr_stats_7d is not None else None,
+    )
+    if recovery_index is not None:
+        out["recovery_index"] = round(recovery_index, 2)
 
     logs = await repo.session_log_repo.get_all_for_user(session, user_id)
     activities = await repo.activity_repo.get_for_user(session, user_id, days=90)

@@ -47,6 +47,15 @@ def test_display_rounding_is_not_a_lie():
     assert res.ok
 
 
+def test_recovery_index_anchor_matches():
+    """2026-09-21 — recovery_index was addable to the registry with nothing anchoring it
+    in _ANCHORS; this pins the anchor exists and resolves to the right metric name."""
+    r = _registry(recovery_index=0.85)
+    res = verify_response("Ton indice de récupération est à 0.85 aujourd'hui.", r)
+    assert res.ok and len(res.passed) == 1
+    assert res.passed[0].metric == "recovery_index"
+
+
 # ── a mismatch is flagged ───────────────────────────────────────────────────
 
 

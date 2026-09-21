@@ -291,6 +291,18 @@ publié pour le sommeil) :
   OK » (FR-014). ⚠️ état réel du compte : plus aucune mesure VFC/FC repos depuis juillet 2025 → cette
   branche est le chemin réellement exercé.
 
+**`recovery_index`** (2026-09-21, chantier "signaux enrichis intervals.icu", inspiré de Section11) :
+`(HRV_jour/HRV_baseline_7j) / (RHR_jour/RHR_baseline_7j)` — signal composite distinct de `hrv_low`/
+`rhr_high` (qui évaluent chaque métrique séparément) : capture le cas où VFC et FC de repos divergent
+toutes les deux dans le mauvais sens sans qu'aucune seule ne franchisse son propre seuil. Baseline
+**7 jours** (`RECOVERY_INDEX_BASELINE_WINDOW_DAYS`), volontairement distincte des 28 jours de
+`HRV_DROP_PCT`/`RHR_RISE_BPM`. Déclenche le jour même, sans exigence de 2 jours consécutifs (déjà construit
+sur deux moyennes lissées). `RECOVERY_INDEX_LOW = 0.90` **n'est pas une valeur de la littérature publiée**
+— aucune source académique identifiée pour ce ratio précis, documenté comme jugement (même statut que
+`ACWR_MIN_CTL`). Alimente aussi le `MetricRegistry` (avec `hrv`/`rhr` bruts — gap pré-existant comblé au
+passage : les regex d'ancrage existaient déjà sans que rien ne les alimente) et le bloc FORME ACTUELLE du
+prompt du chat (`app/llm/tools.py::build_system_prompt()` uniquement — pas `/review`/`/recap`).
+
 **Advisory, jamais autoritaire** : `guardrail_service` **n'a aucun chemin d'écriture** (vérifié par scan
 AST dans les tests). Une acceptation passe par `plan_modifier` / `authorize_publication` existants. Un
 refus est enregistré (`GuardrailAcknowledgement`, clé `kind:jour`) → l'`action` est démotée en simple
@@ -329,7 +341,7 @@ doc (FR-016, SC-007). ⚠️ le ratio `ATL/CTL` est du 7j:42j (EWMA), la plage 0
 | `chat_messages` | Historique LLM (role, content, intent, tool_used) |
 | `activities` | Import historique (`source="intervals_icu"`, `source_activity_id`, `tss`, `tss_method`, `device_watts`) |
 | `weekly_adherence` | Taux d'adhérence hebdomadaire — upsert à chaque `/recap` ; clé `(user_id, week_start_date)` ; colonnes : `sessions_done`, `sessions_planned`, `compliance_pct`, `tss_7d`, `week_number`, `plan_id` |
-| `wellness` | HRV / FC repos / sommeil / CTL / ATL / **`ramp_rate`** quotidiens — ingérée à chaque tick du poller (`ingest_wellness`), source de `get_current_fitness()` et des signaux de charge (spec 006). `ramp_rate` = gain de CTL/semaine calculé par la source, consommé tel quel. Depuis 2026-09-21 (chantier "signaux enrichis intervals.icu", inspiré de Section11) : ~31 champs bruts /wellness supplémentaires, tous consommés tels quels — `hrv_sdnn`, `sleep_quality`/`sleep_score`, `mental_energy`, `avg_sleeping_hr`, `vo2max`, `fatigue`/`soreness`/`stress`/`mood`/`motivation`/`injury`/`hydration` (échelle 1-4, 1=meilleur état), `spo2`, `blood_glucose`, `systolic`/`diastolic`, `baevsky_si`, `lactate`, `respiration`, `body_fat_pct`, `abdomen_cm`, `steps`, `hydration_volume_l`, `kcal_consumed`, `carbohydrates_g`/`protein_g`/`fat_g`, `menstrual_phase`/`menstrual_phase_predicted`, `readiness`. Stockés, **aucun encore injecté dans un prompt LLM à ce stade** (Phase A du chantier — le sous-ensemble sommeil/fatigue/stress/mood/motivation rejoindra `build_system_prompt()`, le chat, en Phase B) ; le reste (macros, spO2, tension, glycémie, lactate, menstrual_phase...) attend un besoin réel avant d'être surfacé (leçon : HRV/RHR eux-mêmes vides depuis juillet 2025 sur le compte de test) |
+| `wellness` | HRV / FC repos / sommeil / CTL / ATL / **`ramp_rate`** quotidiens — ingérée à chaque tick du poller (`ingest_wellness`), source de `get_current_fitness()` et des signaux de charge (spec 006). `ramp_rate` = gain de CTL/semaine calculé par la source, consommé tel quel. Depuis 2026-09-21 (chantier "signaux enrichis intervals.icu", inspiré de Section11) : ~31 champs bruts /wellness supplémentaires, tous consommés tels quels — `hrv_sdnn`, `sleep_quality`/`sleep_score`, `mental_energy`, `avg_sleeping_hr`, `vo2max`, `fatigue`/`soreness`/`stress`/`mood`/`motivation`/`injury`/`hydration` (échelle 1-4, 1=meilleur état), `spo2`, `blood_glucose`, `systolic`/`diastolic`, `baevsky_si`, `lactate`, `respiration`, `body_fat_pct`, `abdomen_cm`, `steps`, `hydration_volume_l`, `kcal_consumed`, `carbohydrates_g`/`protein_g`/`fat_g`, `menstrual_phase`/`menstrual_phase_predicted`, `readiness`. `sleep_quality`/`sleep_score`/`fatigue`/`stress`/`mood`/`motivation` rejoignent le bloc FORME ACTUELLE de `build_system_prompt()` (le chat uniquement — pas `/review`/`/recap`) ; le reste (macros, spO2, tension, glycémie, lactate, menstrual_phase...) reste stocké mais non surfacé, en attente d'un besoin réel (leçon : HRV/RHR eux-mêmes vides depuis juillet 2025 sur le compte de test) |
 | `response_check_failures` | spec 006 — une ligne par chiffre d'une réponse LLM qui ne correspond pas à ce qui a été retrouvé (`failure_kind` mismatch/unretrieved, `stated_value`, `expected_value`, `response_excerpt`). Jamais purgée : SC-001/SC-002 sont des mesures sur un corpus |
 | `guardrail_acknowledgements` | spec 006 — décision de l'athlète sur une occurrence de garde-fou (`occurrence_key` = `kind:jour`, `decision` accepted/declined). Un refus démote l'action sans museler le signal (FR-025/FR-026) |
 | `publication_approvals` | spec 005 — consentement enregistré et lié au contenu (`content_hash` SHA-256 sur ce qui a été montré) ; `status` pending/approved/declined (terminal, jamais supprimé — FR-003) ; `horizon_start`/`horizon_end`, `session_count` |
@@ -989,7 +1001,7 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Modifier le texte de la demande d'approbation `/publish` | `app/services/publication.py` — `build_approval_request_text()` |
 | Modifier la détection de divergence plan↔calendrier | `app/services/publication.py` — `check_divergence()` |
 | Modifier le flux `/publish` / `/unpublish` (clavier, callbacks) | `app/bot/routers/publish.py` + `app/bot/keyboards/publish.py` |
-| Modifier un seuil de garde-fou (ACWR, ramp, monotonie, VFC, FC repos, outlier…) | `app/engine/guardrail_thresholds.py` |
+| Modifier un seuil de garde-fou (ACWR, ramp, monotonie, VFC, FC repos, recovery_index, outlier…) | `app/engine/guardrail_thresholds.py` |
 | Modifier un évaluateur de signal (charge ou récup) | `app/engine/guardrails.py` — `evaluate_*` |
 | Modifier l'assemblage des signaux / la raison d'insuffisance | `app/services/guardrail_service.py` |
 | Modifier la vérification des chiffres de la réponse LLM (ancrage, tolérance, retrait) | `app/services/response_verification.py` |

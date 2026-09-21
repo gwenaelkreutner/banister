@@ -26,6 +26,7 @@ from app.engine.guardrail_thresholds import (
     OUTLIER_SD,
     RAMP_RATE_CAUTION,
     RAMP_RATE_HIGH,
+    RECOVERY_INDEX_LOW,
     RHR_RISE_BPM,
 )
 
@@ -179,7 +180,7 @@ def evaluate_monotony(
 # an unexplained one would fail FR-016. A `None` observation or a `None` baseline always
 # yields `None`: missing is unknown, never a default (FR-013, FR-014).
 
-RECOVERY_KINDS = frozenset({"hrv_low", "rhr_high", "recovery_multi"})
+RECOVERY_KINDS = frozenset({"hrv_low", "rhr_high", "recovery_index_low", "recovery_multi"})
 
 
 def evaluate_hrv(
@@ -228,6 +229,58 @@ def evaluate_resting_hr(
         ),
         severity=SEVERITY_MEDIUM,
         occurrence_key=_occurrence_key("rhr_high", finding_date),
+    )
+
+
+def compute_recovery_index(
+    hrv_today: float | None,
+    hrv_baseline_7d: float | None,
+    rhr_today: float | None,
+    rhr_baseline_7d: float | None,
+) -> float | None:
+    """(HRV_jour/HRV_baseline_7j) / (RHR_jour/RHR_baseline_7j) — voir
+    `evaluate_recovery_index` et `guardrail_thresholds.py::RECOVERY_INDEX_LOW` pour la
+    provenance de ce ratio composite. `None` si une seule des 4 entrées manque (jamais un
+    calcul partiel silencieux)."""
+    if hrv_today is None or hrv_baseline_7d is None or hrv_baseline_7d <= 0:
+        return None
+    if rhr_today is None or rhr_baseline_7d is None or rhr_baseline_7d <= 0 or rhr_today <= 0:
+        return None
+    hrv_ratio = hrv_today / hrv_baseline_7d
+    rhr_ratio = rhr_today / rhr_baseline_7d
+    return hrv_ratio / rhr_ratio
+
+
+def evaluate_recovery_index(
+    recovery_index: float | None, *, finding_date: date
+) -> GuardrailFinding | None:
+    """recovery_index = (HRV_jour/HRV_baseline_7j) / (RHR_jour/RHR_baseline_7j) — un ratio
+    composite : HRV bas ET/OU RHR haut par rapport à la normale font tous les deux baisser
+    ce ratio. `RECOVERY_INDEX_LOW` n'est PAS une valeur de littérature publiée — voir
+    guardrail_thresholds.py.
+
+    Déclenche le jour même, sans exiger 2 jours consécutifs contrairement à
+    `evaluate_hrv`/`evaluate_resting_hr` : ce ratio est déjà construit sur deux baselines
+    lissées sur 7 jours (via `rolling_baseline`), pas sur une lecture brute isolée — la
+    protection contre un glitch capteur ponctuel (`sustained_recovery_finding`,
+    `is_anomalous_reading`) a du sens pour une mesure du jour, moins pour un ratio déjà
+    composite de deux moyennes.
+    """
+    if recovery_index is None:
+        return None
+    if recovery_index >= RECOVERY_INDEX_LOW:
+        return None
+    return GuardrailFinding(
+        kind="recovery_index_low",
+        observed=f"indice de récupération {recovery_index:.2f}",
+        reference=f"normale : ≥ {RECOVERY_INDEX_LOW:.2f}",
+        threshold=f"{RECOVERY_INDEX_LOW:.2f}",
+        action=(
+            "ta VFC et ta FC de repos s'écartent toutes les deux de ta normale dans le "
+            "mauvais sens — journée facile aujourd'hui, pas d'intensité"
+        ),
+        severity=SEVERITY_MEDIUM,
+        occurrence_key=_occurrence_key("recovery_index_low", finding_date),
     )
 
 

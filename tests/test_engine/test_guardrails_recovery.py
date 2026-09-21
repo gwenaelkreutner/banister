@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from datetime import date
 
-from app.engine.guardrail_thresholds import HRV_DROP_PCT, RHR_RISE_BPM
+from app.engine.guardrail_thresholds import HRV_DROP_PCT, RECOVERY_INDEX_LOW, RHR_RISE_BPM
 from app.engine.guardrails import (
     SEVERITY_HIGH,
     combine_recovery_findings,
+    compute_recovery_index,
     evaluate_hrv,
+    evaluate_recovery_index,
     evaluate_resting_hr,
     state_conflict_with_plan,
 )
@@ -134,3 +136,57 @@ def test_recovery_finding_against_a_hard_session_names_the_conflict():
     assert "propose l'échange" in stated.action or "ne tranche pas" in stated.action
     # The original recovery guidance is still there.
     assert "facile" in stated.action or "repos" in stated.action
+
+
+# ── recovery_index — composite ratio (2026-09-21, Section11-inspired) ────────
+
+
+def test_compute_recovery_index_at_baseline_equals_one():
+    assert compute_recovery_index(60.0, 60.0, 50.0, 50.0) == 1.0
+
+
+def test_compute_recovery_index_hrv_low_and_rhr_high_both_lower_the_ratio():
+    # HRV 10% below baseline AND RHR 10% above baseline compound.
+    idx = compute_recovery_index(54.0, 60.0, 55.0, 50.0)
+    assert idx == (54.0 / 60.0) / (55.0 / 50.0)
+    assert idx < 1.0
+
+
+def test_compute_recovery_index_none_on_any_missing_input():
+    assert compute_recovery_index(None, 60.0, 50.0, 50.0) is None
+    assert compute_recovery_index(60.0, None, 50.0, 50.0) is None
+    assert compute_recovery_index(60.0, 60.0, None, 50.0) is None
+    assert compute_recovery_index(60.0, 60.0, 50.0, None) is None
+
+
+def test_compute_recovery_index_none_on_zero_baseline():
+    assert compute_recovery_index(60.0, 0.0, 50.0, 50.0) is None
+    assert compute_recovery_index(60.0, 60.0, 50.0, 0.0) is None
+
+
+def test_evaluate_recovery_index_at_or_above_threshold_fires_nothing():
+    assert evaluate_recovery_index(RECOVERY_INDEX_LOW, finding_date=D) is None
+    assert evaluate_recovery_index(1.0, finding_date=D) is None
+
+
+def test_evaluate_recovery_index_below_threshold_fires_same_day():
+    """No 2-consecutive-day requirement here (unlike evaluate_hrv/evaluate_resting_hr) —
+    the ratio is already built on two 7d-smoothed baselines, not a raw single reading."""
+    f = evaluate_recovery_index(0.75, finding_date=D)
+    assert f is not None
+    assert f.kind == "recovery_index_low"
+    assert "0.75" in f.observed
+    assert f"{RECOVERY_INDEX_LOW:.2f}" in f.reference
+    assert "facile" in f.action.lower()
+
+
+def test_evaluate_recovery_index_none_on_missing_value():
+    assert evaluate_recovery_index(None, finding_date=D) is None
+
+
+def test_recovery_index_low_participates_in_combine_recovery_findings():
+    hrv = evaluate_hrv(observed=45.0, baseline=60.0, finding_date=D)
+    idx = evaluate_recovery_index(0.75, finding_date=D)
+    combined = combine_recovery_findings([hrv, idx])
+    assert len(combined) == 1
+    assert combined[0].kind == "recovery_multi"

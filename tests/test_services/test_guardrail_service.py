@@ -13,6 +13,7 @@ from app.engine.guardrail_thresholds import BASELINE_MIN_SAMPLES
 from app.services.guardrail_service import (
     assemble_recovery_findings,
     assemble_workload_findings,
+    collect_registry_metrics,
     has_load_reduction_finding,
 )
 
@@ -165,6 +166,54 @@ async def test_recovery_insufficiency_none_when_fully_evaluable(db_session):
     # HRV still has no data — so a note is still expected, mentioning VFC only.
     note = await recovery_insufficiency(db_session, u.id, today=TODAY)
     assert note is not None and "VFC" in note and "FC de repos" not in note
+
+
+# ── recovery_index (2026-09-21, Section11-inspired) ──────────────────────────
+
+
+async def _seed_hrv_and_rhr_baseline(
+    session, user_id, *, hrv: float, rhr: float, n: int = 7
+):
+    for i in range(n):
+        await wellness_repo.upsert(
+            session, user_id, TODAY - timedelta(days=2 + i), hrv=hrv, resting_hr=int(rhr)
+        )
+
+
+async def test_recovery_index_low_fires_when_hrv_and_rhr_both_diverge(db_session):
+    u = await _user(db_session)
+    await _seed_hrv_and_rhr_baseline(db_session, u.id, hrv=60.0, rhr=50.0)
+    # HRV down 15%, RHR up 10% vs the 7d baseline — neither alone crosses hrv_low/rhr_high
+    # (needs -20%/+5bpm sustained 2 days), but the composite ratio does.
+    await wellness_repo.upsert(db_session, u.id, TODAY, hrv=51.0, resting_hr=55)
+    findings = await assemble_recovery_findings(db_session, u.id, today=TODAY)
+    assert [f.kind for f in findings] == ["recovery_index_low"]
+
+
+async def test_recovery_index_stays_silent_when_hrv_and_rhr_are_normal(db_session):
+    u = await _user(db_session)
+    await _seed_hrv_and_rhr_baseline(db_session, u.id, hrv=60.0, rhr=50.0)
+    await wellness_repo.upsert(db_session, u.id, TODAY, hrv=60.0, resting_hr=50)
+    findings = await assemble_recovery_findings(db_session, u.id, today=TODAY)
+    assert findings == []
+
+
+async def test_collect_registry_metrics_includes_recovery_index_hrv_rhr(db_session):
+    u = await _user(db_session)
+    await _seed_hrv_and_rhr_baseline(db_session, u.id, hrv=60.0, rhr=50.0)
+    await wellness_repo.upsert(db_session, u.id, TODAY, hrv=51.0, resting_hr=55)
+    metrics = await collect_registry_metrics(db_session, u.id, today=TODAY)
+    assert metrics["hrv"] == 51.0
+    assert metrics["rhr"] == 55.0
+    assert metrics["recovery_index"] == round((51.0 / 60.0) / (55.0 / 50.0), 2)
+
+
+async def test_collect_registry_metrics_omits_recovery_index_without_enough_history(db_session):
+    u = await _user(db_session)
+    await wellness_repo.upsert(db_session, u.id, TODAY, hrv=51.0, resting_hr=55)
+    metrics = await collect_registry_metrics(db_session, u.id, today=TODAY)
+    assert metrics["hrv"] == 51.0  # today's raw reading is still registered
+    assert "recovery_index" not in metrics  # no 7d baseline yet
 
 
 # ── Freestyle mode regression pin (spec 009 research Decision 7) ────────────────

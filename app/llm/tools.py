@@ -527,6 +527,8 @@ def build_system_prompt(
     calendar_divergence: str | None = None,
     guardrail_findings: list | None = None,
     recovery_insufficiency: str | None = None,
+    wellness_today: object | None = None,
+    recovery_index: float | None = None,
 ) -> str:
     p = profile
 
@@ -595,6 +597,30 @@ def build_system_prompt(
         ]
     else:
         lines += ["", "FORME ACTUELLE : pas encore de données (aucune séance loggée)."]
+
+    if recovery_index is not None:
+        lines.append(f"Indice de récupération : {recovery_index:.2f}")
+
+    # Wellness qualitatif du jour — sous-ensemble volontairement restreint (sommeil,
+    # fatigue, stress, mood, motivation) parmi les ~31 champs bruts désormais stockés
+    # (app/db/models/wellness.py) ; le reste (macros, spO2, tension...) attend un besoin
+    # réel avant d'être injecté ici (2026-09-21).
+    if wellness_today is not None:
+        w_parts = []
+        if wellness_today.sleep_quality is not None:
+            w_parts.append(f"qualité sommeil {wellness_today.sleep_quality}/4")
+        if wellness_today.sleep_score is not None:
+            w_parts.append(f"score sommeil {wellness_today.sleep_score}")
+        if wellness_today.fatigue is not None:
+            w_parts.append(f"fatigue {wellness_today.fatigue}/4")
+        if wellness_today.stress is not None:
+            w_parts.append(f"stress {wellness_today.stress}/4")
+        if wellness_today.mood is not None:
+            w_parts.append(f"mood {wellness_today.mood}/4")
+        if wellness_today.motivation is not None:
+            w_parts.append(f"motivation {wellness_today.motivation}/4")
+        if w_parts:
+            lines.append(f"Wellness du jour (échelle 1-4, 1=meilleur état) : {' | '.join(w_parts)}")
 
     # 7 dernières séances (SessionLog ou Activity pré-plan, déjà triés et limités à 7)
     if recent_logs:

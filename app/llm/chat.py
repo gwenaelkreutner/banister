@@ -152,6 +152,24 @@ async def run_chat(
     except Exception:
         logger.warning("Impossible de calculer les signaux garde-fous")
 
+    # Wellness du jour (sommeil/fatigue/stress/mood/motivation) — Section11-inspired
+    # (2026-09-21), même journée que le registre de métriques ci-dessous.
+    wellness_today = None
+    try:
+        wellness_today = await repo.wellness_repo.get_by_date(session, user.id, date.today())
+    except Exception:
+        logger.warning("Impossible de charger le wellness du jour")
+
+    # Calculé une seule fois : sert à la fois l'affichage FORME ACTUELLE (recovery_index)
+    # et le MetricRegistry plus bas (mêmes valeurs, pas une seconde requête).
+    registry_metrics: dict[str, float] = {}
+    try:
+        from app.services.guardrail_service import collect_registry_metrics
+
+        registry_metrics = await collect_registry_metrics(session, user.id)
+    except Exception:
+        logger.warning("Impossible de collecter les métriques garde-fous pour le registre")
+
     coaching_ctx = build_system_prompt(
         first_name=user.first_name or "l'athlète",
         profile=profile,
@@ -165,6 +183,8 @@ async def run_chat(
         calendar_divergence=calendar_divergence,
         guardrail_findings=guardrail_findings,
         recovery_insufficiency=recovery_gap,
+        wellness_today=wellness_today,
+        recovery_index=registry_metrics.get("recovery_index"),
     )
     system = f"{ux_rules}\n\n---\n\n{coaching_ctx}"
     if has_load_reduction_finding(guardrail_findings):
@@ -194,15 +214,8 @@ async def run_chat(
         registry.register("tsb", metrics.tsb)
     if profile is not None and profile.equipment.ftp:
         registry.register("ftp", profile.equipment.ftp)
-    try:
-        from app.services.guardrail_service import collect_registry_metrics
-
-        for _name, _value in (
-            await collect_registry_metrics(session, user.id)
-        ).items():
-            registry.register(_name, _value)
-    except Exception:
-        logger.warning("Impossible de collecter les métriques garde-fous pour le registre")
+    for _name, _value in registry_metrics.items():
+        registry.register(_name, _value)
 
     messages = build_context_messages(history)
     messages.append({"role": "user", "content": user_message})
