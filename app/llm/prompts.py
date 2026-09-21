@@ -543,6 +543,10 @@ def build_review_user_message(ctx) -> str:
         lines.append(f"- Puissance moyenne : {log.avg_power} W")
     if log.avg_heart_rate is not None:
         lines.append(f"- FC moyenne : {log.avg_heart_rate} bpm")
+    if log.efficiency_factor is not None:
+        lines.append(f"- Efficiency factor : {log.efficiency_factor:.2f}")
+    if log.hrr is not None:
+        lines.append(f"- HRRc (récupération FC 60s) : {log.hrr:.0f}")
 
     rpe_labels = {"hard": "Dur", "normal": "Normal", "easy": "Facile"}
     if log.rpe_emoji:

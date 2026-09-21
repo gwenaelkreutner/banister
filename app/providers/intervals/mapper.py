@@ -3,7 +3,8 @@
 Consumed verbatim (never recomputed — FR-015, FR-016, FR-017; research R9a/R9b/R9c), but
 not always bit-for-bit as the source represents it: unit conversion happens at the
 boundary, not downstream. tss (icu_training_load), normalized_power
-(icu_weighted_avg_watts) and time_in_zones_s (icu_zone_times) pass straight through.
+(icu_weighted_avg_watts), time_in_zones_s (icu_zone_times), efficiency_factor
+(icu_efficiency_factor) and hrr (icu_hrr) pass straight through.
 intensity_factor is icu_intensity / 100 (the source expresses it as a percentage).
 variability_index equals icu_variability_index directly (verified identical, R9a).
 cardiac_drift_index is decoupling / 100 — decoupling is also a percentage, while
@@ -184,6 +185,15 @@ def map_activity_to_analyzed_session(
     icu_decoupling = payload.get("decoupling")
     cardiac_drift_index = (icu_decoupling / 100) if icu_decoupling is not None else None
 
+    # icu_efficiency_factor (NP/avgHR) and icu_hrr (HRRc — biggest 60s HR drop post-
+    # threshold) are computed server-side by intervals.icu, consumed verbatim like tss/
+    # normalized_power — no unit conversion, unlike decoupling. icu_hrr is an object
+    # ({start_bpm, end_bpm, hrr, ...}), not a scalar — only its "hrr" field is the value
+    # every other consumer of this term means (found in the fixture, not assumed).
+    efficiency_factor = payload.get("icu_efficiency_factor")
+    icu_hrr_block = payload.get("icu_hrr")
+    hrr = icu_hrr_block.get("hrr") if icu_hrr_block is not None else None
+
     duration_s = int(payload.get("elapsed_time") or 0)
 
     respect_zones_score = _compute_respect_zones_score(
@@ -221,6 +231,8 @@ def map_activity_to_analyzed_session(
         session_type_real=session_type_real,
         respect_zones_score=respect_zones_score,
         cardiac_drift_index=cardiac_drift_index,
+        efficiency_factor=efficiency_factor,
+        hrr=hrr,
         intervals_consistency_index=_intervals_consistency_index(icu_intervals),
         planned_session_id=planned_session_id,
         planned_workout_type=planned_workout_type,

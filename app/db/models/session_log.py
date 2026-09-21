@@ -62,6 +62,9 @@ class SessionLog(Base, TimestampMixin):
 
     # Métriques qualité calculées à l'ingestion (absent pour les logs manuels)
     cardiac_drift_index: Mapped[float | None] = mapped_column(nullable=True)
+    # Calculés par intervals.icu (icu_efficiency_factor/icu_hrr), consommés tels quels.
+    efficiency_factor: Mapped[float | None] = mapped_column(nullable=True)
+    hrr: Mapped[float | None] = mapped_column(nullable=True)
     intervals_consistency_index: Mapped[float | None] = mapped_column(nullable=True)
     respect_zones_score: Mapped[float | None] = mapped_column(nullable=True)
     session_type_real: Mapped[str | None] = mapped_column(String(16), nullable=True)

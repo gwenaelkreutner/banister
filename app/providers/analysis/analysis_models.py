@@ -54,6 +54,10 @@ class AnalyzedSession(BaseModel):
     respect_zones_score: float | None = None
     cardiac_drift_index: float | None = None
     intervals_consistency_index: float | None = None
+    # Calculés par intervals.icu (icu_efficiency_factor/icu_hrr), consommés tels quels —
+    # aucune conversion d'unité contrairement à decoupling/cardiac_drift_index.
+    efficiency_factor: float | None = None
+    hrr: float | None = None
 
     planned_session_id: str | None = None
     planned_workout_type: str | None = None

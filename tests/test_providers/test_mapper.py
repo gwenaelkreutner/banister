@@ -44,6 +44,14 @@ class TestNullVsZero:
         analyzed = map_activity_to_analyzed_session(_load("activity_no_sensors.json"))
         assert analyzed.cardiac_drift_index is None
 
+    def test_efficiency_factor_stays_none(self):
+        analyzed = map_activity_to_analyzed_session(_load("activity_no_sensors.json"))
+        assert analyzed.efficiency_factor is None
+
+    def test_hrr_stays_none(self):
+        analyzed = map_activity_to_analyzed_session(_load("activity_no_sensors.json"))
+        assert analyzed.hrr is None
+
     def test_time_in_zones_stays_empty_not_populated(self):
         analyzed = map_activity_to_analyzed_session(_load("activity_no_sensors.json"))
         assert analyzed.time_in_zones_s == {}
@@ -114,6 +122,18 @@ class TestPopulatedFixtureConsumesSourceValuesVerbatim:
         payload = _load("activity_full.json")
         analyzed = map_activity_to_analyzed_session(payload)
         assert analyzed.cardiac_drift_index == payload["decoupling"] / 100
+
+    def test_efficiency_factor_equals_icu_efficiency_factor(self):
+        payload = _load("activity_full.json")
+        analyzed = map_activity_to_analyzed_session(payload)
+        assert analyzed.efficiency_factor == payload["icu_efficiency_factor"] == 1.656
+
+    def test_hrr_equals_the_nested_hrr_value_not_the_whole_block(self):
+        """icu_hrr is an object ({start_bpm, end_bpm, hrr, ...}), not a scalar — only
+        its "hrr" field is the value every other consumer of this term means."""
+        payload = _load("activity_full.json")
+        analyzed = map_activity_to_analyzed_session(payload)
+        assert analyzed.hrr == payload["icu_hrr"]["hrr"] == 62
 
     def test_time_in_zones_matches_icu_zone_times_verbatim(self):
         payload = _load("activity_full.json")

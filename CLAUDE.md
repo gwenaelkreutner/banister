@@ -329,7 +329,7 @@ doc (FR-016, SC-007). ⚠️ le ratio `ATL/CTL` est du 7j:42j (EWMA), la plage 0
 | `chat_messages` | Historique LLM (role, content, intent, tool_used) |
 | `activities` | Import historique (`source="intervals_icu"`, `source_activity_id`, `tss`, `tss_method`, `device_watts`) |
 | `weekly_adherence` | Taux d'adhérence hebdomadaire — upsert à chaque `/recap` ; clé `(user_id, week_start_date)` ; colonnes : `sessions_done`, `sessions_planned`, `compliance_pct`, `tss_7d`, `week_number`, `plan_id` |
-| `wellness` | HRV / FC repos / sommeil / CTL / ATL / **`ramp_rate`** quotidiens — ingérée à chaque tick du poller (`ingest_wellness`), source de `get_current_fitness()` et des signaux de charge (spec 006). `ramp_rate` = gain de CTL/semaine calculé par la source, consommé tel quel |
+| `wellness` | HRV / FC repos / sommeil / CTL / ATL / **`ramp_rate`** quotidiens — ingérée à chaque tick du poller (`ingest_wellness`), source de `get_current_fitness()` et des signaux de charge (spec 006). `ramp_rate` = gain de CTL/semaine calculé par la source, consommé tel quel. Depuis 2026-09-21 (chantier "signaux enrichis intervals.icu", inspiré de Section11) : ~31 champs bruts /wellness supplémentaires, tous consommés tels quels — `hrv_sdnn`, `sleep_quality`/`sleep_score`, `mental_energy`, `avg_sleeping_hr`, `vo2max`, `fatigue`/`soreness`/`stress`/`mood`/`motivation`/`injury`/`hydration` (échelle 1-4, 1=meilleur état), `spo2`, `blood_glucose`, `systolic`/`diastolic`, `baevsky_si`, `lactate`, `respiration`, `body_fat_pct`, `abdomen_cm`, `steps`, `hydration_volume_l`, `kcal_consumed`, `carbohydrates_g`/`protein_g`/`fat_g`, `menstrual_phase`/`menstrual_phase_predicted`, `readiness`. Stockés, **aucun encore injecté dans un prompt LLM à ce stade** (Phase A du chantier — le sous-ensemble sommeil/fatigue/stress/mood/motivation rejoindra `build_system_prompt()`, le chat, en Phase B) ; le reste (macros, spO2, tension, glycémie, lactate, menstrual_phase...) attend un besoin réel avant d'être surfacé (leçon : HRV/RHR eux-mêmes vides depuis juillet 2025 sur le compte de test) |
 | `response_check_failures` | spec 006 — une ligne par chiffre d'une réponse LLM qui ne correspond pas à ce qui a été retrouvé (`failure_kind` mismatch/unretrieved, `stated_value`, `expected_value`, `response_excerpt`). Jamais purgée : SC-001/SC-002 sont des mesures sur un corpus |
 | `guardrail_acknowledgements` | spec 006 — décision de l'athlète sur une occurrence de garde-fou (`occurrence_key` = `kind:jour`, `decision` accepted/declined). Un refus démote l'action sans museler le signal (FR-025/FR-026) |
 | `publication_approvals` | spec 005 — consentement enregistré et lié au contenu (`content_hash` SHA-256 sur ce qui a été montré) ; `status` pending/approved/declined (terminal, jamais supprimé — FR-003) ; `horizon_start`/`horizon_end`, `session_count` |
@@ -426,8 +426,11 @@ donc `_build_race_week` ne se déclenche jamais et le marqueur de course dispara
 
 ### Autorité de la source (spec 002, Constitution Principe IV)
 - **Consommés tels quels, jamais recalculés** : charge d'entraînement de l'activité, CTL/ATL/TSB, zones
-  puissance/FC, seuils FTP/LTHR
-  - Par activité : `app/providers/intervals/mapper.py` (TSS, zones, seuils)
+  puissance/FC, seuils FTP/LTHR, `efficiency_factor`/`hrr` (HRRc)
+  - Par activité : `app/providers/intervals/mapper.py` (TSS, zones, seuils, `efficiency_factor`=
+    `icu_efficiency_factor`, `hrr`=`icu_hrr.hrr` — **`icu_hrr` est un objet**
+    `{start_bpm, end_bpm, hrr, ...}`, pas un scalaire, seul le champ `hrr` nous intéresse — vérifié sur
+    fixture réelle avant d'écrire le mapping, 2026-09-21, chantier "signaux enrichis intervals.icu")
   - **CTL/ATL/TSB courants** (`/forme`, `/recap`, le chat, le message post-séance, le check KPI de
     surcharge) : `app/services/fitness.py::get_current_fitness()`, qui lit la table `wellness` — voir
     section ATL/CTL/TSB ci-dessous, le switch a été fait (spec 002 follow-up post-Phase 8)

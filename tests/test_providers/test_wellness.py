@@ -71,6 +71,34 @@ async def test_missing_readings_stay_none_not_zero(db_session, patch_transport):
     assert record.resting_hr is None
     assert record.sleep_seconds is None
     assert record.weight_kg is None
+    # Same for the Section11-inspired raw fields added 2026-09-21 — absence must stay
+    # absence, not a falsy stand-in.
+    assert record.sleep_quality is None
+    assert record.fatigue is None
+    assert record.menstrual_phase is None
+    assert record.readiness is None
+
+
+async def test_raw_wellness_field_is_stored(db_session, patch_transport):
+    """vo2max is the only new raw field with a non-null value in the fixture
+    (2026-08-22) — exercises the ~31-field extension of ingest_wellness beyond a pure
+    None check."""
+    wellness_payload = _load("wellness_range.json")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=wellness_payload)
+
+    patch_transport(handler)
+    user = await _make_user(db_session, 406)
+    client = IntervalsClient("test-key", athlete_id="i000000")
+
+    await ingest_wellness(db_session, user.id, client, oldest="2026-08-20", newest="2026-08-27")
+    await db_session.commit()
+
+    from datetime import date
+
+    record = await wellness_repo.get_by_date(db_session, user.id, date(2026, 8, 22))
+    assert record.vo2max == 63.0
 
 
 async def test_real_ctl_atl_values_are_stored(db_session, patch_transport):
