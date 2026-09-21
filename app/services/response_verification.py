@@ -75,6 +75,7 @@ _ANCHORS: list[tuple[str, str]] = [
     (r"rampe?\s+de\s+charge", "ramp_rate"),
     (r"ramp\s*rate", "ramp_rate"),
     (r"indice de r[ée]cup[ée]ration", "recovery_index"),
+    (r"indice de polarisation", "polarization_index"),
 ]
 
 # A number token: optional sign, digits, optional decimal (French comma or dot).
@@ -193,6 +194,7 @@ _METRIC_FR = {
     "tss": "la charge", "ftp": "ta FTP", "acwr": "ton rapport de charge",
     "monotony": "la monotonie", "hrv": "ta VFC", "rhr": "ta FC de repos",
     "ramp_rate": "ta progression de forme", "recovery_index": "ton indice de récupération",
+    "polarization_index": "ton indice de polarisation",
 }
 
 

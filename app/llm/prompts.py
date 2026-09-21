@@ -214,7 +214,8 @@ Règles absolues :
 - Ne commence pas ta réponse par un titre ou un label (le bot envoie déjà un en-tête)
 - Emojis sobres : 🚴 📈 ⚠️ 💪 🎯 ✅"""
 
-WEEKLY_RECAP_COACH_TEMPLATE = """BILAN HEBDOMADAIRE :
+WEEKLY_RECAP_COACH_TEMPLATE = (
+    """BILAN HEBDOMADAIRE :
 
 [PROFIL ATHLÈTE]
 - Niveau : {level_fr}
@@ -226,7 +227,8 @@ WEEKLY_RECAP_COACH_TEMPLATE = """BILAN HEBDOMADAIRE :
 [CHARGE SEMAINE]
 - TSS réalisé : {tss_7d} (moyenne 6 sem : {tss_6w_avg})
 - Tendance : {load_trend_pct:+.1f}% vs habitude
-- Séances : {sessions_done}/{sessions_planned} ({compliance_pct:.0f}% du plan){monotony_line}
+- Séances : {sessions_done}/{sessions_planned} ({compliance_pct:.0f}% du plan){monotony_line}"""
+    """{tid_line}
 
 [FORME — usage coach uniquement, ne pas afficher les valeurs brutes]
 - TSB : {tsb:+.1f} ({tsb_label})
@@ -235,6 +237,7 @@ WEEKLY_RECAP_COACH_TEMPLATE = """BILAN HEBDOMADAIRE :
 Génère 2-3 phrases d'analyse coach, en texte brut et continu.
 Commence directement par une observation ancrée dans les chiffres — pas de label, pas de titre.
 Si user_level < 2, ne mentionne pas CTL/ATL/TSB."""
+)
 
 WEEKLY_RECAP_NEXTWEEK_TEMPLATE = """CONTEXTE SEMAINE ÉCOULÉE :
 TSS réalisé : {tss_7d} | Tendance : {load_trend_pct:+.1f}% | Compliance : {compliance_pct:.0f}%
@@ -468,6 +471,15 @@ def build_coach_blocks_user_message(
     return "\n".join(lines)
 
 
+_TID_CLASSIFICATION_FR: dict[str, str] = {
+    "polarized": "polarisée",
+    "pyramidal": "pyramidale",
+    "threshold": "dominée par le seuil",
+    "high_intensity": "dominée par le haut niveau",
+    "base": "quasi exclusivement facile",
+    "unclassified": "non classée",
+}
+
 # ── /review — synthèse de séance à la demande ────────────────────────────────
 
 # Un seul format (150-200 mots) — un ancien plan à 3 profondeurs (brief/default/deep)
@@ -570,6 +582,14 @@ def build_review_user_message(ctx) -> str:
         trend_dir = "en hausse" if snap.load_trend_pct > 0 else "en baisse"
         lines.append(
             f"- Tendance de charge 7j vs habitude : {snap.load_trend_pct:+.0f}% ({trend_dir})"
+        )
+
+    if ctx.tid is not None:
+        tid_label = _TID_CLASSIFICATION_FR.get(ctx.tid.classification, ctx.tid.classification)
+        lines.append(
+            f"- Distribution d'intensité 7j : {tid_label} "
+            f"(Z1-2 {ctx.tid.zone1_pct:.0f}% / Z3-4 {ctx.tid.zone2_pct:.0f}% / "
+            f"Z5-7 {ctx.tid.zone3_pct:.0f}%)"
         )
 
     return "\n".join(lines)

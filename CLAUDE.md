@@ -493,6 +493,28 @@ points d'écart, pas une nuance.
   changé, pas une simple refacto
 - Fonction pure, pas de requête DB — prend la liste `logs` déjà en mémoire
 
+### TID / indice de polarisation (`app/engine/tid.py`, 2026-09-21, chantier "signaux enrichis intervals.icu")
+- `compute_tid(logs, today, window_days)` → `TIDResult | None` — `None` si aucune séance avec zone-time
+  dans la fenêtre (jamais un TID à 0/0/0 halluciné sur zéro donnée)
+- **Scope volontairement limité aux `SessionLog`** (pas `Activity`, qui n'a aucune colonne de temps par
+  zone) — donc seulement les séances effectivement loguées via poller/chat, pas tout l'historique brut
+- 3 zones (Seiler 2010) mappées depuis les 7 zones de puissance intervals.icu, même regroupement que
+  `mapper.py::_detect_session_type` : zone1 (faible) = Z1+Z2, zone2 (modérée) = Z3+Z4, zone3 (élevée) =
+  Z5+Z6+Z7 — "SS" exclu (même précédent que `_dominant_zone`)
+- **Indice de polarisation** (Treff et al. 2019, *"The Polarization-Index..."*, Front Physiol) :
+  `log10((zone1_pct/zone2_pct) × zone3_pct)` — ⚠️ **le `×100` de la formule publiée ne doit PAS être
+  réappliqué** quand les zones sont déjà en pourcentage (0-100), pas en fraction (0-1) : un bug exactement
+  de ce type (× 100 en trop, gonflant l'indice de ~2 ordres de grandeur, rendant "polarized" quasi
+  inévitable même sur une semaine dominée par la zone 2) a été trouvé et corrigé **en écrivant les tests**,
+  avant tout usage réel — voir `tests/test_engine/test_tid.py`. Seuil `POLARIZATION_INDEX_THRESHOLD = 2.0`
+  = seule frontière numérique du module validée par une source publiée (rameurs olympiques)
+- Classification (base/polarized/pyramidal/threshold/high_intensity) : le reste de l'arbre est une
+  **adaptation** des catégories descriptives de Seiler, pas une reprise littérale de seuils publiés —
+  documenté comme tel dans `guardrail_thresholds.py`, bloc "TID / Polarisation"
+- Surfaces : `build_review_user_message()` (`/review`) et `WEEKLY_RECAP_COACH_TEMPLATE` (`/recap`) — deux
+  insertions séparées, chacune dans sa fonction de prompt jetable ; **pas** dans `build_system_prompt()`
+  (le chat) pour l'instant
+
 ### Analyse LLM post-séance (`app/llm/activity_analysis.py`)
 - `generate_activity_analysis(**kwargs)` — prompt structuré en 5 blocs : Séance / Puissance / Qualité / Contexte / Forme & Charge
 - 3 paramètres optionnels Variable Reward : `highlight_category`, `personal_record`, `storytelling_mode`
@@ -976,6 +998,7 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Modifier le calcul local ATL/CTL/TSB (repli, projection théorique) | `app/engine/atl_ctl.py` |
 | Projection CTL théorique (suivi plan) | `app/engine/atl_ctl.py` — `project_fitness_from_plan()` |
 | Modifier snapshot hebdo (monotonie, tendance) | `app/engine/weekly_snapshot.py` |
+| Modifier le TID / indice de polarisation | `app/engine/tid.py` — seuils dans `app/engine/guardrail_thresholds.py` |
 | Modifier récap hebdo (logique + LLM) | `app/services/weekly_recap.py` |
 | Lire/écrire l'adhérence hebdomadaire | `app/db/repositories/weekly_adherence_repo.py` |
 | Modifier le scheduler dimanche 20h | `app/main.py` — `_weekly_recap_scheduler()` |

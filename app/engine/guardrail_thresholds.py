@@ -127,6 +127,24 @@ OUTLIER_SD = 3.0
 # probable device error and does NOT fire a finding on its own (FR-011, SC-005). A real
 # threshold crossing must persist across ≥2 consecutive days to be raised.
 
+# ── TID / Polarisation (Seiler / Treff) ────────────────────────────────────────
+
+POLARIZATION_INDEX_THRESHOLD = 2.0
+# Treff et al. 2019, "The Polarization-Index: A Simple Calculation to Distinguish
+# Polarized From Other Training Intensity Distributions" (Front Physiol) : un indice
+# ≥ 2.0 sépare les distributions polarisées des autres, validé sur des rameurs
+# olympiques. La seule frontière numérique de ce bloc qui vient d'une source publiée et
+# validée statistiquement — voir app/engine/tid.py::_polarization_index() pour la formule.
+
+TID_BASE_ZONE1_MIN_PCT = 90.0
+TID_THRESHOLD_ZONE2_MIN_PCT = 30.0
+TID_HIGH_INTENSITY_ZONE3_MIN_PCT = 15.0
+# Ces trois-là sont une ADAPTATION des catégories descriptives de Seiler (2010, "What is
+# best practice for training intensity and duration distribution in endurance
+# athletes?", Int J Sports Physiol Perform) — pas une reprise littérale de seuils
+# publiés : aucune table à 5 catégories avec bornes numériques exactes identifiée.
+# Documenté ici comme adaptation plutôt que présenté à tort comme une citation directe.
+
 # ── Response verification ────────────────────────────────────────────────────
 
 VERIFY_TOLERANCE_PCT = 2.0

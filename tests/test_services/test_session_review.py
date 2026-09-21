@@ -145,3 +145,33 @@ async def test_weekly_snapshot_is_always_populated(db_session):
     ctx = await assemble_review_context(db_session, user, log)
 
     assert ctx.weekly_snapshot is not None
+
+
+async def test_tid_is_none_without_zone_data(db_session):
+    user = await _make_user(db_session, 9007)
+    log = SessionLog(
+        user_id=user.id, plan_id=None, week_number=None, day_of_week=None,
+        logged_date=date.today(), status="done", tss_actual=60.0,
+    )
+    db_session.add(log)
+    await db_session.flush()
+
+    ctx = await assemble_review_context(db_session, user, log)
+
+    assert ctx.tid is None
+
+
+async def test_tid_is_computed_from_time_in_zones(db_session):
+    user = await _make_user(db_session, 9008)
+    log = SessionLog(
+        user_id=user.id, plan_id=None, week_number=None, day_of_week=None,
+        logged_date=date.today(), status="done", tss_actual=60.0,
+        time_in_zones_s={"Z1": 8000, "Z3": 500, "Z5": 1500},
+    )
+    db_session.add(log)
+    await db_session.flush()
+
+    ctx = await assemble_review_context(db_session, user, log)
+
+    assert ctx.tid is not None
+    assert ctx.tid.classification == "polarized"

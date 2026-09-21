@@ -20,6 +20,7 @@ from app.db.models.user import User
 from app.engine.atl_ctl import compute_fitness_from_any, estimate_initial_ctl, tsb_label
 from app.engine.guardrail_thresholds import MONOTONY_HIGH
 from app.engine.schemas import TrainingPlanSchema
+from app.engine.tid import compute_tid
 from app.engine.tss import tss_from_weekly_hours
 from app.engine.weekly_snapshot import WeeklySnapshot, compute_weekly_snapshot
 from app.services.fitness import get_current_fitness
@@ -156,6 +157,7 @@ async def compute_weekly_recap(
 
     # ── Métriques déterministes ───────────────────────────────────────────────
     snapshot = compute_weekly_snapshot(all_items, today)
+    tid = compute_tid(all_items, today=today, window_days=7)
 
     current = await get_current_fitness(session, user.id, today=today)
     if current is not None:
@@ -218,6 +220,15 @@ async def compute_weekly_recap(
         if snapshot.monotony_index is not None and snapshot.monotony_index > MONOTONY_HIGH
         else ""
     )
+    tid_line = ""
+    if tid is not None:
+        from app.llm.prompts import _TID_CLASSIFICATION_FR
+
+        tid_label = _TID_CLASSIFICATION_FR.get(tid.classification, tid.classification)
+        tid_line = (
+            f"\n- Distribution d'intensité : {tid_label} "
+            f"(Z1-2 {tid.zone1_pct:.0f}% / Z3-4 {tid.zone2_pct:.0f}% / Z5-7 {tid.zone3_pct:.0f}%)"
+        )
 
     # ── Séances semaine prochaine ─────────────────────────────────────────────
     next_phase = next_week_obj.phase if next_week_obj else current_phase
@@ -240,6 +251,7 @@ async def compute_weekly_recap(
         sessions_planned=sessions_planned_display,
         compliance_pct=compliance_display,
         monotony_line=monotony_line,
+        tid_line=tid_line,
         tsb=tsb,
         tsb_label=tsb_lbl,
         tone_directive=tone_directive,
@@ -292,7 +304,7 @@ async def compute_weekly_recap(
 
 async def _generate_coach_section(
     tss_7d, tss_6w_avg, load_trend_pct, sessions_done, sessions_planned,
-    compliance_pct, monotony_line, tsb, tsb_label, tone_directive,
+    compliance_pct, monotony_line, tid_line, tsb, tsb_label, tone_directive,
     level_fr, goal_fr, ftp_watts, hr_line, user_level,
 ) -> str:
     try:
@@ -311,6 +323,7 @@ async def _generate_coach_section(
             sessions_planned=sessions_planned,
             compliance_pct=compliance_pct,
             monotony_line=monotony_line,
+            tid_line=tid_line,
             tsb=tsb,
             tsb_label=tsb_label,
             tone_directive=tone_directive,

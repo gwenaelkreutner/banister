@@ -23,6 +23,7 @@ from app.db.models.session_log import SessionLog
 from app.db.models.user import User
 from app.engine.atl_ctl import FitnessMetrics
 from app.engine.schemas import SessionSpec, TrainingPlanSchema, session_at
+from app.engine.tid import TIDResult, compute_tid
 from app.engine.weekly_snapshot import WeeklySnapshot, compute_weekly_snapshot
 
 
@@ -33,6 +34,7 @@ class ReviewContext:
     # Snapshot CTL/ATL/TSB au moment loggé — autoritaire, jamais recalculé.
     fitness_at_session: FitnessMetrics | None
     weekly_snapshot: WeeklySnapshot  # tendance/monotonie autour de la date de la séance
+    tid: TIDResult | None  # TID/polarisation 7j autour de la séance (2026-09-21)
 
 
 async def assemble_review_context(
@@ -57,10 +59,12 @@ async def assemble_review_context(
 
     all_logs = await repo.session_log_repo.get_all_for_user(session, user.id)
     weekly_snapshot = compute_weekly_snapshot(all_logs, log.logged_date)
+    tid = compute_tid(all_logs, today=log.logged_date, window_days=7)
 
     return ReviewContext(
         log=log,
         session_spec=session_spec,
         fitness_at_session=fitness_at_session,
         weekly_snapshot=weekly_snapshot,
+        tid=tid,
     )
