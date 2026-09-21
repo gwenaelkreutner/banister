@@ -42,7 +42,10 @@ class SessionLog(Base, TimestampMixin):
     logged_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
 
     status: Mapped[str] = mapped_column(String(16), nullable=False)  # "done" | "skipped" | "unplanned"
-    rpe_emoji: Mapped[str | None] = mapped_column(String(8), nullable=True)  # "hard"|"normal"|"easy"
+    # RPE standard 1-10 (Borg-like), voir app/engine/rpe.py — remplace l'ancien
+    # rpe_emoji catégoriel (2026-09-21) : intervals.icu (icu_rpe) et le clavier Telegram
+    # (valeurs représentatives par bouton) écrivent tous les deux sur cette même échelle.
+    rpe: Mapped[float | None] = mapped_column(nullable=True)
     duration_minutes_actual: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     tss_actual: Mapped[float | None] = mapped_column(nullable=True)
     # String, not numeric: the source's activity ids are not guaranteed numeric (e.g.

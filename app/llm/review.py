@@ -22,7 +22,7 @@ async def generate_session_review(ctx: ReviewContext, dfa: DFABlock | None = Non
     """`dfa` : calculé par l'appelant (`app/bot/routers/review.py`), pas ici — nécessite
     un appel réseau intervals.icu (streams), hors de la responsabilité de ce module
     one-shot et de `assemble_review_context()` (DB uniquement, zéro réseau)."""
-    system = build_review_system_prompt(has_rpe=ctx.log.rpe_emoji is not None)
+    system = build_review_system_prompt(has_rpe=ctx.log.rpe is not None)
     user_message = build_review_user_message(ctx, dfa=dfa)
 
     try:

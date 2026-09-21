@@ -420,11 +420,10 @@ def build_coach_blocks_user_message(
     planned_workout_type: str | None,
     dominant_zone: str | None,
     time_in_zones_pct: dict | None,
-    rpe_emoji: str | None,
+    rpe: float | None,
     next_session_info: str | None,
 ) -> str:
     """Construit le message utilisateur pour generate_coach_blocks."""
-    rpe_labels = {"hard": "Dur", "normal": "Normal", "easy": "Facile"}
     lines = ["DONNÉES SÉANCE :"]
 
     # Contexte semaine en cours (prioritaire pour form_interpretation)
@@ -455,8 +454,10 @@ def build_coach_blocks_user_message(
             sign = "+" if pct >= 0 else ""
             tss_line += f" (prévu : {tss_planned:.0f}, {sign}{pct:.0f}%)"
         lines.append(tss_line)
-    if rpe_emoji:
-        lines.append(f"- Ressenti athlète : {rpe_labels.get(rpe_emoji, rpe_emoji)}")
+    if rpe is not None:
+        from app.engine.rpe import rpe_label
+
+        lines.append(f"- Ressenti athlète : {rpe_label(rpe)}")
     if dominant_zone:
         lines.append(f"- Zone dominante : {dominant_zone}")
     if time_in_zones_pct:
@@ -580,9 +581,10 @@ def build_review_user_message(ctx, dfa=None) -> str:
             dfa_line += ")"
         lines.append(dfa_line)
 
-    rpe_labels = {"hard": "Dur", "normal": "Normal", "easy": "Facile"}
-    if log.rpe_emoji:
-        lines.append(f"- Ressenti athlète : {rpe_labels.get(log.rpe_emoji, log.rpe_emoji)}")
+    if log.rpe is not None:
+        from app.engine.rpe import rpe_label
+
+        lines.append(f"- Ressenti athlète : {rpe_label(log.rpe)}")
     else:
         lines.append("- Ressenti athlète : non renseigné")
 

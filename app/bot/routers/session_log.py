@@ -25,9 +25,8 @@ from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any, estimate_initial_ctl
 from app.engine.adherence_kpi import compute_session_kpi, compute_weekly_kpi_block
-from app.engine.tss import tss_from_weekly_hours
+from app.engine.tss import detect_fatigue_anomaly_scalar, tss_from_weekly_hours
 from app.engine.schemas import TrainingPlanSchema
-from app.engine.tss import RPE_EMOJI_INT_MAP, detect_fatigue_anomaly_scalar
 from app.engine.weekly_snapshot import WeeklySnapshot, compute_weekly_snapshot
 from app.services.fitness import get_current_fitness
 
@@ -213,7 +212,7 @@ async def _reveal_activity_analysis(message, *, kpi_block: str | None = None, **
             planned_workout_type=kwargs.get("planned_workout_type"),
             dominant_zone=kwargs.get("dominant_zone"),
             time_in_zones_pct=_compute_zones_pct(kwargs.get("time_in_zones_s")),
-            rpe_emoji=kwargs.get("rpe_emoji"),
+            rpe=kwargs.get("rpe"),
             next_session_info=kwargs.get("next_session_info"),
             user_level=kwargs.get("user_level", 0),
         )
@@ -277,10 +276,11 @@ def _highlight_category_from_log(log) -> str | None:
 
 @router.callback_query(F.data.startswith("log:rpe:"))
 async def cb_rpe(callback: CallbackQuery, session: AsyncSession, user: User):
-    # Format : log:rpe:{log_id}:{emoji}
+    # Format : log:rpe:{log_id}:{valeur 1-10 | "skip"} — le clavier envoie une valeur
+    # représentative sur l'échelle standard (app/engine/rpe.py), plus un token emoji.
     parts = callback.data.split(":")
     log_id_str = parts[2]
-    rpe_emoji = parts[3]
+    rpe_token = parts[3]
 
     log = await repo.session_log_repo.get_by_id(session, uuid.UUID(log_id_str))
 
@@ -291,9 +291,9 @@ async def cb_rpe(callback: CallbackQuery, session: AsyncSession, user: User):
     # Calculée une fois — spec 002 T065 (FR-041) : une seconde évaluation identique de
     # cette condition plus loin aurait laissé une variable dont la disponibilité dépend
     # de deux endroits restant en phase, un NameError latent si un seul est édité.
-    rpe_effective = rpe_emoji if rpe_emoji != "skip" else None
+    rpe_effective = float(rpe_token) if rpe_token != "skip" else None
     if rpe_effective is not None:
-        log.rpe_emoji = rpe_effective
+        log.rpe = rpe_effective
 
     # Édition immédiate : supprime le clavier RPE, affiche l'état "chargement"
     await callback.message.edit_text(
@@ -322,13 +322,12 @@ async def cb_rpe(callback: CallbackQuery, session: AsyncSession, user: User):
         hr_max = profile_data.get("physio", {}).get("hr_max")
         hr_rest = profile_data.get("physio", {}).get("hr_rest")
         sex = profile_data.get("sex")
-        rpe_int = RPE_EMOJI_INT_MAP.get(rpe_effective)
-        if hr_max and hr_rest is not None and rpe_int:
+        if hr_max and hr_rest is not None:
             fa = detect_fatigue_anomaly_scalar(
                 avg_hr=float(log.avg_heart_rate),
                 hr_rest=hr_rest,
                 hr_max=hr_max,
-                user_rpe=rpe_int,
+                user_rpe=round(rpe_effective),
                 sex=sex or "M",
             )
             if fa is not None:
@@ -409,7 +408,7 @@ async def cb_rpe(callback: CallbackQuery, session: AsyncSession, user: User):
         pts_weekly=pts_weekly_s,
         planned_tss=planned_tss,
         actual_tss=log.tss_actual,
-        rpe_emoji=rpe_effective,
+        rpe=rpe_effective,
         duration_minutes=log.duration_minutes_actual,
         planned_duration_minutes=planned_duration,
         user_level=user_level,

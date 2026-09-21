@@ -25,6 +25,7 @@ from app.engine.power_curve import (
     compute_power_curve_delta,
     compute_sustainability_profile,
 )
+from app.engine.rpe import rpe_emoji as _rpe_emoji_for
 from app.engine.schemas import AthleteProfileSchema
 from app.engine.tss import tss_from_weekly_hours
 from app.providers.intervals.client import IntervalsClient
@@ -53,8 +54,8 @@ def _item_tss(it):
 
 
 def _item_icon(it):
-    if hasattr(it, "rpe_emoji"):  # SessionLog
-        return {"hard": "😫", "normal": "😐", "easy": "🙂"}.get(it.rpe_emoji or "", "—")
+    if hasattr(it, "rpe"):  # SessionLog
+        return _rpe_emoji_for(it.rpe)
     sport = getattr(it, "sport_type", "")
     return "🏋️" if sport == "VirtualRide" else "🚴"  # Activity
 

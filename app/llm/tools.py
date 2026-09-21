@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from app.engine.atl_ctl import FitnessMetrics, compute_fitness, tsb_label
 from app.engine.freestyle_selector import VALID_WORKOUT_TYPES
+from app.engine.rpe import rpe_emoji as _rpe_emoji_for
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
 from app.engine.zones import compute_hr_zones
 from app.llm.prompt_fence import sanitize_untrusted_text, wrap_untrusted_block
@@ -430,8 +431,6 @@ def _format_week_pairs(pairs: list, week_num: int, phase: str, today: date) -> l
     """Formate les paires plan/réalisé pour le system prompt."""
     lines = [f"SEMAINE {week_num} — PLAN & RÉALISÉ (phase {phase}) :"]
 
-    _RPE_EMOJI = {"hard": "😫", "normal": "😐", "easy": "🙂"}
-
     for pair in pairs:
         dow_short = DAY_NAMES_FR[pair.day_of_week][:3]
         date_str = pair.planned_date.strftime("%d/%m")
@@ -446,7 +445,7 @@ def _format_week_pairs(pairs: list, week_num: int, phase: str, today: date) -> l
             tss_ac = getattr(log, "tss_actual", None)
             stype = getattr(log, "session_type_real", None) or ""
             dzone = getattr(log, "dominant_zone", None)
-            rpe = getattr(log, "rpe_emoji", None)
+            rpe = getattr(log, "rpe", None)
             elev = getattr(log, "elevation_gain_m", None)
             group = (getattr(log, "athlete_count", 1) or 1) > 1
 
@@ -475,8 +474,8 @@ def _format_week_pairs(pairs: list, week_num: int, phase: str, today: date) -> l
                 extras.append(f"{elev:.0f}m D+")
             if group:
                 extras.append("groupe")
-            if rpe:
-                extras.append(f"RPE {_RPE_EMOJI.get(rpe, rpe)}")
+            if rpe is not None:
+                extras.append(f"RPE {_rpe_emoji_for(rpe)} {rpe:.0f}/10")
 
             wtype = WORKOUT_FR.get(spec.workout_type, spec.workout_type)
             extras_str = f" · {' · '.join(extras)}" if extras else ""
@@ -641,7 +640,7 @@ def build_system_prompt(
             if hasattr(item, "logged_date"):  # SessionLog
                 item_date = item.logged_date
                 dur_str = f"{item.duration_minutes_actual}min" if item.duration_minutes_actual else "—"
-                rpe_str = {"hard": "😫", "normal": "😐", "easy": "🙂"}.get(item.rpe_emoji or "", "—")
+                rpe_str = _rpe_emoji_for(item.rpe)
                 tss_str = f"{item.tss_actual:.0f}" if item.tss_actual else "—"
                 hr_str = f"{item.avg_heart_rate}bpm" if item.avg_heart_rate else "—"
                 pw_str = f"{item.avg_power}W" if item.avg_power else "—"

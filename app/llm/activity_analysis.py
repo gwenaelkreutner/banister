@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from app.engine.rpe import RPE_EASY_MAX, RPE_HARD_MIN, rpe_label
+
 if TYPE_CHECKING:
     from app.engine.weekly_snapshot import WeeklySnapshot
 
@@ -40,21 +42,21 @@ def _compute_match_score(
 
 
 def _detect_rpe_mismatch(
-    rpe_emoji: str | None,
+    rpe: float | None,
     actual_tss: float | None,
     planned_tss: float | None,
     actual_duration_minutes: int | None = None,
     planned_duration_minutes: int | None = None,
 ) -> str | None:
     """Détecte les incohérences entre RPE et TSS. Retourne un message d'alerte ou None."""
-    if rpe_emoji is None:
+    if rpe is None:
         return "Pas de ressenti noté — pense à le renseigner post-séance 📝"
 
     if actual_tss is not None and planned_tss is not None and planned_tss > 0:
         ratio = actual_tss / planned_tss
-        if rpe_emoji == "hard" and ratio < 0.85:
+        if rpe >= RPE_HARD_MIN and ratio < 0.85:
             return "Séance ressentie dure mais TSS inférieur au prévu — vérifie ton FTP ⚡"
-        if rpe_emoji == "easy" and ratio > 1.15:
+        if rpe <= RPE_EASY_MAX and ratio > 1.15:
             # Pas d'alerte si le TSS élevé s'explique par une durée plus longue
             if (
                 actual_duration_minutes
@@ -85,7 +87,7 @@ async def generate_activity_analysis(
     # Existants
     planned_tss: float | None,
     actual_tss: float | None,
-    rpe_emoji: str | None,       # "hard" | "normal" | "easy" | None
+    rpe: float | None,           # échelle standard 1-10 (app/engine/rpe.py) | None
     duration_minutes: int | None,
     planned_duration_minutes: int | None = None,
     user_level: int = 0,
@@ -138,9 +140,8 @@ async def generate_activity_analysis(
     rpe_hint = (
         fatigue_anomaly.get("message")
         if fatigue_anomaly
-        else _detect_rpe_mismatch(rpe_emoji, actual_tss, planned_tss, duration_minutes, planned_duration_minutes)
+        else _detect_rpe_mismatch(rpe, actual_tss, planned_tss, duration_minutes, planned_duration_minutes)
     )
-    rpe_labels = {"hard": "Dur 💪", "normal": "Normal 🙂", "easy": "Facile 🌿"}
 
     lines = ["ANALYSE ACTIVITÉ :"]
 
@@ -184,8 +185,8 @@ async def generate_activity_analysis(
     elif planned_tss is None:
         lines.append("- Comparaison plan : pas de séance prévue pour cette sortie")
 
-    if rpe_emoji:
-        lines.append(f"- RPE : {rpe_labels.get(rpe_emoji, rpe_emoji)}")
+    if rpe is not None:
+        lines.append(f"- RPE : {rpe_label(rpe)}")
         if fatigue_anomaly:
             lines.append(
                 f"- RPE cardiaque estimé : {fatigue_anomaly['rpe_cardiac_estimate']}/10"
@@ -343,8 +344,8 @@ async def generate_activity_analysis(
             parts.append(f"{match_flag} {match_text}.")
         if rpe_hint:
             parts.append(rpe_hint)
-        elif rpe_emoji:
-            parts.append(f"Ressenti : {rpe_labels.get(rpe_emoji, rpe_emoji)}.")
+        elif rpe is not None:
+            parts.append(f"Ressenti : {rpe_label(rpe)}.")
         if tsb is not None:
             parts.append(f"TSB actuel : {tsb:+.0f}.")
         return " ".join(parts) if parts else "Séance enregistrée ✅"
@@ -364,7 +365,7 @@ async def generate_coach_blocks(
     planned_workout_type: str | None = None,
     dominant_zone: str | None = None,
     time_in_zones_pct: dict | None = None,
-    rpe_emoji: str | None = None,
+    rpe: float | None = None,
     next_session_info: str | None = None,
     user_level: int = 0,
 ) -> dict[str, str]:
@@ -400,7 +401,7 @@ async def generate_coach_blocks(
         planned_workout_type=planned_workout_type,
         dominant_zone=dominant_zone,
         time_in_zones_pct=time_in_zones_pct,
-        rpe_emoji=rpe_emoji,
+        rpe=rpe,
         next_session_info=next_session_info,
     )
 

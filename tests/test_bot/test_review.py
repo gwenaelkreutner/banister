@@ -236,12 +236,12 @@ async def test_backfill_does_nothing_when_rpe_already_set(db_session, monkeypatc
 
     user = await _make_user(db_session)
     log = await _make_log(
-        db_session, user.id, days_ago=1, source_activity_id="i123", rpe_emoji="easy"
+        db_session, user.id, days_ago=1, source_activity_id="i123", rpe=3
     )
 
     await _backfill_rpe_from_source(log)
 
-    assert log.rpe_emoji == "easy"  # Telegram (déjà répondu) l'emporte
+    assert log.rpe == 3  # Telegram (déjà répondu) l'emporte
     assert fake.calls == []  # jamais appelé — pas la peine
 
 
@@ -254,12 +254,12 @@ async def test_backfill_does_nothing_without_source_activity_id(db_session, monk
 
     await _backfill_rpe_from_source(log)
 
-    assert log.rpe_emoji is None
+    assert log.rpe is None
     assert fake.calls == []
 
 
 async def test_backfill_fills_rpe_from_icu_rpe_when_empty(db_session, monkeypatch):
-    fake = _FakeActivityClient({"icu_rpe": 8})  # >= RPE_HARD_MIN
+    fake = _FakeActivityClient({"icu_rpe": 8})
     monkeypatch.setattr("app.bot.routers.review._client", lambda: fake)
 
     user = await _make_user(db_session)
@@ -267,7 +267,7 @@ async def test_backfill_fills_rpe_from_icu_rpe_when_empty(db_session, monkeypatc
 
     await _backfill_rpe_from_source(log)
 
-    assert log.rpe_emoji == "hard"
+    assert log.rpe == 8  # consommé tel quel, pas de bucketing (Principe IV)
     assert fake.calls == ["i123"]
 
 
@@ -280,7 +280,7 @@ async def test_backfill_leaves_rpe_none_when_source_has_no_value(db_session, mon
 
     await _backfill_rpe_from_source(log)
 
-    assert log.rpe_emoji is None
+    assert log.rpe is None
 
 
 async def test_backfill_swallows_network_errors(db_session, monkeypatch):
@@ -295,4 +295,4 @@ async def test_backfill_swallows_network_errors(db_session, monkeypatch):
 
     await _backfill_rpe_from_source(log)  # ne lève pas
 
-    assert log.rpe_emoji is None
+    assert log.rpe is None

@@ -44,18 +44,18 @@ def _client() -> IntervalsClient:
 async def _backfill_rpe_from_source(log: SessionLog) -> None:
     """Rattrapage pour les séances déjà loguées avant que `icu_rpe` soit mappé à
     l'ingestion (2026-09-21) — ou pour un ressenti ajouté sur intervals.icu après coup.
-    Le clavier Telegram (`cb_rpe`) reste prioritaire : ne touche `log.rpe_emoji` que s'il
-    est encore vide (décision owner). Mute `log` en place — même transaction que le
-    reste du handler, committée par le middleware (`session.begin()`), donc persisté."""
-    if log.rpe_emoji is not None or not log.source_activity_id:
+    Le clavier Telegram (`cb_rpe`) reste prioritaire : ne touche `log.rpe` que s'il est
+    encore vide (décision owner). Consommé tel quel (échelle standard 1-10, Principe IV,
+    app/engine/rpe.py) — plus de bucketing depuis que le stockage est numérique. Mute
+    `log` en place — même transaction que le reste du handler, committée par le
+    middleware (`session.begin()`), donc persisté."""
+    if log.rpe is not None or not log.source_activity_id:
         return
     try:
-        from app.providers.intervals.mapper import rpe_emoji_from_icu_rpe
-
         activity = await _client().get_activity(log.source_activity_id)
-        rpe = rpe_emoji_from_icu_rpe(activity.get("icu_rpe"))
+        rpe = activity.get("icu_rpe")
         if rpe is not None:
-            log.rpe_emoji = rpe
+            log.rpe = rpe
     except Exception:
         logger.warning("Impossible de rattraper le RPE depuis intervals.icu pour /review")
 

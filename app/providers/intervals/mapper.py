@@ -61,29 +61,6 @@ def _time_in_zones(icu_zone_times: list[dict] | None) -> dict[str, int]:
     return {entry["id"]: entry["secs"] for entry in icu_zone_times if entry.get("secs", 0) > 0}
 
 
-# Bandes de conversion RPE numérique (icu_rpe, échelle Borg-like 0-10) -> vocabulaire
-# 3 valeurs de Banister (hard/normal/easy, capturé par le clavier Telegram
-# app/bot/routers/session_log.py::cb_rpe). Ce découpage à 3 bandes est un JUGEMENT — pas
-# une échelle publiée qui tombe pile sur ces bornes, documenté comme tel plutôt que
-# présenté comme une norme (2026-09-21, trouvé en diagnostiquant /review en conditions
-# réelles : l'athlète avait renseigné son ressenti sur intervals.icu, jamais lu nulle
-# part dans l'app avant ça).
-RPE_HARD_MIN = 7.0
-RPE_EASY_MAX = 3.0
-
-
-def rpe_emoji_from_icu_rpe(icu_rpe: float | None) -> str | None:
-    """Convertit le RPE numérique fourni par la source vers le vocabulaire Banister.
-    `None` si la source n'a pas de valeur — jamais un défaut "normal" silencieux."""
-    if icu_rpe is None:
-        return None
-    if icu_rpe >= RPE_HARD_MIN:
-        return "hard"
-    if icu_rpe <= RPE_EASY_MAX:
-        return "easy"
-    return "normal"
-
-
 def _dominant_zone(time_in_zones_s: dict[str, int]) -> str | None:
     # "SS" (sweet spot) is a compliance sub-bucket that overlaps Z3/Z4, not a distinct
     # rate zone — including it here would double-count time already counted elsewhere and
@@ -217,11 +194,12 @@ def map_activity_to_analyzed_session(
     icu_hrr_block = payload.get("icu_hrr")
     hrr = icu_hrr_block.get("hrr") if icu_hrr_block is not None else None
 
-    # RPE renseigné par l'athlète directement sur intervals.icu — converti vers le
-    # vocabulaire 3 valeurs de Banister. Le clavier Telegram (cb_rpe) reste prioritaire
-    # quand il a déjà répondu ; ceci n'est qu'une valeur de départ à l'ingestion, quand
-    # rien n'a encore été demandé (voir app/services/activity_feedback.py).
-    rpe_emoji = rpe_emoji_from_icu_rpe(payload.get("icu_rpe"))
+    # RPE renseigné par l'athlète directement sur intervals.icu — consommé tel quel
+    # (échelle standard 1-10, Principe IV, voir app/engine/rpe.py). Le clavier Telegram
+    # (cb_rpe) reste prioritaire quand il a déjà répondu ; ceci n'est qu'une valeur de
+    # départ à l'ingestion, quand rien n'a encore été demandé (voir
+    # app/services/activity_feedback.py).
+    rpe = payload.get("icu_rpe")
 
     duration_s = int(payload.get("elapsed_time") or 0)
 
@@ -262,7 +240,7 @@ def map_activity_to_analyzed_session(
         cardiac_drift_index=cardiac_drift_index,
         efficiency_factor=efficiency_factor,
         hrr=hrr,
-        rpe_emoji=rpe_emoji,
+        rpe=rpe,
         intervals_consistency_index=_intervals_consistency_index(icu_intervals),
         planned_session_id=planned_session_id,
         planned_workout_type=planned_workout_type,

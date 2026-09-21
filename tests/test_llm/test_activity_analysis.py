@@ -69,38 +69,38 @@ def test_rpe_mismatch_no_rpe_asks_to_fill_in():
 
 
 def test_rpe_mismatch_hard_with_low_tss_suggests_ftp():
-    """RPE dur mais TSS < 85% du prévu → suspect, suggère vérif FTP."""
-    msg = _detect_rpe_mismatch("hard", 70, 100)  # ratio 0.70 < 0.85
+    """RPE dur (>= RPE_HARD_MIN) mais TSS < 85% du prévu → suspect, suggère vérif FTP."""
+    msg = _detect_rpe_mismatch(8, 70, 100)  # ratio 0.70 < 0.85
     assert msg is not None
     assert "FTP" in msg
 
 
 def test_rpe_mismatch_hard_with_high_tss_returns_none():
     """RPE dur et TSS au-dessus du prévu → cohérent."""
-    msg = _detect_rpe_mismatch("hard", 110, 100)
+    msg = _detect_rpe_mismatch(8, 110, 100)
     assert msg is None
 
 
 def test_rpe_mismatch_easy_with_high_tss_signals_anomaly():
-    """RPE facile mais TSS > 115% → forme ou FTP sous-estimé."""
-    msg = _detect_rpe_mismatch("easy", 125, 100)  # ratio 1.25 > 1.15
+    """RPE facile (<= RPE_EASY_MAX) mais TSS > 115% → forme ou FTP sous-estimé."""
+    msg = _detect_rpe_mismatch(3, 125, 100)  # ratio 1.25 > 1.15
     assert msg is not None
     assert "FTP" in msg
 
 
 def test_rpe_mismatch_easy_with_normal_tss_returns_none():
-    msg = _detect_rpe_mismatch("easy", 95, 100)
+    msg = _detect_rpe_mismatch(3, 95, 100)
     assert msg is None
 
 
 def test_rpe_mismatch_normal_returns_none():
-    msg = _detect_rpe_mismatch("normal", 100, 100)
+    msg = _detect_rpe_mismatch(5, 100, 100)
     assert msg is None
 
 
 def test_rpe_mismatch_without_tss_values_returns_none_for_valid_rpe():
     """Sans données TSS, pas d'alerte possible si RPE est renseigné."""
-    msg = _detect_rpe_mismatch("hard", None, None)
+    msg = _detect_rpe_mismatch(8, None, None)
     assert msg is None
 
 

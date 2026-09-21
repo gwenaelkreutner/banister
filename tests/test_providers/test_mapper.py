@@ -10,10 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.providers.intervals.mapper import (
-    map_activity_to_analyzed_session,
-    rpe_emoji_from_icu_rpe,
-)
+from app.providers.intervals.mapper import map_activity_to_analyzed_session
 
 _FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "intervals"
 
@@ -241,32 +238,19 @@ class TestThresholdStability:
         }
 
 
-class TestRpeEmojiFromIcuRpe:
+class TestIcuRpeConsumedVerbatim:
     """2026-09-21 — RPE renseigné sur intervals.icu, jamais lu avant ça (trouvé en
     diagnostiquant /review en conditions réelles : l'athlète l'avait saisi côté
-    intervals.icu, Banister l'ignorait entièrement)."""
+    intervals.icu, Banister l'ignorait entièrement). Consommé tel quel (Principe IV,
+    échelle standard 1-10) — pas de bucketing ici, voir app/engine/rpe.py pour la
+    conversion vers hard/normal/easy (utilisée uniquement à l'affichage)."""
 
-    def test_none_stays_none(self):
-        assert rpe_emoji_from_icu_rpe(None) is None
-
-    def test_high_value_is_hard(self):
-        assert rpe_emoji_from_icu_rpe(8) == "hard"
-        assert rpe_emoji_from_icu_rpe(7) == "hard"
-
-    def test_low_value_is_easy(self):
-        assert rpe_emoji_from_icu_rpe(1) == "easy"
-        assert rpe_emoji_from_icu_rpe(3) == "easy"
-
-    def test_middle_value_is_normal(self):
-        assert rpe_emoji_from_icu_rpe(4) == "normal"
-        assert rpe_emoji_from_icu_rpe(6) == "normal"
-
-    def test_mapper_maps_icu_rpe_into_rpe_emoji(self):
+    def test_mapper_passes_icu_rpe_through_verbatim(self):
         payload = dict(_load("activity_full.json"))
         payload["icu_rpe"] = 9
         analyzed = map_activity_to_analyzed_session(payload)
-        assert analyzed.rpe_emoji == "hard"
+        assert analyzed.rpe == 9
 
-    def test_mapper_leaves_rpe_emoji_none_when_source_has_no_value(self):
+    def test_mapper_leaves_rpe_none_when_source_has_no_value(self):
         analyzed = map_activity_to_analyzed_session(_load("activity_no_sensors.json"))
-        assert analyzed.rpe_emoji is None
+        assert analyzed.rpe is None

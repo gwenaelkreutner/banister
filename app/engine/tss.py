@@ -40,13 +40,6 @@ ZONE_TSS_PER_HOUR_HR = {
 _K_TRIMP: dict[str, float] = {"M": 1.92, "F": 1.67}
 _K_DEFAULT = 1.92  # défaut si sexe inconnu
 
-# Correspondance emoji RPE → entier 1-10
-RPE_EMOJI_INT_MAP: dict[str, int] = {
-    "easy": 3,
-    "normal": 5,
-    "hard": 8,
-}
-
 
 # ── Résultats HRSS ─────────────────────────────────────────────────────────
 
@@ -90,7 +83,7 @@ def detect_fatigue_anomaly_scalar(
     avg_hr   : FC moyenne de la séance (bpm) — stockée dans session_log
     hr_rest  : FC de repos (bpm)
     hr_max   : FC maximale (bpm)
-    user_rpe : RPE déclaré converti en entier 1-10 (via RPE_EMOJI_INT_MAP)
+    user_rpe : RPE déclaré, échelle standard 1-10 (app/engine/rpe.py)
     sex      : "M" | "F"
 
     Retour

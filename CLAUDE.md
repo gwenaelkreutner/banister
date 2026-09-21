@@ -337,7 +337,7 @@ doc (FR-016, SC-007). ⚠️ le ratio `ATL/CTL` est du 7j:42j (EWMA), la plage 0
 | `users` | Compte Telegram, flags onboarding (`onboarding_completed_at`), préférences rappels (`reminders_enabled`, `reminder_hour`, `reminder_minute`, `reminder_last_sent_at`) ; spec 007 : `coach_voice` (id persona choisi, NULL → `settings.persona`), `disclaimer_acknowledged_at` (disclaimer montré 1×). Ces deux-là survivent à `/reset` |
 | `athlete_profiles` | `profile` JSON → `AthleteProfileSchema` |
 | `training_plans` | `plan_technical` JSON → `TrainingPlanSchema`, `start_date`, `is_active` |
-| `session_logs` | `plan_id`/`week_number`/`day_of_week` **nullable depuis spec 009** (`NULL` = séance loggée en mode libre, sans plan — `status="unplanned"` par construction) ; `tss_actual`, `rpe_emoji`, `logged_date`, `source_activity_id` (id intervals.icu) ; métriques qualité (`cardiac_drift_index`, `intervals_consistency_index`, `respect_zones_score`, `session_type_real`, `variability_index`, `intensity_factor`, `dominant_zone`) ; contexte (`elevation_gain_m`, `average_temp_c`, `athlete_count`) |
+| `session_logs` | `plan_id`/`week_number`/`day_of_week` **nullable depuis spec 009** (`NULL` = séance loggée en mode libre, sans plan — `status="unplanned"` par construction) ; `tss_actual`, `rpe` (échelle standard 1-10, `app/engine/rpe.py` — remplace l'ancien `rpe_emoji` catégoriel, 2026-09-21), `logged_date`, `source_activity_id` (id intervals.icu) ; métriques qualité (`cardiac_drift_index`, `intervals_consistency_index`, `respect_zones_score`, `session_type_real`, `variability_index`, `intensity_factor`, `dominant_zone`) ; contexte (`elevation_gain_m`, `average_temp_c`, `athlete_count`) |
 | `chat_messages` | Historique LLM (role, content, intent, tool_used) |
 | `activities` | Import historique (`source="intervals_icu"`, `source_activity_id`, `tss`, `tss_method`, `device_watts`) |
 | `weekly_adherence` | Taux d'adhérence hebdomadaire — upsert à chaque `/recap` ; clé `(user_id, week_start_date)` ; colonnes : `sessions_done`, `sessions_planned`, `compliance_pct`, `tss_7d`, `week_number`, `plan_id` |
@@ -601,19 +601,28 @@ points d'écart, pas une nuance.
 ne le mappait pas, donc `/review` affichait "ressenti non renseigné" même après que l'athlète l'ait
 explicitement renseigné côté source.
 
-- `app/providers/intervals/mapper.py::rpe_emoji_from_icu_rpe()` : convertit `icu_rpe` (numérique) vers le
-  vocabulaire 3 valeurs de Banister (`hard`/`normal`/`easy`) — bandes `RPE_HARD_MIN=7.0`/`RPE_EASY_MAX=3.0`,
-  **jugement, pas une échelle publiée qui tombe pile sur ces bornes**, documenté comme tel dans le module.
-  Mappé à l'ingestion (`AnalyzedSession.rpe_emoji`, les 3 branches de `activity_feedback.py`) — corrige les
-  séances loguées à partir de maintenant.
-- **Le clavier Telegram (`cb_rpe`, `app/bot/routers/session_log.py`) reste toujours prioritaire** (décision
-  owner) — la valeur intervals.icu n'est qu'un point de départ à l'ingestion, jamais une correction qui
+- **`session_logs.rpe` — échelle standard 1-10 (type Borg), pas un champ catégoriel** (2026-09-21, décision
+  owner : l'UX emoji reste, le stockage devient numérique, "un autre self-hoster peut avoir plus de données
+  que nous, autant que ce soit propre dès maintenant"). Remplace l'ancien `rpe_emoji` (`String(8)`,
+  `"hard"|"normal"|"easy"`) — migration `9055a9201366` (ajout `rpe` + backfill depuis l'ancien catégoriel +
+  suppression de `rpe_emoji`, pas un simple rename : le type change).
+- `app/engine/rpe.py` — module canonique unique pour tout ce qui touche l'échelle RPE : `rpe_band()`
+  (bandes `RPE_HARD_MIN=7.0`/`RPE_EASY_MAX=3.0`, **jugement, pas une échelle publiée qui tombe pile sur ces
+  bornes**, documenté comme tel), `rpe_emoji()` (affichage compact 😫/😐/🙂/—), `rpe_label()` (libellé FR
+  pour le contexte LLM, ex. "8/10 (dur)"). `icu_rpe` (intervals.icu) est **consommé tel quel** dans
+  `mapper.py` (Principe IV — plus de bucketing à l'ingestion depuis que le stockage est numérique).
+- **Le clavier Telegram (`cb_rpe`, `app/bot/routers/session_log.py`) écrit une valeur représentative sur
+  cette même échelle** — 3 boutons emoji pour l'UX (choix rapide d'une bande large), `RPE_EASY_VALUE=3`/
+  `RPE_NORMAL_VALUE=5`/`RPE_HARD_VALUE=8` dans `app/engine/rpe.py` (reprend les valeurs déjà choisies par
+  l'ancien `RPE_EMOJI_INT_MAP` de `app/engine/tss.py`, retiré au profit de ce module unique — plus de
+  double source de vérité pour la même conversion). **Reste toujours prioritaire sur intervals.icu**
+  (décision owner) — la valeur source n'est qu'un point de départ à l'ingestion, jamais une correction qui
   écrase une réponse déjà donnée sur Telegram.
 - **Rattrapage pour les séances déjà loguées avant ce fix** : `app/bot/routers/review.py::
   _backfill_rpe_from_source()` — un appel `client.get_activity()` best-effort au moment de `/review`, ne
-  touche `log.rpe_emoji` que s'il est encore vide, persiste la correction (mutation in-place, committée par
-  `session.begin()` du middleware). Silencieux si pas d'activité source, appel en échec, ou pas de valeur
-  côté source.
+  touche `log.rpe` que s'il est encore vide, consomme `icu_rpe` tel quel (pas de bucketing), persiste la
+  correction (mutation in-place, committée par `session.begin()` du middleware). Silencieux si pas
+  d'activité source, appel en échec, ou pas de valeur côté source.
 - **Écriture-retour (Telegram → intervals.icu) explicitement pas faite** — même doctrine que la correction
   FTP (spec 007 FR-007, voir § Flux de configuration ci-dessous) : lecture seule pour l'instant, décision
   owner 2026-09-21, pas de PUT vérifié contre l'API réelle.
@@ -1110,7 +1119,7 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Modifier la phase diagnostique (`detected_phase`, distincte de `week.phase`) | `app/engine/phase_detection.py` |
 | Modifier power-curve delta / sustainability_profile | `app/engine/power_curve.py` — endpoint dans `client.get_power_curves()`, câblé dans `app/bot/routers/forme.py::_fetch_power_profile()` |
 | Modifier l'analyse DFA α1 | `app/engine/dfa.py` — normalisation streams dans `app/providers/intervals/streams.py`, câblé dans `app/bot/routers/review.py::_fetch_dfa()` |
-| Modifier la conversion RPE intervals.icu → Banister, ou le rattrapage `/review` | `app/providers/intervals/mapper.py::rpe_emoji_from_icu_rpe()` ; rattrapage dans `app/bot/routers/review.py::_backfill_rpe_from_source()` |
+| Modifier l'échelle RPE (bandes, valeurs représentatives des boutons, libellés) | `app/engine/rpe.py` ; rattrapage `/review` dans `app/bot/routers/review.py::_backfill_rpe_from_source()` |
 | Modifier récap hebdo (logique + LLM) | `app/services/weekly_recap.py` |
 | Lire/écrire l'adhérence hebdomadaire | `app/db/repositories/weekly_adherence_repo.py` |
 | Modifier le scheduler dimanche 20h | `app/main.py` — `_weekly_recap_scheduler()` |
