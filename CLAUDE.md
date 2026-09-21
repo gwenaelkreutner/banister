@@ -640,6 +640,25 @@ explicitement renseigné côté source.
   compte de test candidates, 6 avaient une vraie donnée à rattraper, 0 échec, ré-exécution confirmée
   idempotente.
 
+### Contexte externe — dénivelé/température/énergie (hors spec, 2026-09-21)
+⚠️ **Bug réel trouvé en préparant `/review`** : `elevation_gain_m`/`average_temp_c`/`kilojoules` existaient
+sur `SessionLog` et étaient déjà acceptés par `session_log_repo.create()` (et déjà lus par
+`activity_analysis.py`, bloc [CONTEXTE] du feedback post-séance), mais `AnalyzedSession` — le DTO que
+`mapper.py` produit depuis intervals.icu — n'avait même pas ces champs. Résultat : `NULL` pour toute séance
+loguée depuis spec 002, exactement comme `athlete_count` (déjà connu mort). Vérifié contre un payload
+intervals.icu réel avant d'écrire le mapping (même discipline que pour `icu_hrr`/`icu_rpe`) :
+`total_elevation_gain` (mètres), `average_temp` (déjà en °C, aucune conversion — `None` sur une sortie
+indoor/`VirtualRide`, pas de capteur météo), `icu_joules` (÷1000 pour les kJ, même conversion que
+l'import historique `history.py`) existent bien et sont maintenant mappés dans `AnalyzedSession`/
+`mapper.py` et propagés par les 3 call sites `session_log_repo.create()` de `activity_feedback.py`.
+Correction gratuite au passage : le bloc [CONTEXTE] du feedback post-séance (`activity_analysis.py`)
+recevra désormais de vraies valeurs, sans changement de code là-bas.
+
+`athlete_count`, lui, reste non corrigé — vérifié aussi contre le payload réel : il n'existe **aucun**
+champ de comptage d'athlètes sur une activité intervals.icu, seulement `group` (id de corrélation opaque
+d'une sortie de groupe, pas un compte). Reconstruire un nombre demanderait de recouper les activités
+d'autres comptes, hors de portée d'une clé API personnelle — rien à rebrancher côté source.
+
 ### Analyse LLM post-séance (`app/llm/activity_analysis.py`)
 - `generate_activity_analysis(**kwargs)` — prompt structuré en 5 blocs : Séance / Puissance / Qualité / Contexte / Forme & Charge
 - 3 paramètres optionnels Variable Reward : `highlight_category`, `personal_record`, `storytelling_mode`
@@ -1103,6 +1122,19 @@ seul `REVIEW_VOCAB_RULE`.
 interdit au LLM de juger "séance réussie" sur les seuls chiffres (durée/TSS/zones ne disent rien de la
 fatigue ressentie) — il doit le dire explicitement plutôt que de trancher à la place de l'athlète.
 
+**Blocs de données togglables** (`REVIEW_DATA_BLOCKS`, `app/llm/prompts.py`, ajouté 2026-09-21) : les
+champs déjà calculés à l'ingestion (mapper.py) mais jamais montés dans `build_review_user_message()` —
+`raw_power` (NP, IF, VI — VI ignoré <30min, même règle que `activity_analysis.py`), `quality_signals`
+(dérive cardiaque, consistance des intervalles, respect de zone) et `environmental` (dénivelé, température,
+kJ — voir § Contexte externe ci-dessus pour pourquoi ces trois-là ne l'étaient pas non plus). Chaque bloc
+est un flag indépendant dans le dict — `False` le retire du prompt sans toucher au reste du code, si un
+bloc s'avère bruyant ou trompeur en usage réel. `recovery_index`/`phase_detection` (spec "signaux enrichis
+intervals.icu") en restent délibérément exclus pour l'instant : ce sont des fonctions pures paramétrées par
+une date (`today=...`), pas techniquement bloquées de `/review`, mais toujours appelées avec
+`today=date.today()` depuis le chat — les brancher correctement sur une relecture d'une séance passée
+demanderait de les recalculer à `log.logged_date` (wellness/baselines à cette date-là), pas de réutiliser
+l'état "aujourd'hui" que `/forme` calcule. Pas fait ici, décision à prendre séparément.
+
 ## Variables d'environnement
 
 ```
@@ -1198,5 +1230,6 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Ajouter champ DB | `app/db/models/` + `app/db/repositories/` + `alembic revision --autogenerate` |
 | Modifier le backup automatique au démarrage (rotation, throttle) | `app/services/backup.py` — `run_startup_backup()` |
 | Modifier le tracing LLM (Phoenix) | `app/observability.py` — `setup_observability()` ; span manuel dans `app/llm/providers/openrouter.py` |
-| Modifier `/review` (picker, synthèse) | `app/bot/routers/review.py` + `app/llm/review.py` — prompt dans `app/llm/prompts.py::build_review_system_prompt()` |
+| Modifier `/review` (picker, synthèse) | `app/bot/routers/review.py` + `app/llm/review.py` — prompt dans `app/llm/prompts.py::build_review_system_prompt()`/`build_review_user_message()` |
+| Activer/désactiver un bloc de données `/review` (puissance brute, qualité, contexte externe) | `app/llm/prompts.py` — `REVIEW_DATA_BLOCKS` |
 | Architecture complète | `docs/ARCHITECTURE.md` |
