@@ -39,14 +39,17 @@ async def run_chat(
     user: User,
     session: AsyncSession,
     reply_context: str | None = None,
-) -> tuple[str, str | None, str | None, dict | None, dict]:
+) -> tuple[str, str | None, str | None, dict | None, dict, str | None]:
     """
     Exécute le cycle de chat agentique pour un message utilisateur.
 
-    Retourne (response_text, intent, tool_used_name, pending_proposal, usage).
+    Retourne (response_text, intent, tool_used_name, pending_proposal, usage, meal_log).
     intent est déterminé a posteriori selon l'outil appelé. `usage` (tokens
     prompt/completion/total, nombre d'appels API) sert à mesurer le coût réel d'un tour
-    de chat — voir app/services/token_usage.py et scripts/token_usage_state.py.
+    de chat — voir app/services/token_usage.py et scripts/token_usage_state.py. `meal_log`
+    est une confirmation déterministe (pas du texte LLM) de ce que `log_meal`/
+    `undo_last_meal_entry` ont réellement écrit en base ce tour, destinée à être envoyée
+    comme second message Telegram séparé façon log — `None` si aucun des deux n'a tourné.
 
     `reply_context` : texte du message Telegram auquel l'athlète a répondu en reply-quote
     (n'importe quel message du bot — chat, /review, /recap, notification — puisque
@@ -330,11 +333,11 @@ async def run_chat(
     # conditions réelles (2026-09-21) : un repas décrit en langage naturel n'entraînait
     # aucun appel `log_meal` tant que l'athlète ne redemandait pas explicitement, et un
     # second tour n'a loggé que 2 des 3 aliments sans que ce soit clair dans la réponse.
-    # Un ledger construit depuis les VRAIS résultats de `log_meal`/`undo_last_meal_entry`
-    # (jamais du texte du modèle) retire toute ambiguïté sur ce qui a atterri en base.
-    meal_ledger = _format_meal_ledger(tool_calls_log)
-    if meal_ledger:
-        response_text = f"{response_text}\n\n{meal_ledger}"
+    # Décision utilisateur (2026-09-21) : PAS fusionné dans response_text — un message
+    # Telegram séparé, façon trace de log, envoyé en plus de la réponse normale du coach.
+    # `None` si aucun outil nutrition n'a tourné ce tour (le silence EST le signal —
+    # rien n'apparaît quand rien n'a été écrit en base, au lieu d'un texte ambigu).
+    meal_log = _format_meal_ledger(tool_calls_log)
 
     # 5. Déduire l'intent depuis l'outil appelé
     intent = _intent_from_tool(tool_used)
@@ -385,7 +388,7 @@ async def run_chat(
         except Exception:
             logger.warning("Impossible d'enregistrer la décision garde-fou")
 
-    return response_text, intent, tool_used, pending_proposal, usage
+    return response_text, intent, tool_used, pending_proposal, usage, meal_log
 
 
 _DECLINE_PHRASES = (
@@ -774,20 +777,25 @@ async def _tool_get_freestyle_session_suggestion(
 # ── Outils nutrition (spec 008) ────────────────────────────────────────────────
 
 _MEAL_SLOT_LABELS_FR = {
-    "breakfast": "Petit-déjeuner",
-    "lunch": "Déjeuner",
-    "dinner": "Dîner",
-    "snack": "Collation",
-    "other": "Repas",
+    "breakfast": "petit-déjeuner",
+    "lunch": "déjeuner",
+    "dinner": "dîner",
+    "snack": "collation",
+    "other": "repas",
 }
 
 
 def _format_meal_ledger(tool_calls_log: list[dict]) -> str | None:
-    """Résumé déterministe de ce qui a RÉELLEMENT été écrit en base ce tour, construit
-    depuis les résultats de `log_meal`/`undo_last_meal_entry` — jamais depuis le texte
-    du modèle, qui peut décrire une entrée comme enregistrée sans qu'elle le soit (ou
-    l'inverse). `None` si aucun outil nutrition n'a été appelé ce tour (comportement
-    inchangé pour toute autre conversation)."""
+    """Trace déterministe, façon log, de ce qui a RÉELLEMENT été écrit en base ce tour —
+    construite depuis les résultats de `log_meal`/`undo_last_meal_entry`, jamais depuis
+    le texte du modèle (qui peut décrire une entrée comme enregistrée sans qu'elle le
+    soit, ou l'inverse — bug réel vu en conditions réelles, 2026-09-21).
+
+    Destinée à un second message Telegram séparé, pas fusionnée à la réponse du coach
+    (décision utilisateur) : une ligne par tool call réellement exécuté, préfixée par
+    son nom comme une vraie trace d'appel, pas une phrase de confirmation UX. `None` si
+    aucun outil nutrition n'a tourné ce tour — l'absence du message EST le signal que
+    rien n'a été écrit (au lieu d'un texte ambigu qui laisse croire le contraire)."""
     lines: list[str] = []
     last_day_total: tuple[str, object] | None = None
 
@@ -803,27 +811,24 @@ def _format_meal_ledger(tool_calls_log: list[dict]) -> str | None:
                 cal = result.get("estimated_calories")
                 entry_date = result.get("entry_date")
                 if args.get("entry_type") == "day_recap":
-                    label = "Récap de journée"
+                    label = "récap journée"
                 else:
-                    label = _MEAL_SLOT_LABELS_FR.get(args.get("meal_slot"), "Repas")
-                suffix = (
-                    " (remplace les entrées déjà loggées ce jour-là)"
-                    if result.get("replaced_existing_entries")
-                    else ""
-                )
-                lines.append(f"✅ {label} enregistré — ~{cal} cal ({entry_date}){suffix}")
+                    label = _MEAL_SLOT_LABELS_FR.get(args.get("meal_slot"), "repas")
+                suffix = " (remplace le jour)" if result.get("replaced_existing_entries") else ""
+                lines.append(f"[log_meal] ok — {label} ~{cal} cal · {entry_date}{suffix}")
                 last_day_total = (entry_date, result.get("day_total_estimated_calories"))
             else:
-                lines.append(f"❌ Repas NON enregistré — {result.get('error', 'erreur inconnue')}")
+                lines.append(f"[log_meal] échec — {result.get('error', 'erreur inconnue')}")
 
         elif name == "undo_last_meal_entry":
             if result.get("ok"):
                 cal = result.get("removed_estimated_calories")
                 entry_date = result.get("entry_date")
-                lines.append(f"🗑️ Entrée supprimée — ~{cal} cal ({entry_date})")
+                lines.append(f"[undo_last_meal_entry] ok — -{cal} cal · {entry_date}")
                 last_day_total = (entry_date, result.get("day_total_estimated_calories"))
             else:
-                lines.append(f"❌ Rien à annuler — {result.get('error', 'erreur inconnue')}")
+                err = result.get("error", "erreur inconnue")
+                lines.append(f"[undo_last_meal_entry] échec — {err}")
 
     if not lines:
         return None
@@ -831,9 +836,9 @@ def _format_meal_ledger(tool_calls_log: list[dict]) -> str | None:
     if last_day_total is not None:
         entry_date, total = last_day_total
         if total is not None:
-            lines.append(f"Total en base pour {entry_date} : ~{total} cal estimées")
+            lines.append(f"[DB] total {entry_date} = ~{total} cal")
 
-    return "📋 Base de données :\n" + "\n".join(lines)
+    return "\n".join(lines)
 
 _MEAL_DAYS_AGO_MAX = 2
 _CALORIES_MIN = 1

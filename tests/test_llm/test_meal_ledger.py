@@ -1,10 +1,12 @@
-"""Tests for the deterministic nutrition confirmation footer (`_format_meal_ledger`).
+"""Tests for the deterministic nutrition log trace (`_format_meal_ledger`).
 
 The chat's own free-text reply about what it saved isn't trustworthy on its own — a real
 conversation surfaced both a message that never called `log_meal` at all (silent no-op
 dressed as a diary entry) and one that logged 2 of 3 described items without saying so
-clearly. `_format_meal_ledger` builds the confirmation from the actual `log_meal`/
-`undo_last_meal_entry` tool results captured in `tool_calls_log`, never from LLM prose.
+clearly. `_format_meal_ledger` builds a log-style trace from the actual `log_meal`/
+`undo_last_meal_entry` tool results captured in `tool_calls_log`, never from LLM prose —
+sent as a separate Telegram message by `app/bot/routers/chat.py::_send_meal_log`, only
+when a nutrition tool actually ran this turn.
 """
 from __future__ import annotations
 
@@ -33,10 +35,11 @@ def test_successful_meal_log_is_reflected_with_slot_label_and_day_total():
         },
     ])
     assert ledger is not None
-    assert "Déjeuner enregistré" in ledger
+    assert "[log_meal] ok" in ledger
+    assert "déjeuner" in ledger
     assert "850 cal" in ledger
     assert "2026-09-21" in ledger
-    assert "Total en base pour 2026-09-21 : ~1160 cal" in ledger
+    assert "[DB] total 2026-09-21 = ~1160 cal" in ledger
 
 
 def test_multiple_logged_items_all_appear_and_last_day_total_wins():
@@ -59,12 +62,12 @@ def test_multiple_logged_items_all_appear_and_last_day_total_wins():
         },
     ])
     assert ledger is not None
-    assert ledger.count("✅") == 2
-    assert "Petit-déjeuner enregistré" in ledger
-    assert "Déjeuner enregistré" in ledger
+    assert ledger.count("[log_meal] ok") == 2
+    assert "petit-déjeuner" in ledger
+    assert "déjeuner" in ledger
     # Only the last call's day total is shown — it's already the cumulative one.
-    assert ledger.count("Total en base pour") == 1
-    assert "Total en base pour 2026-09-21 : ~1160 cal" in ledger
+    assert ledger.count("[DB] total") == 1
+    assert "[DB] total 2026-09-21 = ~1160 cal" in ledger
 
 
 def test_failed_log_meal_is_shown_as_not_saved_not_hallucinated_as_success():
@@ -76,9 +79,9 @@ def test_failed_log_meal_is_shown_as_not_saved_not_hallucinated_as_success():
         },
     ])
     assert ledger is not None
-    assert "❌" in ledger
-    assert "NON enregistré" in ledger
-    assert "Total en base pour" not in ledger
+    assert "[log_meal] échec" in ledger
+    assert "estimation calorique hors limites plausibles" in ledger
+    assert "[DB] total" not in ledger
 
 
 def test_day_recap_labeled_distinctly_and_replace_flag_surfaced():
@@ -93,8 +96,8 @@ def test_day_recap_labeled_distinctly_and_replace_flag_surfaced():
         },
     ])
     assert ledger is not None
-    assert "Récap de journée enregistré" in ledger
-    assert "remplace les entrées déjà loggées ce jour-là" in ledger
+    assert "récap journée" in ledger
+    assert "(remplace le jour)" in ledger
 
 
 def test_successful_undo_shown_with_removed_calories_and_new_total():
@@ -109,9 +112,9 @@ def test_successful_undo_shown_with_removed_calories_and_new_total():
         },
     ])
     assert ledger is not None
-    assert "🗑️" in ledger
-    assert "900 cal" in ledger
-    assert "Total en base pour 2026-09-21 : ~500 cal" in ledger
+    assert "[undo_last_meal_entry] ok" in ledger
+    assert "-900 cal" in ledger
+    assert "[DB] total 2026-09-21 = ~500 cal" in ledger
 
 
 def test_failed_undo_shown_as_nothing_to_undo():
@@ -123,7 +126,8 @@ def test_failed_undo_shown_as_nothing_to_undo():
         },
     ])
     assert ledger is not None
-    assert "Rien à annuler" in ledger
+    assert "[undo_last_meal_entry] échec" in ledger
+    assert "aucune entrée aujourd'hui à annuler" in ledger
 
 
 def test_non_nutrition_tool_calls_alongside_a_meal_log_are_ignored():
@@ -139,5 +143,5 @@ def test_non_nutrition_tool_calls_alongside_a_meal_log_are_ignored():
         },
     ])
     assert ledger is not None
-    assert ledger.count("✅") == 1
-    assert "Collation enregistré" in ledger
+    assert ledger.count("[log_meal] ok") == 1
+    assert "collation" in ledger

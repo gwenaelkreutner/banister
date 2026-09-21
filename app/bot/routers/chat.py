@@ -48,6 +48,17 @@ _FALLBACK_ERROR = (
 _REPLY_CONTEXT_MAX_CHARS = 500
 
 
+async def _send_meal_log(message: Message, meal_log: str | None) -> None:
+    """Deuxième message Telegram, séparé de la réponse du coach — trace déterministe de
+    ce que `log_meal`/`undo_last_meal_entry` ont réellement écrit en base ce tour (voir
+    app/llm/chat.py::_format_meal_ledger). `None` → rien n'est envoyé, aucun outil
+    nutrition n'a tourné (décision utilisateur 2026-09-21 : pas de message sur les tours
+    qui n'ont rien à voir avec la nutrition)."""
+    if not meal_log:
+        return
+    await message.answer(f"<pre>{escape(meal_log)}</pre>", parse_mode="HTML")
+
+
 # ── Handler principal — tout message libre en mode ACTIVE ─────────────────────
 
 @router.message(StateFilter(PlanStates.ACTIVE, None), F.text)
@@ -74,7 +85,7 @@ async def handle_chat_message(
 
     try:
         from app.llm.chat import run_chat
-        response_text, intent, tool_used, pending_proposal, usage = await run_chat(
+        response_text, intent, tool_used, pending_proposal, usage, meal_log = await run_chat(
             user_message=message.text,
             user=user,
             session=session,
@@ -121,6 +132,7 @@ async def handle_chat_message(
         ]])
         proposal_text = escape(_strip_cjk(response_text)).strip() or _FALLBACK_ERROR
         await message.answer(proposal_text, reply_markup=kb, parse_mode="HTML")
+        await _send_meal_log(message, meal_log)
         return
 
     # Si une proposition de modification a été faite → stocker en FSM + afficher les boutons
@@ -133,12 +145,14 @@ async def handle_chat_message(
         ]])
         proposal_text = escape(_strip_cjk(response_text)).strip() or _FALLBACK_ERROR
         await message.answer(proposal_text, reply_markup=kb, parse_mode="HTML")
+        await _send_meal_log(message, meal_log)
         return
 
     text = escape(_strip_cjk(response_text)).strip()
     if not text:
         text = _FALLBACK_ERROR
     await message.answer(text, parse_mode="HTML")
+    await _send_meal_log(message, meal_log)
 
 
 # ── Message libre pendant une proposition en attente ───────────────────────────

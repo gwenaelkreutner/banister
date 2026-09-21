@@ -120,6 +120,7 @@ async def test_freestyle_suggestion_attaches_button_and_keeps_state_active(
             "get_freestyle_session_suggestion",
             result,
             {"prompt_tokens": 10, "completion_tokens": 5},
+            None,
         )
 
     monkeypatch.setattr("app.llm.chat.run_chat", _fake_run_chat)
@@ -157,6 +158,7 @@ async def test_plan_modification_proposal_still_blocks_as_before(db_session, mon
             "propose_plan_modification",
             modification_result,
             {"prompt_tokens": 10, "completion_tokens": 5},
+            None,
         )
 
     monkeypatch.setattr("app.llm.chat.run_chat", _fake_run_chat)
