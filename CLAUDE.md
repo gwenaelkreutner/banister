@@ -1150,9 +1150,9 @@ champs déjà calculés à l'ingestion (mapper.py) mais jamais montés dans `bui
 `raw_power` (NP, IF, VI — VI ignoré <30min, même règle que `activity_analysis.py`), `quality_signals`
 (dérive cardiaque, consistance des intervalles, respect de zone), `environmental` (dénivelé, température,
 kJ — voir § Contexte externe ci-dessus pour pourquoi ces trois-là ne l'étaient pas non plus) et
-`form_context` (`recovery_index`, `detected_phase` — voir juste en-dessous). Chaque bloc est un flag
-indépendant dans le dict — `False` le retire du prompt sans toucher au reste du code, si un bloc s'avère
-bruyant ou trompeur en usage réel.
+`form_context` (`recovery_index`, `detected_phase` — voir juste en-dessous) et `nutrition_context`
+(`hydration_volume_l`, `kcal_consumed`). Chaque bloc est un flag indépendant dans le dict — `False` le
+retire du prompt sans toucher au reste du code, si un bloc s'avère bruyant ou trompeur en usage réel.
 
 **`recovery_index`/`detected_phase` — recalculés à la date de la séance, pas "aujourd'hui"**
 (`assemble_review_context()`, `app/services/session_review.py`, câblé 2026-09-21) : contrairement au chat
@@ -1165,6 +1165,20 @@ dérivé de `log.week_number` (déjà connu sur le log) plutôt que d'un recalcu
 le fait le chat — plus exact pour une séance passée puisque la semaine exacte est déjà connue, pas
 seulement approximée depuis la date. `None` sur ce compte de test tant qu'il n'a pas de VFC/FC repos
 récentes (`recovery_index`, aucune donnée depuis juillet 2025) ou d'historique suffisant (`detected_phase`).
+
+**`hydration_volume_l`/`kcal_consumed` — wellness du jour de la séance, lus depuis intervals.icu, jamais
+depuis `meal_entries`** (câblé 2026-09-21) : deux champs bruts de la table `wellness` (ingérés depuis le
+chantier "signaux enrichis intervals.icu", jamais montrés nulle part avant ça), lus à `log.logged_date`
+comme `recovery_index`/`detected_phase` ci-dessus. **Volontairement séparés du suivi calorique chat**
+(`/log_meal`, `meal_entries`) — discuté explicitement avec l'utilisateur (2026-09-21) et écarté : écrire
+une ligne "calories brûlées" dans `meal_entries` casserait la garantie que cette table "c'est juste ce que
+j'ai consommé" (le `SUM` de `daily_totals()` mélangerait alors mangé et brûlé sans le vouloir, et
+`undo_last_meal_entry` risquerait de supprimer la mauvaise ligne). `hydration_volume_l`/`kcal_consumed`
+restent donc purement informatifs dans `/review`, jamais agrégés avec `meal_entries` — mais comme ce sont
+tous les deux des chiffres de **consommation** (pas de dépense), rien n'empêche de les copier dans
+`meal_entries` plus tard si un besoin réel apparaît, contrairement à un kJ de séance qui ne doit jamais y
+entrer. Aucune valeur observée sur ce compte de test au moment du câblage (petite base, pas représentative
+du serveur réel).
 
 ## Variables d'environnement
 
@@ -1263,5 +1277,5 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Modifier le backup automatique au démarrage (rotation, throttle) | `app/services/backup.py` — `run_startup_backup()` |
 | Modifier le tracing LLM (Phoenix) | `app/observability.py` — `setup_observability()` ; span manuel dans `app/llm/providers/openrouter.py` |
 | Modifier `/review` (picker, synthèse) | `app/bot/routers/review.py` + `app/llm/review.py` — prompt dans `app/llm/prompts.py::build_review_system_prompt()`/`build_review_user_message()` |
-| Activer/désactiver un bloc de données `/review` (puissance brute, qualité, contexte externe) | `app/llm/prompts.py` — `REVIEW_DATA_BLOCKS` |
+| Activer/désactiver un bloc de données `/review` (puissance brute, qualité, contexte externe, forme, nutrition) | `app/llm/prompts.py` — `REVIEW_DATA_BLOCKS` |
 | Architecture complète | `docs/ARCHITECTURE.md` |
