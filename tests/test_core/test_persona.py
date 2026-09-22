@@ -40,10 +40,11 @@ def test_marseillais_voice_is_unmistakably_local():
     assert "dégun" in p.system_prompt.lower()
     assert "tarpin" in p.system_prompt.lower()
     assert "putain con" in p.system_prompt.lower()
-    assert "au moins deux" in p.ux_prompt.lower()
-    assert "cagnard" in p.ux_prompt.lower()
-    assert "fatigue, douleur, blessure ou risque" in p.system_prompt.lower()
-    assert "adapte-les au contexte" in p.system_prompt.lower()
+    assert "suis le mouvement de l'échange" in p.system_prompt.lower()
+    assert "ne changes jamais de sujet" in p.system_prompt.lower()
+    assert "n'invente jamais" in p.system_prompt.lower()
+    assert "pas comme un assistant" in p.ux_prompt.lower()
+    assert "comme on parle au bistrot" in p.ux_prompt.lower()
 
 
 def test_coach_default_always_resolves():
