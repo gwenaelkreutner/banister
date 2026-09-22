@@ -155,6 +155,7 @@ class FreestyleSuggestion:
     target_tss: float
     zone_code: str
     reasoning_summary: str
+    duration_warning: str | None = None
 
 
 class NoSuitableTemplateError(Exception):
@@ -362,6 +363,7 @@ def build_freestyle_suggestion(
     avoid_workout_types: frozenset[str] = frozenset(),
     day_ordinal: int = 0,
     available_minutes: int | None = None,
+    requested_duration_minutes: int | None = None,
     requested_workout_type: str | None = None,
     requested_template_id: str | None = None,
     days_since_return_from_break: int | None = None,
@@ -372,9 +374,11 @@ def build_freestyle_suggestion(
     day can vary the template), and fit it to the target TSS (`fitting.fit_template()`,
     unchanged, already phase-agnostic).
 
-    `requested_workout_type`/`requested_template_id` (spec 011) let an explicit, same-turn
-    athlete request steer this same deterministic pipeline — never a second, LLM-driven
-    calculation, only different inputs to the same math (Constitution Principle I). A
+    `requested_workout_type`/`requested_duration_minutes`/`requested_template_id` let an
+    explicit, same-turn athlete request steer this same deterministic pipeline — never a
+    second, LLM-driven calculation, only different inputs to the same math (Constitution
+    Principle I). A requested duration is a target, distinct from `available_minutes`,
+    which remains a ceiling. A
     `requested_template_id` that isn't a candidate of the *resolved* workout type (wrong
     type, unknown id) is silently ignored — the existing `day_ordinal` rotation applies as
     if it had never been supplied (FR-005).
@@ -420,7 +424,12 @@ def build_freestyle_suggestion(
     for template in rotated:
         try:
             result = _fit_with_relaxed_tolerance(
-                template, choice.target_tss, coaching_mode, ftp, available_minutes
+                template,
+                choice.target_tss,
+                coaching_mode,
+                ftp,
+                available_minutes,
+                requested_duration_minutes,
             )
             break
         except NoSuitableTemplateError as exc:
@@ -431,6 +440,17 @@ def build_freestyle_suggestion(
             f"{choice.target_tss:.0f} TSS: {last_error}"
         )
 
+    duration_warning = None
+    if (
+        requested_duration_minutes is not None
+        and result.tss_target > choice.target_tss * 1.15
+    ):
+        duration_warning = (
+            "La durée demandée ajoute plus de charge que la séance recommandée aujourd'hui : "
+            "reste facile et raccourcis si les jambes ne répondent pas."
+        )
+        reasoning += f" {duration_warning}"
+
     return FreestyleSuggestion(
         workout_type=choice.workout_type,
         template_id=template.id,
@@ -439,6 +459,7 @@ def build_freestyle_suggestion(
         target_tss=result.tss_target,
         zone_code=result.zone_code,
         reasoning_summary=reasoning,
+        duration_warning=duration_warning,
     )
 
 
@@ -448,6 +469,7 @@ def _fit_with_relaxed_tolerance(
     coaching_mode: str,
     ftp: int | None,
     available_minutes: int | None,
+    requested_duration_minutes: int | None,
 ) -> FitResult:
     """`fit_template()` refuses rather than clamps (spec 004 design) — reasonable for a
     plan, where a bad fit means picking a different template next time `plan_builder`
@@ -455,12 +477,15 @@ def _fit_with_relaxed_tolerance(
     tries progressively looser tolerance before giving up entirely (`NoSuitableTemplateError`,
     the caller's cue to say "not available" rather than crash)."""
     last_error: FittingError | None = None
-    for tolerance in (0.15, 0.30, 0.50):
+    tolerances = (0.15,) if requested_duration_minutes is not None else (0.15, 0.30, 0.50)
+    for tolerance in tolerances:
         try:
             return fit_template(
                 template, target_tss,
                 coaching_mode=coaching_mode, ftp=ftp,
-                available_minutes=available_minutes, tolerance=tolerance,
+                available_minutes=available_minutes,
+                requested_duration_minutes=requested_duration_minutes,
+                tolerance=tolerance,
             )
         except FittingError as exc:
             last_error = exc

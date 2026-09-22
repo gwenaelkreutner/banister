@@ -494,6 +494,15 @@ class TestBuildFreestyleSuggestion:
         )
         assert suggestion.duration_minutes <= 90
 
+    def test_requested_duration_is_honored_instead_of_treated_as_a_ceiling(self):
+        suggestion = build_freestyle_suggestion(
+            FitnessMetrics(atl=50, ctl=60, tsb=10), _SNAPSHOT,
+            coaching_mode="power", ftp=220, days_since_hard_effort=5,
+            requested_duration_minutes=90,
+        )
+        assert suggestion.duration_minutes == 90
+        assert suggestion.duration_warning is not None
+
     def test_available_minutes_too_tight_raises_rather_than_exceeding(self):
         """spec 011 US3 Acceptance Scenario 2: nothing fits → say so, never overrun."""
         with pytest.raises(NoSuitableTemplateError):

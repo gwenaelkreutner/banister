@@ -809,8 +809,9 @@ async def _tool_get_freestyle_session_suggestion(
     en DB et traduit le résultat dans les deux formes du contrat.
 
     `args` (spec 011) porte les signaux extraits du message de l'athlète —
-    `requested_workout_type`/`max_duration_minutes`/`style_preference`, tous optionnels.
-    Les deux premiers sont transmis tels quels à `build_freestyle_suggestion()`. Le
+    `requested_workout_type`/`max_duration_minutes`/`requested_duration_minutes`/
+    `style_preference`, tous optionnels. Les trois premiers sont transmis tels quels à
+    `build_freestyle_suggestion()`. Le
     troisième (texte libre) est résolu en `template_id` par un second appel LLM isolé
     (`app/llm/template_picker.py`) qui ne voit que les candidats du type déjà retenu — le
     catalogue complet ne transite plus par le schéma de l'outil. Aucun calcul de charge
@@ -904,6 +905,7 @@ async def _tool_get_freestyle_session_suggestion(
             avoid_workout_types=avoid_workout_types,
             day_ordinal=today.toordinal(),
             available_minutes=args.get("max_duration_minutes"),
+            requested_duration_minutes=args.get("requested_duration_minutes"),
             requested_workout_type=requested_workout_type,
             requested_template_id=template_id,
             days_since_return_from_break=return_gap,
@@ -930,6 +932,7 @@ async def _tool_get_freestyle_session_suggestion(
         "target_tss": suggestion.target_tss,
         "zone_code": suggestion.zone_code,
         "reasoning_summary": suggestion.reasoning_summary,
+        "duration_warning": suggestion.duration_warning,
         "steps": [step.model_dump(mode="json") for step in suggestion.steps],
     }
 

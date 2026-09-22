@@ -316,6 +316,18 @@ TOOL_DEFINITIONS = [
                             "précise. Omets ce champ si rien n'est mentionné."
                         ),
                     },
+                    "requested_duration_minutes": {
+                        "type": "integer",
+                        "minimum": 15,
+                        "maximum": 300,
+                        "description": (
+                            "Durée voulue EXPLICITEMENT par l'athlète (ex: 'je veux rouler "
+                            "1h30', 'plutôt 90 min'). C'est une contrainte de proposition : "
+                            "la séance retournée doit avoir cette durée, adaptée en intensité. "
+                            "Ne pas la confondre avec max_duration_minutes ('je n'ai que 90 min'). "
+                            "Omets ce champ si l'athlète indique seulement son temps disponible."
+                        ),
+                    },
                     "style_preference": {
                         "type": "string",
                         "description": (

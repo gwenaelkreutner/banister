@@ -1229,12 +1229,13 @@ rotation `day_ordinal` comme si rien n'avait été demandé, FR-005). Coût : ca
 `settings.llm_max_tokens`, pas un cap serré — un modèle à raisonnement caché renverrait un contenu null
 (voir Stack, `LLM_MAX_TOKENS`).
 
-**`max_duration_minutes`** : aucun nouveau paramètre côté moteur — réutilise `available_minutes`, déjà
-présent sur `build_freestyle_suggestion()`/`fit_template()` depuis spec 004 mais jamais alimenté par l'outil
-mode libre jusqu'ici. `NoSuitableTemplateError` (déjà existante) couvre le cas où rien ne rentre dans le
-délai indiqué, même après relâchement de tolérance.
+**Durée disponible vs voulue** : `max_duration_minutes` reste un plafond strict (« je n'ai que 90 min ») ;
+`requested_duration_minutes` est une contrainte de proposition (« je veux rouler 90 min »). Cette dernière
+force la durée publiée, en adaptant le template dans ses bornes ; un template qui ne peut pas atteindre cette
+durée est écarté. Si elle augmente la charge de plus de 15 % par rapport à la séance recommandée, l'outil
+retourne un avertissement que le coach doit expliciter avant publication.
 
-**Un seul appel outil, pas de va-et-vient** : les 3 paramètres sont optionnels sur le même appel
+**Un seul appel outil, pas de va-et-vient** : les 4 paramètres sont optionnels sur le même appel
 `get_freestyle_session_suggestion` — jamais un second tool call "liste puis choix". `app/llm/chat.py::
 _tool_get_freestyle_session_suggestion` se contente de transmettre `args` tel quel à
 `build_freestyle_suggestion()` ; toute la logique de repli (type non supporté, template hors-liste, durée

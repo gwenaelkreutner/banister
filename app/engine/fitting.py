@@ -173,6 +173,84 @@ def _fit_steady(
     )
 
 
+def _fit_interval_to_duration(
+    template: SessionTemplate,
+    requested_duration_minutes: int,
+    coaching_mode: str,
+    ftp: int | None,
+) -> FitResult:
+    """Materialize an interval template at the athlete's stated duration.
+
+    A duration request is a product constraint, unlike a TSS target: do not return a
+    shorter session that merely happens to fit the load.  Templates whose declared
+    scaling cannot reach that duration are skipped by the freestyle selector.
+    """
+    sets0, work0, rest0 = _shape(template)
+    scaling = template.scaling
+    repeat_lo, repeat_hi = (
+        scaling.repeat_range if scaling and scaling.repeat_range else (sets0, sets0)
+    )
+    work_lo, work_hi = (
+        scaling.work_minutes_range if scaling and scaling.work_minutes_range else (work0, work0)
+    )
+
+    for sets in range(repeat_lo, repeat_hi + 1):
+        for work in range(work_lo, work_hi + 1):
+            steps = _materialize_interval(template, sets, work, rest0)
+            if derive_duration_minutes(steps) != requested_duration_minutes:
+                continue
+            tss = estimate_structured_session_tss(steps, coaching_mode, ftp)
+            return FitResult(
+                steps=steps,
+                duration_minutes=requested_duration_minutes,
+                tss_target=tss,
+                zone_code=derive_zone_code(steps),
+                target_time_in_zone_minutes=derive_target_time_in_zone_minutes(steps),
+            )
+
+    raise FittingError(
+        f"template {template.id!r} cannot reach requested duration "
+        f"{requested_duration_minutes}min within its scaling bounds"
+    )
+
+
+def _fit_steady_to_duration(
+    template: SessionTemplate,
+    requested_duration_minutes: int,
+    coaching_mode: str,
+    ftp: int | None,
+) -> FitResult:
+    steady = next(
+        item for item in template.structure if isinstance(item, Step) and item.kind == "steady"
+    )
+    scaling = template.scaling
+    lo, hi = (
+        scaling.steady_minutes_range if scaling and scaling.steady_minutes_range
+        else (steady.duration_minutes, steady.duration_minutes)
+    )
+    if not lo <= requested_duration_minutes <= hi:
+        raise FittingError(
+            f"template {template.id!r} cannot reach requested duration "
+            f"{requested_duration_minutes}min within its steady_minutes_range {lo}-{hi}min"
+        )
+
+    steps = [
+        Step(
+            kind="steady",
+            duration_minutes=requested_duration_minutes,
+            zone_code=steady.zone_code,
+        )
+    ]
+    tss = estimate_structured_session_tss(steps, coaching_mode, ftp)
+    return FitResult(
+        steps=steps,
+        duration_minutes=requested_duration_minutes,
+        tss_target=tss,
+        zone_code=steady.zone_code,
+        target_time_in_zone_minutes=0,
+    )
+
+
 @dataclass
 class ResolvedIntensity:
     zone_code: str
@@ -217,13 +295,23 @@ def fit_template(
     coaching_mode: str,
     ftp: int | None = None,
     available_minutes: int | None = None,
+    requested_duration_minutes: int | None = None,
     tolerance: float = _DEFAULT_TOLERANCE,
 ) -> FitResult:
     """Adapts `template` to `target_tss`, preferring the smallest deviation
     achievable within its own `ScalingRules` (FR-023). Refuses — rather than
     clamping — when no combination gets within `tolerance` of the target, or
     when the fitted session exceeds `available_minutes` (FR-024)."""
-    if _is_interval_template(template):
+    if requested_duration_minutes is not None:
+        if _is_interval_template(template):
+            result = _fit_interval_to_duration(
+                template, requested_duration_minutes, coaching_mode, ftp
+            )
+        else:
+            result = _fit_steady_to_duration(
+                template, requested_duration_minutes, coaching_mode, ftp
+            )
+    elif _is_interval_template(template):
         result = _fit_interval(template, target_tss, coaching_mode, ftp, tolerance)
     else:
         result = _fit_steady(template, target_tss, coaching_mode, ftp, tolerance)

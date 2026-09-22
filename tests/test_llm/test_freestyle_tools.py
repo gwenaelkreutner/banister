@@ -233,6 +233,23 @@ class TestFreestyleSessionNegotiation:
         assert result["available"] is True
         assert result["duration_minutes"] <= 90
 
+    async def test_requested_duration_minutes_is_honored_and_warns_when_heavier(
+        self, db_session
+    ):
+        """"Je veux rouler 1h30" is a requested duration, not availability."""
+        user = await _make_user(db_session, 5016)
+        await wellness_repo.upsert(db_session, user.id, date.today(), ctl=60, atl=45)
+        await db_session.commit()
+
+        result = await _tool_get_freestyle_session_suggestion(
+            {"requested_duration_minutes": 90},
+            user=user, session=db_session, profile=_profile(), logs=[], activities=[],
+        )
+
+        assert result["available"] is True
+        assert result["duration_minutes"] == 90
+        assert result["duration_warning"]
+
     async def test_max_duration_minutes_too_tight_is_reported_as_unavailable(self, db_session):
         """spec 011 US3 Acceptance Scenario 2: never an over-length session."""
         user = await _make_user(db_session, 5014)
