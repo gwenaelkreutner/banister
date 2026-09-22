@@ -1,9 +1,4 @@
-"""Coach persona loading (spec 007 US5).
-
-An earlier research draft claimed `load_persona()` was broken; a direct test proved it
-works. This file is the regression guard so a persona file cannot be shipped in a state
-the loader rejects.
-"""
+"""Coach persona loading (spec 007 US5)."""
 from __future__ import annotations
 
 import pytest
@@ -18,22 +13,21 @@ def _shipped_ids() -> list[str]:
 
 def test_every_shipped_persona_loads():
     ids = _shipped_ids()
-    assert ids, "no persona files found"
+    assert ids == ["coach-default", "marseillais", "pedagogue"]
     for pid in ids:
         p = load_persona(pid)
         assert p.system_prompt.strip(), f"{pid}: empty system_prompt"
         assert p.ux_prompt.strip(), f"{pid}: empty ux_prompt"
-        assert p.name and p.language
+        assert p.name and p.language == "fr"
 
 
-def test_pace_is_the_french_default_voice():
-    p = load_persona("pace")
-    assert p.language == "fr"
-    assert "Pace" in p.name or "pace" in p.id
+def test_coach_is_the_french_default_voice():
+    p = load_persona("coach-default")
+    assert p.name == "Coach"
 
 
 def test_coach_default_always_resolves():
-    """The FR-026 fallback target — must exist and load."""
+    """The FR-026 fallback target must exist and load."""
     assert load_persona("coach-default").system_prompt
 
 
@@ -43,7 +37,7 @@ def test_unknown_id_raises():
 
 
 def test_persona_formatting_fills_first_name():
-    p = load_persona("pace")
+    p = load_persona("pedagogue")
     out = p.format_system_prompt(first_name="Gwen")
     assert "Gwen" in out
     assert "{first_name}" not in out

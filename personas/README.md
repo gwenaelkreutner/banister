@@ -1,7 +1,7 @@
 # Personas
 
 A persona defines your coach's identity, language, and conversational style.
-Banister ships four examples. You can write your own and select it with `PERSONA=your-file` in `.env`.
+Banister ships three voices. You can write your own and select it with `PERSONA=your-file` in `.env`.
 
 ## Quick start
 
@@ -46,10 +46,9 @@ All personas should include these constraints to maintain data integrity:
 
 | File | Language | Style |
 |------|----------|-------|
-| `coach-default.yaml` | English | Direct expert, the default for new installs |
-| `pace.yaml` | French | The original Banister persona, direct and technical |
-| `analyst.yaml` | English | Metrics-first, minimal narrative, no emotional framing |
-| `zen.yaml` | English | Recovery-focused, gentle, sustainability over peak output |
+| `coach-default.yaml` | French | Direct, expert and warm; the default voice |
+| `marseillais.yaml` | French | Marseillais accent, lively, teasing and candid |
+| `pedagogue.yaml` | French | Clear explanations of the why behind each decision |
 
 ## Good first contribution
 

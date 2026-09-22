@@ -110,7 +110,7 @@ def test_build_ux_system_prompt_default_is_unchanged_without_first_name():
     see the identity block appear — that would be a behavior change out of scope."""
     prompt = build_ux_system_prompt(2)
     assert "COACH — PACE" not in prompt
-    assert "Tu t'appelles Pace" in prompt  # historical fallback text, unchanged
+    assert "Tu t'appelles Coach" in prompt  # default fallback identity
 
 
 def test_build_ux_system_prompt_appends_identity_block_when_first_name_given():

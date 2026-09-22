@@ -99,10 +99,9 @@ class Settings(BaseSettings):
     intervals_poll_interval_minutes: int = 5
 
     # Persona — filename in personas/ without .yaml. Deployer default; per-athlete
-    # override lives in users.coach_voice (spec 007). "pace" is the French voice that
-    # matches the historical inline prompts; "coach-default" is the guaranteed-present
-    # fallback target (FR-026).
-    persona: str = "pace"
+    # override lives in users.coach_voice (spec 007). "coach-default" is both the
+    # deployer default and guaranteed-present fallback target (FR-026).
+    persona: str = "coach-default"
 
     @property
     def is_dev(self) -> bool:

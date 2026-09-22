@@ -10,9 +10,8 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.db import repositories as repo
-from app.services.coach_voice import available_voices
+from app.services.coach_voice import available_voices, resolve_voice
 
 router = Router(name="voice")
 
@@ -41,7 +40,7 @@ async def cmd_voice(message: Message, session: AsyncSession, user) -> None:
     if user is None:
         await message.answer("Fais d'abord /setup.")
         return
-    current = user.coach_voice or settings.persona
+    current = resolve_voice(user)[0].id
     await message.answer(
         _voice_text(current), parse_mode="HTML", reply_markup=_voice_menu(current)
     )

@@ -13,6 +13,16 @@ from app.core.exceptions import PersonaNotFoundError
 from app.core.persona import PERSONAS_DIR, Persona, load_persona
 
 _FALLBACK_ID = "coach-default"
+_LEGACY_VOICE_ALIASES = {
+    "pace": _FALLBACK_ID,
+    "zen": _FALLBACK_ID,
+    "analyste": _FALLBACK_ID,
+}
+
+
+def _current_voice_id(persona_id: str) -> str:
+    """Keep persisted selections of removed shipped voices usable."""
+    return _LEGACY_VOICE_ALIASES.get(persona_id, persona_id)
 
 
 def available_voices() -> list[Persona]:
@@ -31,13 +41,14 @@ def resolve_voice(user) -> tuple[Persona, bool]:
     """`(persona, fell_back)`. Tries `user.coach_voice`, then `settings.persona`, then
     `coach-default`. `fell_back` is True when the requested id did not resolve — the
     caller prepends a one-line notice (FR-026)."""
-    requested = getattr(user, "coach_voice", None) or settings.persona
+    requested = _current_voice_id(getattr(user, "coach_voice", None) or settings.persona)
     try:
         return load_persona(requested), False
     except PersonaNotFoundError:
         pass
     try:
-        return load_persona(settings.persona), requested != settings.persona
+        default_id = _current_voice_id(settings.persona)
+        return load_persona(default_id), requested != default_id
     except PersonaNotFoundError:
         return load_persona(_FALLBACK_ID), True
 

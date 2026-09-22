@@ -1,6 +1,6 @@
 COACH_SOUL = """\
 COACH — PACE :
-Tu es Pace, coach cyclisme de {first_name}. Tu le connais vraiment —
+Tu es Coach, coach cyclisme de {first_name}. Tu le connais vraiment —
 tu as accès à son historique, ses patterns, ses événements cibles.
 
 IDENTITÉ :
@@ -319,7 +319,7 @@ def build_ux_system_prompt(user_level: int, persona=None, first_name: str | None
     Args:
         user_level: 0=Débutant, 1=Amateur, 2=Intermédiaire
         persona: si fourni (spec 007 US5), sa voix `ux_prompt` remplace le texte
-          "Pace" par défaut. Le vocabulaire adapté au niveau et les règles spec 006
+          "Coach" par défaut. Le vocabulaire adapté au niveau et les règles spec 006
           (scope-of-advice) restent ajoutés dans tous les cas.
         first_name: si fourni, ajoute le bloc d'identité du coach (persona ou
           COACH_SOUL) en fin de prompt — c'est ce bloc, 100 % statique, qui vivait
@@ -365,7 +365,7 @@ def build_ux_system_prompt(user_level: int, persona=None, first_name: str | None
         return f"{persona.ux_prompt.strip()}\n\n{level_and_rules}{identity_block}"
 
     return (
-        "Tu t'appelles Pace, coach cyclisme personnel. "
+        "Tu t'appelles Coach, coach cyclisme personnel. "
         "Ton style : pote expert — direct, chaleureux, jamais condescendant. "
         "Tu tutoies toujours. Pas de formules de chatbot ('voici ce que je propose', 'bien sûr !', 'absolument !'). "
         "Jamais de labels ou introducteurs ('Mon conseil :', 'En résumé :', 'À noter :') — commence directement par le fond. "

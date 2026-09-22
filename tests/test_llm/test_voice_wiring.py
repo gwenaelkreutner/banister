@@ -13,41 +13,43 @@ def _user(voice):
 
 
 def test_resolve_voice_falls_back_through_the_chain():
-    # explicit selection
-    p, fell = resolve_voice(_user("zen"))
-    assert p.id == "zen" and fell is False
+    p, fell = resolve_voice(_user("marseillais"))
+    assert p.id == "marseillais" and fell is False
 
-    # None → deployer default (settings.persona == "pace")
     p, fell = resolve_voice(_user(None))
     assert p.id == settings.persona and fell is False
 
-    # unresolvable → coach-default, and the caller is told (FR-026)
     p, fell = resolve_voice(_user("does-not-exist"))
-    assert p.id in ("pace", "coach-default") and fell is True
+    assert p.id == "coach-default" and fell is True
 
 
-def test_available_voices_lists_the_shipped_personas_with_descriptors():
-    ids = {v.id for v in available_voices()}
-    assert {"coach-default", "pace", "zen", "analyste"} <= ids
-    assert all(v.voice for v in available_voices())  # FR-022 — a descriptor each
-    assert all(v.language == "fr" for v in available_voices())
+def test_removed_voice_selections_map_to_coach():
+    for legacy_id in ("pace", "zen", "analyste"):
+        p, fell = resolve_voice(_user(legacy_id))
+        assert p.id == "coach-default" and fell is False
+
+
+def test_available_voices_lists_the_three_shipped_personas():
+    voices = available_voices()
+    assert {v.id for v in voices} == {"coach-default", "marseillais", "pedagogue"}
+    assert all(v.voice for v in voices)
+    assert all(v.language == "fr" for v in voices)
 
 
 def test_ux_prompt_follows_the_selected_persona():
-    pace, _ = resolve_voice(_user("pace"))
-    analyste, _ = resolve_voice(_user("analyste"))
+    marseillais, _ = resolve_voice(_user("marseillais"))
+    pedagogue, _ = resolve_voice(_user("pedagogue"))
 
-    pace_prompt = build_ux_system_prompt(2, persona=pace)
-    analyste_prompt = build_ux_system_prompt(2, persona=analyste)
+    marseillais_prompt = build_ux_system_prompt(2, persona=marseillais)
+    pedagogue_prompt = build_ux_system_prompt(2, persona=pedagogue)
 
-    assert pace_prompt != analyste_prompt
-    assert "analyste" in analyste_prompt.lower()
-    assert "pote expert" in pace_prompt.lower() or "chaleureux" in pace_prompt.lower()
-    # spec 006 rules survive the persona swap
-    assert "diagnostic" in analyste_prompt.lower()
+    assert marseillais_prompt != pedagogue_prompt
+    assert "marseillais" in marseillais_prompt.lower()
+    assert "pourquoi" in pedagogue_prompt.lower()
+    assert "diagnostic" in pedagogue_prompt.lower()
 
 
-def test_ux_prompt_without_a_persona_is_the_historical_pace_text():
+def test_ux_prompt_without_a_persona_uses_coach():
     prompt = build_ux_system_prompt(2)
-    assert "Tu t'appelles Pace" in prompt
-    assert "diagnostic" in prompt.lower()  # spec 006 rules still there
+    assert "Tu t'appelles Coach" in prompt
+    assert "diagnostic" in prompt.lower()
