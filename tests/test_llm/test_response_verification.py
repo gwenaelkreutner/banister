@@ -78,6 +78,14 @@ def test_value_for_a_metric_never_retrieved_is_unretrieved():
     assert len(res.unretrieved) == 1 and res.unretrieved[0].metric == "ftp"
 
 
+def test_historical_value_requires_its_date_and_keeps_current_value_authoritative():
+    r = _registry(ctl=54)
+    r.register_history("ctl", {"2026-09-01": 48})
+
+    assert verify_response("Ton CTL était à 48 le 01/09.", r).ok
+    assert not verify_response("Ton CTL actuel est à 48.", r).ok
+
+
 # ── the precision guarantee: prose is not flagged (research R5) ──────────────
 
 

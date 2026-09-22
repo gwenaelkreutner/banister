@@ -17,10 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import repositories as repo
 from app.db.models.user import User
-from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any, tsb_label
+from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
 from app.llm.chat_client import run_agentic_loop
-from app.llm.tools import build_context_messages, build_system_prompt
+from app.llm.tools import PARALLEL_READ_TOOLS, build_context_messages, build_system_prompt
 from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
@@ -59,11 +59,14 @@ async def run_chat(
     # 1. Charger le contexte
     profile_row = await repo.profile_repo.get_by_user_id(session, user.id)
     plan = await repo.plan_repo.get_active_plan(session, user.id)
-    logs = await repo.session_log_repo.get_all_for_user(session, user.id)
+    context_start = date.today() - timedelta(days=89)
+    logs = await repo.session_log_repo.get_in_range(
+        session, user.id, context_start, date.today()
+    )
     history = await repo.chat_repo.get_conversation(session, user.id, limit=8)
 
     # Activités importées pré-plan (sans double-comptage avec session_logs)
-    activities = await repo.activity_repo.get_for_user(session, user.id, days=365)
+    activities = await repo.activity_repo.get_for_user(session, user.id, days=90)
     plan_start = plan.start_date if plan else date.today()
     pre_plan_acts = [a for a in activities if a.activity_date < plan_start]
     all_items = pre_plan_acts + logs
@@ -76,6 +79,8 @@ async def run_chat(
             logger.warning("Impossible de valider le profil athlète")
 
     current = await get_current_fitness(session, user.id)
+    fitness_as_of = current.as_of if current is not None else None
+    fitness_is_stale = current.is_stale if current is not None else False
     metrics: FitnessMetrics | None = (
         current.metrics if current is not None
         else (compute_fitness_from_any(all_items) if all_items else None)
@@ -102,7 +107,11 @@ async def run_chat(
     def _item_date(item):
         return item.logged_date if hasattr(item, "logged_date") else item.activity_date
 
-    recent_items = sorted(list(pre_plan_acts) + list(logs or []), key=_item_date)[-7:]
+    all_recent_items = sorted(list(pre_plan_acts) + list(logs or []), key=_item_date)
+    recent_items = all_recent_items[-1:]
+    from app.services.coach_queries import hot_training_summary
+
+    training_summary = hot_training_summary(all_recent_items, today=date.today())
     # Calendrier intervals.icu publié : si le plan a évolué depuis, le dire au coach
     # plutôt que de laisser croire que le calendrier est à jour (spec 005 FR-020).
     calendar_divergence: str | None = None
@@ -206,6 +215,8 @@ async def run_chat(
         first_name=user.first_name or "l'athlète",
         profile=profile,
         metrics=metrics,
+        fitness_as_of=fitness_as_of,
+        fitness_is_stale=fitness_is_stale,
         recent_logs=recent_items,
         plan=plan_schema,
         today=date.today(),
@@ -218,6 +229,7 @@ async def run_chat(
         wellness_today=wellness_today,
         recovery_index=registry_metrics.get("recovery_index"),
         detected_phase=detected_phase_result,
+        training_summary=training_summary,
     )
     system = f"{ux_rules}\n\n---\n\n{coaching_ctx}"
     if has_load_reduction_finding(guardrail_findings):
@@ -261,6 +273,18 @@ async def run_chat(
 
     # 3. Définir le tool_executor (fermeture sur session/plan/profile)
     async def tool_executor(name: str, args: dict) -> dict:
+        # SQLAlchemy AsyncSession is not safe for concurrent use. Read-only calls in
+        # one model wave receive independent sessions; all other calls retain the
+        # request session to preserve mutation order and transaction visibility.
+        if name in PARALLEL_READ_TOOLS:
+            from app.db.client import AsyncSessionFactory
+
+            async with AsyncSessionFactory() as read_session:
+                return await _execute_tool(
+                    name, args, user=user, session=read_session, plan=plan, profile=profile,
+                    logs=logs,
+                    activities=pre_plan_acts, raw_message=user_message,
+                )
         return await _execute_tool(
             name, args, user=user, session=session, plan=plan, profile=profile, logs=logs,
             activities=pre_plan_acts, raw_message=user_message,
@@ -276,6 +300,7 @@ async def run_chat(
         messages=messages,
         tools=tools_for_mode(mode_from_plan(plan)),
         tool_executor=tool_executor,
+        parallel_tool_names=PARALLEL_READ_TOOLS,
     )
 
     # Voix demandée introuvable → on répond avec la voix par défaut et on le dit (FR-026).
@@ -296,6 +321,44 @@ async def run_chat(
         and last_tool_result.get("available")
     ):
         registry.register("tss", last_tool_result.get("target_tss"))
+
+    # History tools expose several valid values for the same metric. Register them
+    # before verification, without replacing current values from the hot context.
+    for call in tool_calls_log:
+        result = call.get("result") or {}
+        name = call.get("name")
+        if name == "get_fitness_history":
+            for metric in ("ctl", "atl", "tsb", "ramp_rate"):
+                values = {
+                    point["date"]: point.get(metric)
+                    for point in result.get("points", [])
+                    if point.get("date")
+                }
+                registry.register_history(metric, values)
+        elif name == "get_training_trend":
+            values = {
+                week["week_start"]: week.get("tss")
+                for week in result.get("weeks", [])
+                if week.get("week_start")
+            }
+            registry.register_history("tss", values)
+        elif name == "get_wellness_history":
+            hrv_values = {
+                point["date"]: point.get("hrv")
+                for point in result.get("points", [])
+                if point.get("date")
+            }
+            rhr_values = {
+                point["date"]: point.get("resting_hr")
+                for point in result.get("points", [])
+                if point.get("date")
+            }
+            registry.register_history("hrv", hrv_values)
+            registry.register_history("rhr", rhr_values)
+        elif name == "get_session_detail":
+            as_of = result.get("date", "")
+            values = {as_of: item.get("tss") for item in result.get("sessions", [])}
+            registry.register_history("tss", values)
 
     # 4b. Vérification : chaque chiffre que la réponse avance sur une métrique doit
     # correspondre à ce qui a été retrouvé ; sinon la phrase est retirée et l'échec
@@ -421,7 +484,20 @@ async def _execute_tool(
 
     if name == "get_upcoming_sessions":
         days = args.get("days", 7)
-        return _tool_get_upcoming_sessions(plan, days)
+        start_offset = args.get("start_offset", 0)
+        return _tool_get_upcoming_sessions(plan, days, start_offset)
+
+    elif name == "get_fitness_history":
+        return await _tool_get_fitness_history(args, user=user, session=session)
+
+    elif name == "get_training_trend":
+        return await _tool_get_training_trend(args, user=user, session=session)
+
+    elif name == "get_session_detail":
+        return await _tool_get_session_detail(args, user=user, session=session)
+
+    elif name == "get_wellness_history":
+        return await _tool_get_wellness_history(args, user=user, session=session)
 
     elif name == "update_injury_status":
         return await _tool_update_injury_status(
@@ -461,7 +537,7 @@ async def _execute_tool(
 
 # ── Implémentations des outils ────────────────────────────────────────────────
 
-def _tool_get_upcoming_sessions(plan, days: int) -> dict:
+def _tool_get_upcoming_sessions(plan, days: int, start_offset: int = 0) -> dict:
     if plan is None:
         return {"sessions": [], "message": "Aucun plan actif trouvé."}
     if plan.start_date is None:
@@ -470,10 +546,16 @@ def _tool_get_upcoming_sessions(plan, days: int) -> dict:
     from app.engine.schemas import TrainingPlanSchema
     schema = TrainingPlanSchema.model_validate(plan.plan_technical)
 
-    today = date.today()
+    try:
+        days = max(1, min(int(days), 42))
+        start_offset = max(-7, min(int(start_offset), 56))
+    except (TypeError, ValueError):
+        days, start_offset = 7, 0
+
+    start = date.today() + timedelta(days=start_offset)
     sessions = []
     for offset in range(days):
-        target_date = today + timedelta(days=offset)
+        target_date = start + timedelta(days=offset)
         week_num = (target_date - plan.start_date).days // 7 + 1
         dow = target_date.weekday()
 
@@ -495,8 +577,67 @@ def _tool_get_upcoming_sessions(plan, days: int) -> dict:
                 break
 
     if not sessions:
-        return {"sessions": [], "message": f"Aucune séance prévue dans les {days} prochains jours."}
-    return {"sessions": sessions}
+        return {
+            "range_start": str(start),
+            "range_end": str(start + timedelta(days=days - 1)),
+            "sessions": [],
+            "message": f"Aucune séance prévue dans cette fenêtre de {days} jours.",
+        }
+    return {
+        "range_start": str(start),
+        "range_end": str(start + timedelta(days=days - 1)),
+        "sessions": sessions,
+    }
+
+
+async def _tool_get_fitness_history(args: dict, *, user: User, session: AsyncSession) -> dict:
+    from app.services.coach_queries import clamp_days, fitness_history
+
+    days = clamp_days(args.get("days"), default=28, maximum=365)
+    granularity = args.get("granularity")
+    if granularity not in {"daily", "weekly"}:
+        granularity = "weekly" if days > 30 else "daily"
+    if granularity == "daily" and days > 90:
+        return {
+            "error": (
+                "Historique quotidien limité à 90 jours ; demande une granularité hebdomadaire."
+            )
+        }
+    return await fitness_history(session, user.id, days=days, granularity=granularity)
+
+
+async def _tool_get_training_trend(args: dict, *, user: User, session: AsyncSession) -> dict:
+    from app.services.coach_queries import clamp_days, training_trend
+
+    days = clamp_days(args.get("days"), default=28, maximum=90)
+    return await training_trend(session, user.id, days=days)
+
+
+async def _tool_get_session_detail(args: dict, *, user: User, session: AsyncSession) -> dict:
+    from app.services.coach_queries import session_detail
+
+    try:
+        session_date = date.fromisoformat(args.get("date", ""))
+    except (TypeError, ValueError):
+        return {"error": "date doit être au format AAAA-MM-JJ."}
+    if session_date > date.today():
+        return {"error": "Une séance future n'a pas encore de données réalisées."}
+    return await session_detail(session, user.id, session_date=session_date)
+
+
+async def _tool_get_wellness_history(args: dict, *, user: User, session: AsyncSession) -> dict:
+    from app.services.coach_queries import clamp_days, wellness_history
+
+    days = clamp_days(args.get("days"), default=28, maximum=90)
+    granularity = args.get("granularity")
+    if granularity not in {"daily", "weekly"}:
+        granularity = "weekly" if days > 30 else "daily"
+    metrics = args.get("metrics")
+    if not isinstance(metrics, list):
+        metrics = []
+    return await wellness_history(
+        session, user.id, days=days, metrics=metrics, granularity=granularity
+    )
 
 
 async def _tool_update_injury_status(

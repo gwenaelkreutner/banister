@@ -34,6 +34,7 @@ class MetricRegistry:
     is one the response may not state a value for."""
 
     _values: dict[str, float] = field(default_factory=dict)
+    _history: dict[str, dict[str, set[float]]] = field(default_factory=dict)
 
     def register(self, name: str, value: float | int | None) -> None:
         if value is None:
@@ -42,6 +43,26 @@ class MetricRegistry:
 
     def get(self, name: str) -> float | None:
         return self._values.get(name.lower())
+
+    def register_history(self, name: str, values_by_date: dict[str, float | int | None]) -> None:
+        """Register dated tool results without weakening verification of current values."""
+        canonical = name.lower()
+        history = self._history.setdefault(canonical, {})
+        for as_of, value in values_by_date.items():
+            if value is not None:
+                history.setdefault(as_of, set()).add(float(value))
+
+    def values_for(self, name: str, *, sentence: str = "") -> set[float]:
+        """Current value always applies. Historical values require their date in prose."""
+        canonical = name.lower()
+        values: set[float] = set()
+        if canonical in self._values:
+            values.add(self._values[canonical])
+        for as_of, dated_values in self._history.get(canonical, {}).items():
+            short_date = f"{as_of[8:10]}/{as_of[5:7]}"
+            if as_of in sentence or short_date in sentence:
+                values.update(dated_values)
+        return values
 
     def __contains__(self, name: str) -> bool:
         return name.lower() in self._values
@@ -80,6 +101,7 @@ _ANCHORS: list[tuple[str, str]] = [
 
 # A number token: optional sign, digits, optional decimal (French comma or dot).
 _NUMBER = r"[-+]?\d+(?:[.,]\d+)?"
+_DATE_TOKEN = re.compile(r"\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?)\b")
 
 # Numbers we never treat as metric claims even inside an anchored clause: durations,
 # zones, cadence, percentages (a "-20%" is a relative statement, not an absolute value
@@ -140,9 +162,12 @@ def _extract_claims(text: str) -> list[Claim]:
             ]
             if not anchors_here:
                 continue
+            date_spans = [match.span() for match in _DATE_TOKEN.finditer(clause)]
             seen: set[str] = set()
             for num_m in re.finditer(_NUMBER, clause):
                 start, end = num_m.span()
+                if any(start >= d_start and end <= d_end for d_start, d_end in date_spans):
+                    continue
                 # Skip durations / zones / percentages / cadence.
                 if _NON_CLAIM_AFTER.match(clause[start:]):
                     continue
@@ -173,10 +198,11 @@ def verify_response(text: str, registry: MetricRegistry) -> VerificationResult:
     (contracts §3). Deterministic — no clock, no randomness, no LLM."""
     result = VerificationResult()
     for claim in _extract_claims(text):
-        expected = registry.get(claim.metric)
-        if expected is None:
+        expected_values = registry.values_for(claim.metric, sentence=claim.sentence)
+        if not expected_values:
             result.unretrieved.append(claim)
             continue
+        expected = min(expected_values, key=lambda value: abs(claim.stated_value - value))
         tol = max(abs(expected) * VERIFY_TOLERANCE_PCT / 100.0, 0.5)
         if abs(claim.stated_value - expected) <= tol:
             result.passed.append(claim)

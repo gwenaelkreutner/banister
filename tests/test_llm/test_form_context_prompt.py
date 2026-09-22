@@ -65,6 +65,16 @@ def test_tsb_shown_as_a_bare_number_without_a_narrative_label():
         assert narrative not in prompt
 
 
+def test_fitness_context_marks_a_stale_source_date():
+    prompt = build_system_prompt(
+        first_name="Jean", profile=_profile(),
+        metrics=FitnessMetrics(atl=22, ctl=34, tsb=12),
+        recent_logs=[], plan=None, today=date(2026, 9, 21),
+        fitness_as_of=date(2026, 9, 19), fitness_is_stale=True,
+    )
+    assert "Données intervals.icu au 19/09 (pas de donnée plus récente)" in prompt
+
+
 def test_detected_phase_still_carries_the_qualitative_read():
     phase = PhaseDetectionResult(
         detected_phase="base", confidence="medium", reason_codes=[],

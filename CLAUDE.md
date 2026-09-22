@@ -872,6 +872,27 @@ Trois corrections dans `app/llm/tools.py::build_system_prompt()`, aucune n'est u
 
 **Import supprimé** : `tsb_label` n'est plus importé dans `tools.py` (un seul usage, maintenant retiré).
 
+## Contexte chat chaud et historique à la demande (hors spec — 2026-09-22)
+
+Le chat n'injecte plus un historique détaillé de sept séances à chaque tour. `run_chat()` borne ses
+données d'entraînement à 90 jours, place seulement la dernière séance dans le prompt, puis ajoute deux
+agrégats déterministes (7 et 28 jours : nombre de séances, TSS, complétude RPE). CTL/ATL/TSB restent dans
+le contexte chaud, accompagnés de leur date source intervals.icu et d'un avertissement explicite si elle
+est périmée.
+
+Les détails historiques passent par quatre outils de lecture bornés dans
+`app/services/coach_queries.py` : `get_fitness_history`, `get_training_trend`,
+`get_session_detail` et `get_wellness_history`. `get_upcoming_sessions` devient aussi une fenêtre de
+plan (`start_offset`, jusqu'à 42 jours). Ces outils ne calculent jamais de charge : ils rendent seulement
+des données datées depuis SQLite/intervals.icu.
+
+Les appels natifs d'outils de lecture indépendants sont exécutés en parallèle dans
+`run_agentic_loop()`. Chaque appel utilise une `AsyncSession` dédiée : une même session SQLAlchemy n'est
+jamais partagée entre tâches concurrentes. Les écritures restent séquentielles dans la session de requête.
+
+La vérification de réponse accepte une valeur historique seulement si le coach cite sa date (`YYYY-MM-DD`
+ou `JJ/MM`) ; la valeur chaude reste donc autoritaire pour toute affirmation non datée.
+
 ## Mesure du coût LLM (hors spec — construit le 2026-09-18)
 
 Chaque appel API renvoie ses tokens (`usage.prompt_tokens`/`.completion_tokens`), mais rien ne les gardait

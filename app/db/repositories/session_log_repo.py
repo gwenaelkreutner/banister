@@ -142,6 +142,26 @@ async def get_recent_for_user(
     return list(result.scalars().all())
 
 
+async def get_in_range(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    start: date,
+    end: date,
+) -> list[SessionLog]:
+    """Completed or unplanned sessions in an explicit inclusive range."""
+    result = await session.execute(
+        select(SessionLog)
+        .where(
+            SessionLog.user_id == user_id,
+            SessionLog.status.in_(["done", "unplanned"]),
+            SessionLog.logged_date >= start,
+            SessionLog.logged_date <= end,
+        )
+        .order_by(SessionLog.logged_date.asc())
+    )
+    return list(result.scalars().all())
+
+
 async def get_by_source_activity(
     session: AsyncSession,
     source_activity_id: str,

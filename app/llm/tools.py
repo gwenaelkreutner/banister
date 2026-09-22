@@ -5,7 +5,7 @@ Définitions des outils LLM (format OpenAI-compatible) pour le chat agentique.
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from app.engine.atl_ctl import FitnessMetrics, compute_fitness
+from app.engine.atl_ctl import FitnessMetrics
 from app.engine.freestyle_selector import VALID_WORKOUT_TYPES
 from app.engine.rpe import rpe_emoji as _rpe_emoji_for
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
@@ -18,20 +18,113 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "get_fitness_history",
+            "description": (
+                "Récupère l'ÉVOLUTION passée de CTL, ATL et TSB. Utilise seulement si "
+                "la question compare une période, demande une tendance ou explique une évolution. "
+                "Les valeurs actuelles sont déjà dans le contexte."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "minimum": 7, "maximum": 365},
+                    "granularity": {
+                        "type": "string", "enum": ["daily", "weekly"],
+                        "description": (
+                            "weekly pour plus de 30 jours, sauf demande explicite contraire."
+                        ),
+                    },
+                },
+                "required": ["days", "granularity"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_training_trend",
+            "description": (
+                "Récupère charge, durée et nombre de séances par semaine. Utilise pour une "
+                "question de régularité, volume, progression ou adhérence sur une période."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "minimum": 7, "maximum": 90},
+                },
+                "required": ["days"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_session_detail",
+            "description": (
+                "Récupère données détaillées d'une séance passée : puissance, FC, TSS, RPE, "
+                "zones et qualité. Utilise quand la dernière séance du contexte ne suffit pas "
+                "ou quand l'athlète cite une date précise."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string", "description": "Date AAAA-MM-JJ."},
+                },
+                "required": ["date"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_wellness_history",
+            "description": (
+                "Récupère l'historique de signaux wellness choisis. Utilise pour une question "
+                "sur évolution sommeil, HRV, FC repos, fatigue, stress, motivation ou poids."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "minimum": 7, "maximum": 90},
+                    "metrics": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "hrv", "resting_hr", "sleep_score", "fatigue", "stress",
+                                "motivation", "weight_kg",
+                            ],
+                        },
+                        "maxItems": 4,
+                    },
+                    "granularity": {"type": "string", "enum": ["daily", "weekly"]},
+                },
+                "required": ["days", "metrics", "granularity"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_upcoming_sessions",
             "description": (
-                "Récupère les séances planifiées dans les prochains jours. "
-                "Utilise cet outil quand l'athlète demande son programme, "
-                "sa séance de demain, ou ce qu'il doit faire ce week-end."
+                "Récupère une fenêtre du plan. Utilise cet outil quand l'athlète demande "
+                "son programme, sa séance de demain, ce week-end ou une semaine précise."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "days": {
                         "type": "integer",
-                        "description": "Nombre de jours à récupérer (1 à 14).",
+                        "description": "Nombre de jours à récupérer (1 à 42).",
                         "minimum": 1,
-                        "maximum": 14,
+                        "maximum": 42,
+                    },
+                    "start_offset": {
+                        "type": "integer",
+                        "description": "0=aujourd'hui, 7=dans une semaine, -7=semaine passée.",
+                        "minimum": -7,
+                        "maximum": 56,
                     },
                 },
                 "required": ["days"],
@@ -391,6 +484,16 @@ _GOAL_ONLY_TOOLS = frozenset(
 )
 _FREESTYLE_ONLY_TOOLS = frozenset({"get_freestyle_session_suggestion"})
 
+# These calls never write and do not depend on another tool result from the same wave.
+# `run_chat` executes them with independent read sessions before `asyncio.gather()`.
+PARALLEL_READ_TOOLS = frozenset({
+    "get_upcoming_sessions",
+    "get_fitness_history",
+    "get_training_trend",
+    "get_session_detail",
+    "get_wellness_history",
+})
+
 
 def tools_for_mode(coaching_mode: str) -> list[dict]:
     """Filters `TOOL_DEFINITIONS` by coaching mode (`"goal"` or `"freestyle"`) before it
@@ -520,6 +623,8 @@ def build_system_prompt(
     recent_logs: list,
     plan: TrainingPlanSchema | None,
     today: date,
+    fitness_as_of: date | None = None,
+    fitness_is_stale: bool = False,
     session_logs: list | None = None,
     coach_memory: list | None = None,
     athlete_notes: dict | None = None,
@@ -529,6 +634,7 @@ def build_system_prompt(
     wellness_today: object | None = None,
     recovery_index: float | None = None,
     detected_phase: object | None = None,
+    training_summary: list[str] | None = None,
 ) -> str:
     p = profile
 
@@ -596,11 +702,19 @@ def build_system_prompt(
     # détectée ci-dessous, elle, est calculée sur le comportement réel — c'est elle qui
     # porte la lecture qualitative, pas le TSB seul.
     if metrics:
+        as_of_note = (
+            f"Données intervals.icu au {fitness_as_of.strftime('%d/%m')}"
+            if fitness_as_of is not None
+            else "Estimation locale"
+        )
+        if fitness_is_stale:
+            as_of_note += " (pas de donnée plus récente)"
         lines += [
             "",
             "FORME ACTUELLE :",
             f"CTL {metrics.ctl:.0f} (fitness) | ATL {metrics.atl:.0f} (fatigue) | "
             f"TSB {metrics.tsb:+.0f}",
+            as_of_note,
         ]
     else:
         lines += ["", "FORME ACTUELLE : pas encore de données (aucune séance loggée)."]
@@ -618,6 +732,10 @@ def build_system_prompt(
 
     if recovery_index is not None:
         lines.append(f"Indice de récupération : {recovery_index:.2f}")
+
+    if training_summary:
+        lines += ["", "CHARGE RÉCENTE :"]
+        lines.extend(f"- {line}" for line in training_summary)
 
     # Wellness qualitatif du jour — sous-ensemble volontairement restreint (sommeil,
     # fatigue, stress, mood, motivation) parmi les ~31 champs bruts désormais stockés

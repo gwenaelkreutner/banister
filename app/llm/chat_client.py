@@ -6,6 +6,7 @@ Compatibilité étendue : détecte les tool calls au format texte (TOOLCALL>[...
 émis par les modèles qui ne supportent pas le function calling natif OpenAI.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -73,6 +74,7 @@ async def run_agentic_loop(
     tool_executor,  # callable(name: str, args: dict) -> dict
     model: str | None = None,
     max_iterations: int = 3,
+    parallel_tool_names: frozenset[str] = frozenset(),
 ) -> tuple[str, str | None, dict | None, dict, list[dict]]:
     """
     Exécute la boucle agentique tool_use → tool_result jusqu'à end_turn.
@@ -248,27 +250,32 @@ async def run_agentic_loop(
             ],
         })
 
-        # Exécuter chaque tool call
-        for tc in tool_calls:
-            tool_used = tc.function.name
-            logger.info("[LLM TOOL →] %s | args: %.200s", tc.function.name, tc.function.arguments)
+        async def execute_native_tool(tc):
+            name = tc.function.name
+            logger.info("[LLM TOOL →] %s | args: %.200s", name, tc.function.arguments)
             args: dict = {}
             try:
                 args = json.loads(tc.function.arguments)
-                result = await tool_executor(tc.function.name, args)
-                last_tool_result = result
-                logger.info("[LLM TOOL ←] %s | result: %.200s", tc.function.name, str(result))
+                result = await tool_executor(name, args)
+                logger.info("[LLM TOOL ←] %s | result: %.200s", name, str(result))
             except Exception as e:
-                logger.warning("Erreur tool %s: %s", tc.function.name, e)
+                logger.warning("Erreur tool %s: %s", name, e)
                 result = {"error": str(e)}
-                last_tool_result = result
+            return name, args, result, tc.id
 
-            tool_calls_log.append({"name": tc.function.name, "args": args, "result": result})
+        if all(tc.function.name in parallel_tool_names for tc in tool_calls):
+            executed_tools = await asyncio.gather(*(execute_native_tool(tc) for tc in tool_calls))
+        else:
+            executed_tools = [await execute_native_tool(tc) for tc in tool_calls]
 
+        for name, args, result, tool_call_id in executed_tools:
+            tool_used = name
+            last_tool_result = result
+            tool_calls_log.append({"name": name, "args": args, "result": result})
             all_messages.append({
                 "role": "tool",
                 "content": json.dumps(result, ensure_ascii=False, default=str),
-                "tool_call_id": tc.id,
+                "tool_call_id": tool_call_id,
             })
 
     # Fallback : dernier appel sans tools si on a épuisé les itérations

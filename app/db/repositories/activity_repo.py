@@ -46,6 +46,22 @@ async def get_for_user(session: AsyncSession, user_id, days: int = 49) -> list[A
     return list(result.scalars().all())
 
 
+async def get_in_range(
+    session: AsyncSession, user_id, start: date, end: date
+) -> list[Activity]:
+    """Activities in an explicit inclusive range, oldest first."""
+    result = await session.execute(
+        select(Activity)
+        .where(
+            Activity.user_id == user_id,
+            Activity.activity_date >= start,
+            Activity.activity_date <= end,
+        )
+        .order_by(Activity.activity_date.asc())
+    )
+    return list(result.scalars().all())
+
+
 async def clear_for_user(session: AsyncSession, user_id) -> None:
     """Supprime toutes les activités d'un utilisateur (utile pour les tests)."""
     await session.execute(delete(Activity).where(Activity.user_id == user_id))
