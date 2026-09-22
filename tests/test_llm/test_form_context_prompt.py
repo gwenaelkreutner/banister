@@ -120,10 +120,21 @@ def test_rpe_completeness_is_a_stated_fact():
     assert "Ressenti (RPE) renseigné sur 1/3 de ces séances." in prompt
 
 
+def test_single_recent_session_uses_singular_heading_and_explicit_rpe_label():
+    prompt = build_system_prompt(
+        first_name="Jean", profile=_profile(), metrics=None,
+        recent_logs=[_log(date(2026, 9, 21), rpe=5.0)], plan=None, today=date(2026, 9, 21),
+    )
+    assert "DERNIÈRE SÉANCE :" in prompt
+    assert "7 DERNIÈRES SÉANCES" not in prompt
+    assert "RPE 5/10 (modéré)" in prompt
+    assert "Ressenti (RPE) renseigné" not in prompt
+
+
 def test_no_recent_logs_still_renders_cleanly():
     prompt = build_system_prompt(
         first_name="Jean", profile=_profile(), metrics=None,
         recent_logs=[], plan=None, today=date(2026, 9, 21),
     )
-    assert "7 DERNIÈRES SÉANCES : aucune séance enregistrée." in prompt
+    assert "DERNIÈRE SÉANCE : aucune séance enregistrée." in prompt
     assert "Ressenti (RPE)" not in prompt

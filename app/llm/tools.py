@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from app.engine.atl_ctl import FitnessMetrics
 from app.engine.freestyle_selector import VALID_WORKOUT_TYPES
-from app.engine.rpe import rpe_emoji as _rpe_emoji_for
+from app.engine.rpe import rpe_label, rpe_emoji as _rpe_emoji_for
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
 from app.engine.zones import compute_hr_zones
 from app.llm.prompt_fence import sanitize_untrusted_text, wrap_untrusted_block
@@ -758,7 +758,7 @@ def build_system_prompt(
         if w_parts:
             lines.append(f"Wellness du jour (échelle 1-4, 1=meilleur état) : {' | '.join(w_parts)}")
 
-    # 7 dernières séances (SessionLog ou Activity pré-plan, déjà triés et limités à 7).
+    # Recent sessions (SessionLog or pre-plan Activity), already sorted and bounded by caller.
     # Deux faits rendus explicites plutôt que laissés à déduire (trouvé en test live
     # 2026-09-21, voir CLAUDE.md) : l'écart en jours depuis la séance précédente — un
     # LLM ne fait pas fiablement l'arithmétique de dates tout seul, donc un trou de 11
@@ -766,14 +766,16 @@ def build_system_prompt(
     # qu'un manque de RPE massif soit un chiffre visible plutôt qu'une série de tirets
     # qu'on peut glisser dessus sans y prêter attention.
     if recent_logs:
-        lines += ["", "7 DERNIÈRES SÉANCES :"]
+        one_session = len(recent_logs) == 1
+        heading = "DERNIÈRE SÉANCE" if one_session else f"{len(recent_logs)} DERNIÈRES SÉANCES"
+        lines += ["", f"{heading} :"]
         rpe_known = 0
         previous_date = None
         for item in recent_logs:
             if hasattr(item, "logged_date"):  # SessionLog
                 item_date = item.logged_date
                 dur_str = f"{item.duration_minutes_actual}min" if item.duration_minutes_actual else "—"
-                rpe_str = _rpe_emoji_for(item.rpe)
+                rpe_str = rpe_label(item.rpe) if item.rpe is not None else "—"
                 if item.rpe is not None:
                     rpe_known += 1
                 tss_str = f"{item.tss_actual:.0f}" if item.tss_actual else "—"
@@ -795,9 +797,12 @@ def build_system_prompt(
                 f"- {item_date.strftime('%d/%m')}{gap_str} | {dur_str} | RPE {rpe_str} | "
                 f"TSS {tss_str} | {hr_str} | {pw_str}{env_str}"
             )
-        lines.append(f"Ressenti (RPE) renseigné sur {rpe_known}/{len(recent_logs)} de ces séances.")
+        if not one_session:
+            lines.append(
+                f"Ressenti (RPE) renseigné sur {rpe_known}/{len(recent_logs)} de ces séances."
+            )
     else:
-        lines += ["", "7 DERNIÈRES SÉANCES : aucune séance enregistrée."]
+        lines += ["", "DERNIÈRE SÉANCE : aucune séance enregistrée."]
 
     # Semaine courante du plan — avec paires plan/réalisé si session_logs fourni
     if plan and plan.start_date:
