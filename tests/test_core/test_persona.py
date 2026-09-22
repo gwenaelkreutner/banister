@@ -26,6 +26,13 @@ def test_coach_is_the_french_default_voice():
     assert p.name == "Coach"
 
 
+def test_coach_keeps_its_tool_routing_rules():
+    p = load_persona("coach-default")
+    assert "propose_session_adjustment" in p.system_prompt
+    assert "propose_plan_modification" in p.system_prompt
+    assert "reduce_50" in p.system_prompt
+
+
 def test_coach_default_always_resolves():
     """The FR-026 fallback target must exist and load."""
     assert load_persona("coach-default").system_prompt
