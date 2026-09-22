@@ -33,6 +33,17 @@ def test_coach_keeps_its_tool_routing_rules():
     assert "reduce_50" in p.system_prompt
 
 
+def test_marseillais_voice_is_unmistakably_local():
+    p = load_persona("marseillais")
+    assert "oh fan" in p.system_prompt.lower()
+    assert "dégun" in p.system_prompt.lower()
+    assert "tarpin" in p.system_prompt.lower()
+    assert "putain con" in p.system_prompt.lower()
+    assert "au moins deux" in p.ux_prompt.lower()
+    assert "cagnard" in p.ux_prompt.lower()
+    assert "fatigue, douleur, blessure ou risque" in p.system_prompt.lower()
+
+
 def test_coach_default_always_resolves():
     """The FR-026 fallback target must exist and load."""
     assert load_persona("coach-default").system_prompt
