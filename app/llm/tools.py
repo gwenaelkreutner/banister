@@ -517,6 +517,10 @@ def tools_for_mode(coaching_mode: str) -> list[dict]:
 # ── Construction du system prompt ─────────────────────────────────────────────
 
 DAY_NAMES_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+MONTH_NAMES_FR = [
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+]
 WORKOUT_FR = {
     "long_ride": "Sortie longue",
     "intervals": "Intervalles",
@@ -540,6 +544,25 @@ LOCATION_FR = {
     "knee": "genou", "back": "dos", "shoulder": "épaule",
     "hip": "hanche", "ankle": "cheville", "other": "autre zone",
 }
+
+
+def _temporal_reference_rules(now: datetime) -> list[str]:
+    """State one authoritative temporal reference for the whole model turn."""
+    current_date = now.date()
+    long_date = (
+        f"{DAY_NAMES_FR[current_date.weekday()].lower()} {current_date.day} "
+        f"{MONTH_NAMES_FR[current_date.month - 1]} {current_date.year}"
+    )
+    return [
+        "REPÈRE TEMPOREL — SOURCE DE VÉRITÉ POUR CE TOUR :",
+        f"Nous sommes le {long_date}, {now.strftime('%H:%M')} à Paris "
+        f"({current_date.isoformat()}).",
+        "Interprète toute date relative de l'athlète (aujourd'hui, hier, demain, "
+        "la semaine dernière, dans N jours) exclusivement par rapport à cette référence, "
+        "jamais par rapport au calendrier du plan ni à une supposition.",
+        "Avant tout appel d'outil contenant une date, vérifie que la date ISO envoyée "
+        "correspond bien à cette interprétation.",
+    ]
 
 
 def _format_week_pairs(pairs: list, week_num: int, phase: str, today: date) -> list[str]:
@@ -863,10 +886,10 @@ def build_system_prompt(
     # toujours ce provider, cf. app/llm/chat_client.py — pas de breakpoint explicite
     # nécessaire, juste un préfixe stable). Le bloc d'identité coach, lui, est 100 %
     # statique et vit désormais dans build_ux_system_prompt (préfixe stable).
-    lines += [
-        "",
-        f"📅 {DAY_NAMES_FR[now_paris.weekday()]} {now_paris.strftime('%d/%m/%Y — %H:%M')}",
-    ]
+    lines += ["", *_temporal_reference_rules(now_paris)]
+    lines.append(
+        f"📅 {DAY_NAMES_FR[now_paris.weekday()]} {now_paris.strftime('%d/%m/%Y — %H:%M')}"
+    )
 
     return "\n".join(lines)
 
