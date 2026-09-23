@@ -188,6 +188,36 @@ def _markup_data(markup) -> list[str]:
     return [btn.callback_data for row in markup.inline_keyboard for btn in row]
 
 
+def test_setup_goal_keyboard_offers_freestyle_not_other():
+    from app.bot.routers.setup import goal_keyboard
+
+    callbacks = _markup_data(goal_keyboard())
+
+    assert "setup:goal:freestyle" in callbacks
+    assert "setup:goal:other" not in callbacks
+
+
+async def test_setup_freestyle_skips_the_goal_date_when_no_plan_exists(monkeypatch):
+    from app.bot.routers.setup import setup_goal
+    from app.bot.states import SetupStates
+
+    async def _no_active_plan(_session, _user_id):
+        return None
+
+    monkeypatch.setattr("app.db.repositories.plan_repo.get_active_plan", _no_active_plan)
+    state = _FakeState({})
+    callback = _FakeCallback("setup:goal:freestyle")
+    user = type("User", (), {"id": 1})()
+
+    await setup_goal(callback, state, object(), user)
+
+    data = await state.get_data()
+    assert state.state == SetupStates.VOLUME
+    assert data["setup_mode"] == "freestyle"
+    assert data["goal"] == "fitness"
+    assert data["target_date"] is None
+
+
 async def test_setup_volume_preselects_the_legacy_default_days():
     from app.bot.routers.setup import _DEFAULT_AVAILABLE_DAYS, setup_volume
     from app.bot.states import SetupStates

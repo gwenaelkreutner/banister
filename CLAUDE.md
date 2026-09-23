@@ -754,6 +754,12 @@ ne connaît.
 /setup → read_athlete_profile() → CONFIRM_PROFILE → [CORRECT_VALUE]
        → GOAL → DATE → VOLUME (voulu) → AVAILABLE_DAYS (jours dispo) → CONSTRAINTS
        → _finalize_setup() → plan → disclaimer (1×)
+
+Le choix « Pas d'objectif / mode libre » remplace « Autre » : il saute DATE, conserve
+les préférences saisies et finalise sans créer de plan actif. Depuis un plan actif,
+ce choix renvoie vers `/goal`, seul flux qui confirme le changement et retire les
+séances calendrier en sécurité. `/setup` reste le bon flux pour modifier volume,
+jours disponibles ou contraintes avec un plan actif (confirmation avant remplacement).
 ```
 
 - **AVAILABLE_DAYS** (ajouté 2026-09-18) : grille de jours à cocher/décocher, pré-sélectionnée sur

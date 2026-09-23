@@ -115,7 +115,7 @@ def goal_keyboard() -> InlineKeyboardMarkup:
         ("🎯 Événement cible", "setup:goal:event"),
         ("💚 Forme générale", "setup:goal:fitness"),
         ("⚡ Performance", "setup:goal:performance"),
-        ("🔹 Autre", "setup:goal:other"),
+        ("🚴 Pas d'objectif / mode libre", "setup:goal:freestyle"),
     ])
 
 
@@ -400,8 +400,32 @@ async def correct_value(message: Message, state: FSMContext) -> None:
 # ── GOAL ─────────────────────────────────────────────────────────────────────
 
 @router.callback_query(SetupStates.GOAL, F.data.startswith("setup:goal:"))
-async def setup_goal(callback: CallbackQuery, state: FSMContext) -> None:
+async def setup_goal(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, user
+) -> None:
     goal = callback.data.split(":")[2]
+    if goal == "freestyle":
+        active_plan = (
+            await repo.plan_repo.get_active_plan(session, user.id) if user is not None else None
+        )
+        if active_plan is not None:
+            await state.clear()
+            await state.set_state(PlanStates.ACTIVE)
+            await callback.message.edit_text(
+                "Pour passer d'un plan au mode libre, utilise /goal : il te demandera "
+                "confirmation et retirera proprement les seances publiees."
+            )
+            await callback.answer()
+            return
+        await state.update_data(goal="fitness", target_date=None, setup_mode="freestyle")
+        await state.set_state(SetupStates.VOLUME)
+        await callback.message.edit_text(
+            "En mode libre, je garderai cette configuration pour adapter les seances "
+            "que tu demanderas. Combien d'heures par semaine veux-tu pouvoir t'entrainer ?",
+            reply_markup=volume_keyboard(),
+        )
+        await callback.answer()
+        return
     await state.update_data(goal=goal)
     await state.set_state(SetupStates.DATE)
     await callback.message.edit_text(
@@ -624,6 +648,38 @@ async def _finalize_setup(
         pass
 
     profile = _build_profile(data, fitness)
+
+    # Save the confirmed configuration in both modes. Freestyle deliberately has no
+    # active TrainingPlan: it is coaching on demand, not a zero-length objective plan.
+    profile_data = profile.model_dump(mode="json")
+    profile_data["read_from_source_at"] = data.get("read_from_source_at")
+    if data.get("corrections_deferred"):
+        profile_data["corrections_deferred"] = data["corrections_deferred"]
+    existing_profile = await repo.profile_repo.get_by_user_id(session, user.id)
+    if existing_profile is None:
+        await repo.profile_repo.create(session, user.id, profile_data)
+    else:
+        await repo.profile_repo.update(session, existing_profile, profile_data)
+
+    if user.onboarding_completed_at is None:
+        user.onboarding_completed_at = datetime.now(UTC)
+
+    if data.get("setup_mode") == "freestyle":
+        await state.clear()
+        await state.set_state(PlanStates.ACTIVE)
+        await message.answer(
+            "🚴 <b>Mode libre activé</b>\n\n"
+            "Ta configuration est enregistrée. Demande-moi une séance quand tu veux : "
+            "je l'adapterai à ta forme du moment.",
+            parse_mode="HTML",
+        )
+        if user.disclaimer_acknowledged_at is None:
+            from app.llm.prompts import DISCLAIMER_TEXT
+
+            await message.answer(DISCLAIMER_TEXT, parse_mode="HTML")
+            await repo.user_repo.ack_disclaimer(session, user)
+        return
+
     plan = generate_plan(profile)
 
     plan_dict = plan.model_dump(mode="json")
@@ -639,20 +695,6 @@ async def _finalize_setup(
         start_date=start_date,
         end_date=end_date,
     )
-
-    # Save/overwrite athlete profile — with the source-read provenance markers (FR-005).
-    profile_data = profile.model_dump(mode="json")
-    profile_data["read_from_source_at"] = data.get("read_from_source_at")
-    if data.get("corrections_deferred"):
-        profile_data["corrections_deferred"] = data["corrections_deferred"]
-    existing_profile = await repo.profile_repo.get_by_user_id(session, user.id)
-    if existing_profile is None:
-        await repo.profile_repo.create(session, user.id, profile_data)
-    else:
-        await repo.profile_repo.update(session, existing_profile, profile_data)
-
-    if user.onboarding_completed_at is None:
-        user.onboarding_completed_at = datetime.now(UTC)
 
     await state.clear()
     await state.set_state(PlanStates.ACTIVE)
