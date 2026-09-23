@@ -120,6 +120,10 @@ class _FakeState:
     async def set_state(self, s):
         self.state = s
 
+    async def clear(self):
+        self._data.clear()
+        self.state = None
+
 
 class _FakeMessage:
     def __init__(self, text: str):
@@ -232,6 +236,24 @@ async def test_days_confirm_advances_to_constraints_when_enough_days():
     assert "contrainte santé" in cb.message.texts[-1]
 
 
+async def test_repeated_setup_requires_confirmation_before_replacing_a_plan(monkeypatch):
+    from app.bot.routers.setup import _prepare_setup_finalization
+    from app.bot.states import SetupStates
+
+    async def _active_plan(_session, _user_id):
+        return object()
+
+    monkeypatch.setattr("app.db.repositories.plan_repo.get_active_plan", _active_plan)
+    state = _FakeState({"goal": "fitness"})
+    message = _FakeMessage("")
+    user = type("User", (), {"id": 1})()
+
+    await _prepare_setup_finalization(message, state, object(), user)
+
+    assert state.state == SetupStates.CONFIRM_REPLACE
+    assert "plan actif" in message.sent[-1]
+
+
 def test_build_profile_uses_the_athletes_chosen_days():
     from app.bot.routers.setup import _build_profile
 
@@ -250,6 +272,23 @@ def test_build_profile_falls_back_to_default_when_days_missing():
     fsm = {"goal": "fitness", "hours_per_week": 6, "health_constraints": False}
     profile = _build_profile(fsm)
     assert profile.availability.preferred_days == _DEFAULT_AVAILABLE_DAYS
+
+
+def test_build_profile_marks_explicitly_supplied_missing_values_as_declared():
+    profile = _build_profile({
+        "goal": "fitness", "hours_per_week": 6, "health_constraints": False,
+        "supplied_profile_values": {
+            "age": {"value": 42, "source": "declared"},
+            "max_hr": {"value": 188, "source": "declared"},
+            "resting_hr": {"value": 52, "source": "declared"},
+        },
+    })
+
+    assert profile.physio.age == 42
+    assert profile.physio.hr_max == 188
+    assert profile.physio.hr_max_source == "declared"
+    assert profile.physio.hr_rest == 52
+    assert profile.physio.hr_rest_source == "declared"
 
 
 def test_recap_lists_the_chosen_days_in_french():

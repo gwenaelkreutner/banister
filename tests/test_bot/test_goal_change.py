@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 
 from app.bot.routers.goal import (
     _enter_freestyle_mode,
+    _plan_change_preview,
     _regenerate,
     cmd_goal,
     goal_confirm_apply,
@@ -208,10 +209,21 @@ async def _make_user_no_plan(db_session, telegram_id: int = 42) -> User:
     return u
 
 
-async def test_goal_no_longer_blocks_without_an_active_plan(db_session):
+async def test_goal_no_longer_blocks_without_an_active_plan(db_session, monkeypatch):
     """spec 009 research Decision 2 — /goal is also the entry point from freestyle mode."""
     u = await _make_user_no_plan(db_session)
     msg, state = _Msg(), _State()
+
+    async def _fresh_profile(_client):
+        from app.providers.intervals.athlete_profile import map_athlete_profile
+
+        return map_athlete_profile({
+            "sportSettings": [{"types": ["Ride"], "ftp": 250, "max_hr": 190}],
+            "icu_resting_hr": 55,
+            "icu_date_of_birth": "1990-01-01",
+        })
+
+    monkeypatch.setattr("app.bot.routers.goal.read_athlete_profile", _fresh_profile)
 
     await cmd_goal(msg, state, db_session, u)
 
@@ -249,6 +261,45 @@ async def test_goal_freestyle_option_deactivates_plan_and_withdraws_calendar(
     # Nothing else was touched (FR-012).
     logs_after = await session_log_repo.get_all_for_user(db_session, u.id)
     assert len(logs_after) == 6
+
+
+async def test_freestyle_choice_requires_confirmation_before_changing_the_plan(db_session):
+    u = await _populate(db_session)
+    plan = await plan_repo.get_active_plan(db_session, u.id)
+    callback, state = _Callback("goal:type:freestyle"), _State()
+
+    await goal_type(callback, state, db_session, u)
+
+    assert state.state == GoalStates.CONFIRM_FREESTYLE
+    assert await plan_repo.get_active_plan(db_session, u.id) == plan
+    assert callback.message.markups[-1] is not None
+
+
+async def test_failed_calendar_withdrawal_keeps_the_plan_active(db_session, monkeypatch):
+    u = await _populate(db_session)
+
+    async def _partial_failure(session, client, user, plan):
+        return (1, 1)
+
+    monkeypatch.setattr(
+        "app.services.publication.withdraw_all_publications", _partial_failure
+    )
+    callback, state = _Callback("goal:freestyle:apply"), _State()
+
+    await _enter_freestyle_mode(callback, state, db_session, u)
+
+    assert await plan_repo.get_active_plan(db_session, u.id) is not None
+    assert "reste actif" in callback.message.sent[-1]
+
+
+def test_goal_preview_compares_first_week_and_peak_load():
+    old = generate_plan(make_profile(goal_type="event"))
+    new = generate_plan(make_profile(goal_type="fitness"))
+
+    preview = _plan_change_preview(old, new)
+
+    assert "Semaine 1" in preview
+    assert "Charge au pic" in preview
 
 
 async def test_goal_freestyle_option_is_idempotent_when_already_freestyle(db_session):
@@ -337,6 +388,27 @@ async def test_goal_date_shows_confirmation_when_a_plan_is_active(db_session):
     assert plan is not None
     profile = await profile_repo.get_by_user_id(db_session, u.id)
     assert profile.profile["objective"]["type"] == "event"
+
+
+async def test_goal_uses_the_fresh_source_thresholds_for_its_preview(db_session):
+    u = await _populate(db_session)
+    msg, state = _Msg(text=_FAR_ENOUGH_DATE), _State()
+    await state.update_data(
+        goal="fitness",
+        _fresh_source_profile={
+            "ftp": 310,
+            "max_hr": 195,
+            "resting_hr": 50,
+            "age": 36,
+            "coaching_mode": "power",
+        },
+    )
+
+    await goal_date(msg, state, db_session, u)
+
+    pending = state._d["_pending_profile"]
+    assert pending["equipment"]["ftp"] == 310
+    assert pending["equipment"]["ftp_source"] == "source"
 
 
 async def test_goal_date_from_freestyle_applies_immediately_without_confirmation(db_session):

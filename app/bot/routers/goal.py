@@ -20,6 +20,7 @@ from app.config import settings
 from app.db import repositories as repo
 from app.engine.plan_builder import generate_plan
 from app.engine.schemas import TrainingPlanSchema
+from app.providers.intervals.athlete_profile import read_athlete_profile, stamp
 from app.providers.intervals.client import IntervalsClient
 from app.services.fitness import get_current_fitness
 
@@ -39,6 +40,13 @@ def _confirm_regen_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Confirmer", callback_data="goal:confirm:apply"),
         InlineKeyboardButton(text="❌ Annuler", callback_data="goal:confirm:cancel"),
+    ]])
+
+
+def _confirm_freestyle_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Passer en mode libre", callback_data="goal:freestyle:apply"),
+        InlineKeyboardButton(text="Annuler", callback_data="goal:freestyle:cancel"),
     ]])
 
 
@@ -66,9 +74,29 @@ async def cmd_goal(message: Message, state: FSMContext, session: AsyncSession, u
         await message.answer("Profil introuvable — relance /setup.")
         return
 
+    try:
+        fresh = await read_athlete_profile(_client())
+    except Exception:
+        logger.exception("read_athlete_profile failed during /goal")
+        await message.answer(
+            "Impossible de relire ton profil intervals.icu. Rien n'a changé : "
+            "réessaie /goal plus tard."
+        )
+        return
+
     plan = await repo.plan_repo.get_active_plan(session, user.id)
     await state.clear()
-    await state.update_data(_old_plan_id=str(plan.id) if plan else None)
+    await state.update_data(
+        _old_plan_id=str(plan.id) if plan else None,
+        _fresh_source_profile={
+            "ftp": fresh.ftp.value,
+            "max_hr": fresh.max_hr.value,
+            "resting_hr": fresh.resting_hr.value,
+            "age": fresh.age.value,
+            "coaching_mode": fresh.coaching_mode,
+            "read_from_source_at": stamp(),
+        },
+    )
     await state.set_state(GoalStates.GOAL)
     await message.answer(
         "On change d'objectif. Je garde tout le reste — tes séances faites, ton "
@@ -84,7 +112,21 @@ async def goal_type(
     goal = callback.data.split(":")[2]
 
     if goal == "freestyle":
-        await _enter_freestyle_mode(callback, state, session, user)
+        plan = await repo.plan_repo.get_active_plan(session, user.id)
+        if plan is None:
+            await _enter_freestyle_mode(callback, state, session, user)
+            return
+        entries = await repo.publication_repo.get_active_entries_for_plan(
+            session, user.id, plan.id
+        )
+        await state.set_state(GoalStates.CONFIRM_FREESTYLE)
+        await callback.message.edit_text(
+            "Passer en mode libre va arrêter ton plan actuel et retirer "
+            f"{len(entries)} séance(s) future(s) publiée(s) de ton calendrier. "
+            "Ton historique et tes réglages sont conservés.",
+            reply_markup=_confirm_freestyle_kb(),
+        )
+        await callback.answer()
         return
 
     await state.update_data(goal=goal)
@@ -93,6 +135,21 @@ async def goal_type(
         "📅 Date de l'objectif ? Format <code>AAAA-MM-JJ</code>, ou <code>aucune</code>.",
         parse_mode="HTML",
     )
+    await callback.answer()
+
+
+@router.callback_query(GoalStates.CONFIRM_FREESTYLE, F.data == "goal:freestyle:apply")
+async def confirm_freestyle_mode(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, user
+) -> None:
+    await _enter_freestyle_mode(callback, state, session, user)
+
+
+@router.callback_query(GoalStates.CONFIRM_FREESTYLE, F.data == "goal:freestyle:cancel")
+async def cancel_freestyle_mode(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.set_state(PlanStates.ACTIVE)
+    await callback.message.edit_text("Mode objectif conservé : ton plan actuel ne change pas.")
     await callback.answer()
 
 
@@ -109,6 +166,36 @@ async def _enter_freestyle_mode(
         await callback.answer()
         return
 
+    # Calendar removal is an external mutation. Complete it before changing local mode:
+    # a partial failure must leave the active plan reachable for a safe retry.
+    try:
+        from app.services.publication import withdraw_all_publications
+
+        withdrawn, failed = await withdraw_all_publications(session, _client(), user, plan)
+    except Exception:
+        logger.warning("calendar withdrawal failed before entering freestyle mode")
+        await state.clear()
+        await state.set_state(PlanStates.ACTIVE)
+        await callback.message.edit_text(
+            "Le calendrier est indisponible : ton plan reste actif et rien n'a été désactivé. "
+            "Réessaie /goal dans un moment."
+        )
+        await callback.answer()
+        return
+    if failed:
+        await state.clear()
+        await state.set_state(PlanStates.ACTIVE)
+        await callback.message.edit_text(
+            f"{withdrawn} séance(s) ont été retirées, mais {failed} échec(s) restent. "
+            "Ton plan reste actif : relance /unpublish ou /goal pour reprendre."
+        )
+        await callback.answer()
+        return
+
+    confirmed_calendar_note = (
+        f"\n{withdrawn} séance(s) retirée(s) de ton calendrier intervals.icu."
+        if withdrawn else ""
+    )
     await repo.plan_repo.deactivate_all_for_user(session, user.id)
 
     from app.db.repositories import journal_repo
@@ -122,22 +209,7 @@ async def _enter_freestyle_mode(
         text="Passage en mode libre — objectif désactivé.",
     )
 
-    withdrawn = 0
-    calendar_note = ""
-    try:
-        from app.services.publication import withdraw_all_publications
-
-        withdrawn, failed = await withdraw_all_publications(session, _client(), user, plan)
-        if withdrawn:
-            calendar_note = (
-                f"\n📅 {withdrawn} séance(s) retirée(s) de ton calendrier intervals.icu "
-                "(elles ne correspondaient plus à rien)."
-            )
-        if failed:
-            calendar_note += f"\n⚠️ {failed} retrait(s) ont échoué — relance /unpublish si besoin."
-    except Exception:
-        logger.warning("Retrait du calendrier impossible en passant en mode libre")
-
+    calendar_note = confirmed_calendar_note
     logs = await repo.session_log_repo.get_all_for_user(session, user.id)
     summary = (
         "🚴 <b>Mode libre activé</b>\n\n"
@@ -183,11 +255,16 @@ async def goal_date(message: Message, state: FSMContext, session: AsyncSession, 
     old_plan = await repo.plan_repo.get_active_plan(session, user.id)
     if old_plan is None:
         await message.answer("⏳ Je régénère ton plan depuis ta forme actuelle…")
-        await _regenerate(message, state, session, user, data["goal"], target_date)
+        await _regenerate(
+            message, state, session, user, data["goal"], target_date,
+            data.get("_fresh_source_profile"),
+        )
         return
 
     await message.answer("⏳ Je prépare le nouveau plan pour confirmation…")
-    new_plan, profile = await _build_new_plan(session, user, data["goal"], target_date)
+    new_plan, profile = await _build_new_plan(
+        session, user, data["goal"], target_date, data.get("_fresh_source_profile")
+    )
     old_schema = TrainingPlanSchema.model_validate(old_plan.plan_technical)
 
     await state.update_data(
@@ -198,6 +275,7 @@ async def goal_date(message: Message, state: FSMContext, session: AsyncSession, 
     )
     await state.set_state(GoalStates.CONFIRM_REGEN)
     date_str = f" le {target_date:%d/%m/%Y}" if target_date else ""
+    await message.answer(_plan_change_preview(old_schema, new_plan), parse_mode="HTML")
     await message.answer(
         "🔎 <b>Nouveau plan proposé</b>\n\n"
         f"{new_plan.weeks_count} semaines (actuellement {old_schema.weeks_count}) — "
@@ -240,7 +318,25 @@ async def goal_confirm_cancel(
     await callback.answer()
 
 
-async def _build_new_plan(session, user, goal: str, target_date: date | None):
+def _plan_change_preview(old: TrainingPlanSchema, new: TrainingPlanSchema) -> str:
+    """Small, deterministic comparison shown before a plan is replaced."""
+    old_first = old.weeks[0] if old.weeks else None
+    new_first = new.weeks[0] if new.weeks else None
+    old_tss = old_first.total_tss_target if old_first else 0
+    new_tss = new_first.total_tss_target if new_first else 0
+    old_sessions = len(old_first.sessions) if old_first else 0
+    new_sessions = len(new_first.sessions) if new_first else 0
+    return (
+        "<b>Aperçu du changement</b>\n"
+        f"Semaine 1 : {old_sessions} séance(s), {old_tss:.0f} TSS "
+        f"-> {new_sessions} seance(s), {new_tss:.0f} TSS\n"
+        f"Charge au pic : {old.peak_weekly_tss:.0f} -> {new.peak_weekly_tss:.0f} TSS/semaine"
+    )
+
+
+async def _build_new_plan(
+    session, user, goal: str, target_date: date | None, fresh_source: dict | None = None,
+):
     """Partie pure de la régénération — aucune écriture DB. Lit le profil et la forme
     actuelle, construit et retourne le nouveau plan + profil, pour aperçu (confirmation)
     ou application immédiate (_regenerate) selon l'appelant."""
@@ -254,6 +350,28 @@ async def _build_new_plan(session, user, goal: str, target_date: date | None):
 
     # Profil inchangé sauf l'objectif : on ne re-demande rien (FR-013).
     pdata = dict(profile_row.profile)
+    if fresh_source is not None:
+        equipment = dict(pdata["equipment"])
+        physio = dict(pdata["physio"])
+        ftp = fresh_source.get("ftp")
+        equipment.update(
+            power_meter=ftp is not None,
+            ftp=int(ftp) if ftp is not None else None,
+            ftp_source="source" if ftp is not None else "estimated",
+        )
+        for key, source_key, origin_key in (
+            ("hr_max", "max_hr", "hr_max_source"),
+            ("hr_rest", "resting_hr", "hr_rest_source"),
+        ):
+            value = fresh_source.get(source_key)
+            if value is not None:
+                physio[key] = int(value)
+                physio[origin_key] = "source"
+        if fresh_source.get("age") is not None:
+            physio["age"] = int(fresh_source["age"])
+        pdata["equipment"] = equipment
+        pdata["physio"] = physio
+        pdata["coaching_mode"] = fresh_source["coaching_mode"]
     pdata["objective"] = {
         "type": goal,
         "target_date": target_date.isoformat() if target_date else None,
@@ -268,13 +386,16 @@ async def _build_new_plan(session, user, goal: str, target_date: date | None):
     return new_plan, profile
 
 
-async def _regenerate(message, state, session, user, goal: str, target_date: date | None) -> None:
+async def _regenerate(
+    message, state, session, user, goal: str, target_date: date | None,
+    fresh_source: dict | None = None,
+) -> None:
     # spec 009 : old_plan is None when this is entered from freestyle mode (no plan to
     # diff against) — every use below is guarded accordingly. Kept as a thin wrapper
     # around _build_new_plan()/_apply_new_plan() so callers that need the whole thing
     # done in one shot (freestyle→goal, and every existing test) see no behavior change.
     old_plan = await repo.plan_repo.get_active_plan(session, user.id)
-    new_plan, profile = await _build_new_plan(session, user, goal, target_date)
+    new_plan, profile = await _build_new_plan(session, user, goal, target_date, fresh_source)
     await _apply_new_plan(
         message, state, session, user, goal, target_date, new_plan, profile, old_plan
     )
@@ -387,7 +508,7 @@ async def _apply_new_plan(
         f"{stale_note}"
         f"{freestyle_withdrawn_note}"
     )
-    await state.set_state(PlanStates.ACTIVE)
     await state.clear()
+    await state.set_state(PlanStates.ACTIVE)
     await message.answer(summary, parse_mode="HTML")
 

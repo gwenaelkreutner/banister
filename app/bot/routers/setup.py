@@ -55,6 +55,12 @@ _DEFAULT_AVAILABLE_DAYS = ["tuesday", "thursday", "saturday", "sunday"]
 # aucun effet observable sur le plan généré.
 _MIN_AVAILABLE_DAYS = 2
 
+_MISSING_PROFILE_FIELDS = {
+    "age": ("read_age", "Age", "ans", 35.0, 12.0, 100.0),
+    "max_hr": ("read_max_hr", "FC max", "bpm", 185.0, 100.0, 240.0),
+    "resting_hr": ("read_resting_hr", "FC repos", "bpm", 60.0, 30.0, 120.0),
+}
+
 logger = logging.getLogger(__name__)
 router = Router()
 
@@ -94,6 +100,13 @@ def constraints_keyboard() -> InlineKeyboardMarkup:
     return _kb([
         ("Aucune contrainte santé", "setup:constraints:none"),
         ("J'en ai une — je la décris", "setup:constraints:describe"),
+    ])
+
+
+def replace_plan_keyboard() -> InlineKeyboardMarkup:
+    return _kb([
+        ("Confirmer le remplacement", "setup:replace:apply"),
+        ("Annuler", "setup:replace:cancel"),
     ])
 
 
@@ -197,7 +210,7 @@ def _read_profile_to_fsm(rp: ReadProfile) -> dict:
 def _render_confirm_screen(rp: ReadProfile) -> str:
     def row(label: str, rv, unit: str) -> str:
         if not rv.present:
-            return f"  {label:<16} — absent, je te le demanderai"
+            return f"  {label:<16} - absent dans intervals.icu"
         note = f"\n  {'':<16}⚠️ {rv.note}" if rv.note else ""
         return f"  {label:<16} <b>{rv.value}</b> {unit}   · {rv.origin}{note}"
 
@@ -246,6 +259,9 @@ async def cmd_setup(message: Message, state: FSMContext, session: AsyncSession, 
 
 @router.callback_query(SetupStates.CONFIRM_PROFILE, F.data == "setup:confirm:ok")
 async def confirm_ok(callback: CallbackQuery, state: FSMContext) -> None:
+    if await _ask_next_missing_value(callback.message, state):
+        await callback.answer()
+        return
     await state.set_state(SetupStates.GOAL)
     await callback.message.edit_text(
         "\U0001f44d Parfait. Maintenant ce que je ne peux pas deviner.\n\n"
@@ -254,6 +270,57 @@ async def confirm_ok(callback: CallbackQuery, state: FSMContext) -> None:
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+async def _ask_next_missing_value(message: Message, state: FSMContext) -> bool:
+    """Ask only for source values the plan cannot safely invent without consent."""
+    data = await state.get_data()
+    supplied = dict(data.get("supplied_profile_values") or {})
+    for field, (source_key, label, unit, estimate, _low, _high) in _MISSING_PROFILE_FIELDS.items():
+        if data.get(source_key) is None and field not in supplied:
+            await state.update_data(_missing_field=field)
+            await state.set_state(SetupStates.MISSING_VALUE)
+            await message.edit_text(
+                f"{label} est absent dans intervals.icu. Envoie un nombre en {unit}, "
+                f"ou écris <code>je ne sais pas</code> pour utiliser provisoirement "
+                f"une estimation prudente ({estimate:g} {unit}).",
+                parse_mode="HTML",
+            )
+            return True
+    return False
+
+
+@router.message(SetupStates.MISSING_VALUE, F.text)
+async def missing_profile_value(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    field = data.get("_missing_field")
+    if field not in _MISSING_PROFILE_FIELDS:
+        await message.answer("Relance /setup pour reprendre la configuration.")
+        return
+    _source_key, label, unit, estimate, low, high = _MISSING_PROFILE_FIELDS[field]
+    raw = message.text.strip().lower()
+    if raw in {"je ne sais pas", "ignore", "inconnu", "?"}:
+        value, origin = estimate, "estimated"
+    else:
+        try:
+            value = float(raw.replace(",", "."))
+        except ValueError:
+            await message.answer(f"Envoie un nombre pour {label}, ou écris je ne sais pas.")
+            return
+        if not low <= value <= high:
+            await message.answer(
+                f"Pour {label}, choisis une valeur entre {low:g} et {high:g} {unit}."
+            )
+            return
+        origin = "declared"
+
+    supplied = dict(data.get("supplied_profile_values") or {})
+    supplied[field] = {"value": value, "source": origin}
+    await state.update_data(supplied_profile_values=supplied, _missing_field=None)
+    if await _ask_next_missing_value(message, state):
+        return
+    await state.set_state(SetupStates.GOAL)
+    await message.answer("Parfait. Quel est ton objectif ?", reply_markup=goal_keyboard())
 
 
 @router.callback_query(SetupStates.CONFIRM_PROFILE, F.data == "setup:confirm:edit")
@@ -450,9 +517,9 @@ async def constraints_none(
     callback: CallbackQuery, state: FSMContext, session: AsyncSession, user
 ) -> None:
     await state.update_data(health_constraints=False)
-    await callback.message.edit_text("⏳ Génération de ton plan en cours…")
+    await callback.message.edit_text("⏳ Je vérifie ta configuration…")
     await callback.answer()
-    await _finalize_setup(callback.message, state, session, user, await state.get_data())
+    await _prepare_setup_finalization(callback.message, state, session, user)
 
 
 @router.callback_query(SetupStates.CONSTRAINTS, F.data == "setup:constraints:describe")
@@ -470,11 +537,45 @@ async def constraints_text(
     await state.update_data(
         health_constraints=True, health_constraints_note=message.text.strip()[:500]
     )
-    await message.answer("⏳ Génération de ton plan en cours…")
-    await _finalize_setup(message, state, session, user, await state.get_data())
+    await message.answer("⏳ Je vérifie ta configuration…")
+    await _prepare_setup_finalization(message, state, session, user)
 
 
 # ── Finalization : create user, build profile, generate plan ───────────────────
+
+async def _prepare_setup_finalization(
+    message: Message, state: FSMContext, session: AsyncSession, user,
+) -> None:
+    """Do not let a repeated /setup replace a live plan by surprise."""
+    if user is not None:
+        plan = await repo.plan_repo.get_active_plan(session, user.id)
+        if plan is not None:
+            await state.set_state(SetupStates.CONFIRM_REPLACE)
+            await message.answer(
+                "Tu as déjà un plan actif. Continuer va le remplacer ; ton historique est gardé, "
+                "mais les séances déjà publiées devront être re-synchronisées avec /publish.",
+                reply_markup=replace_plan_keyboard(),
+            )
+            return
+    await _finalize_setup(message, state, session, user, await state.get_data())
+
+
+@router.callback_query(SetupStates.CONFIRM_REPLACE, F.data == "setup:replace:apply")
+async def confirm_replace_plan(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, user,
+) -> None:
+    await callback.answer("Génération en cours...")
+    await callback.message.edit_text("Génération de ton nouveau plan en cours...")
+    await _finalize_setup(callback.message, state, session, user, await state.get_data())
+
+
+@router.callback_query(SetupStates.CONFIRM_REPLACE, F.data == "setup:replace:cancel")
+async def cancel_replace_plan(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.set_state(PlanStates.ACTIVE)
+    await callback.message.edit_text("Configuration annulée : ton plan actuel reste actif.")
+    await callback.answer()
+
 
 async def _finalize_setup(
     message: Message,
@@ -553,8 +654,8 @@ async def _finalize_setup(
     if user.onboarding_completed_at is None:
         user.onboarding_completed_at = datetime.now(UTC)
 
-    await state.set_state(PlanStates.ACTIVE)
     await state.clear()
+    await state.set_state(PlanStates.ACTIVE)
 
     summary = _build_plan_summary(plan)
     built_from = _built_from_recap(profile, data, fitness_is_seeded)
@@ -591,19 +692,23 @@ def _build_profile(data: dict, fitness=None) -> AthleteProfileSchema:
     only in `corrections_deferred`, for the recap caveat.
     """
     has_pm = bool(data.get("read_has_power_meter"))
-    ftp = data.get("read_ftp")                    # source value, kept even if "corrected"
-    max_hr = data.get("read_max_hr")
-    resting_hr = data.get("read_resting_hr")
-    age = data.get("read_age") or 35
+    ftp = data.get("read_ftp")
+    supplied = dict(data.get("supplied_profile_values") or {})
 
+    def resolved(field: str, source_key: str, fallback: float) -> tuple[float, str]:
+        source_value = data.get(source_key)
+        if source_value is not None:
+            return float(source_value), "source"
+        supplied_value = supplied.get(field)
+        if supplied_value is not None:
+            return float(supplied_value["value"]), supplied_value["source"]
+        # Compatibility only for partial FSM data created before missing-value prompts.
+        return fallback, "estimated"
+
+    age, _age_source = resolved("age", "read_age", 35.0)
+    max_hr, hr_max_source = resolved("max_hr", "read_max_hr", 220 - age)
+    resting_hr, hr_rest_source = resolved("resting_hr", "read_resting_hr", 60.0)
     ftp_source = "source" if ftp is not None else "estimated"
-    hr_max_source = "source" if max_hr is not None else "estimated"
-    hr_rest_source = "source" if resting_hr is not None else "estimated"
-
-    if max_hr is None:
-        max_hr = 220 - int(age)
-    if resting_hr is None:
-        resting_hr = 60
     if has_pm and ftp is None:
         # FR-008-adjacent: only reached if the athlete confirmed a power-meter setup
         # with no FTP anywhere — a coarse level default, flagged estimated.
@@ -693,7 +798,13 @@ def _built_from_recap(profile: AthleteProfileSchema, data: dict, seeded: bool) -
 
 
 def _build_plan_summary(plan) -> str:
-    phase_names = {"base": "Base aérobie", "build": "Construction", "peak": "Pic de forme", "taper": "Affûtage"}
+    mode_label = "Puissance (watts)" if plan.coaching_mode == "power" else "Fréquence cardiaque"
+    phase_names = {
+        "base": "Base aérobie",
+        "build": "Construction",
+        "peak": "Pic de forme",
+        "taper": "Affûtage",
+    }
     phase_rows: list[str] = []
     seen: set[str] = set()
     for w in plan.weeks:
@@ -705,7 +816,8 @@ def _build_plan_summary(plan) -> str:
         end_week = phase_weeks[-1].week_number
         avg_tss = sum(x.total_tss_target for x in phase_weeks) / len(phase_weeks)
         phase_rows.append(
-            f"{phase_names.get(w.phase, w.phase):<14} | {start_week:>2}-{end_week:<2} | {avg_tss:>3.0f}"
+            f"{phase_names.get(w.phase, w.phase):<14} | "
+            f"{start_week:>2}-{end_week:<2} | {avg_tss:>3.0f}"
         )
 
     phases_table = "\n".join([
@@ -719,7 +831,7 @@ def _build_plan_summary(plan) -> str:
         f"• Durée : <b>{plan.weeks_count} semaines</b>\n"
         f"• Charge de départ (TSS) : <b>{plan.initial_weekly_tss:.0f}/semaine</b>\n"
         f"• Charge au pic (TSS) : <b>{plan.peak_weekly_tss:.0f}/semaine</b>\n"
-        f"• Mode coaching : <b>{'Puissance (watts)' if plan.coaching_mode == 'power' else 'Fréquence cardiaque'}</b>\n\n"
+        f"• Mode coaching : <b>{mode_label}</b>\n\n"
         f"📅 <b>Phases</b>\n<pre>{phases_table}</pre>"
     )
 
