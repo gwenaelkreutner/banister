@@ -406,6 +406,8 @@ Règles :
 - Tutoiement, style direct, pas de formules polies ni de superlatifs vides
 - Interdits : CTL, ATL, TSB, IF, NP, VI, FTP — traduis en langage courant
 - TSB négatif modéré (-5 à -20) = fatigue normale d'entraînement, pas alarmiste
+- Si les données indiquent « mode libre », ne mentionne jamais un plan, une séance
+  prévue ou une progression programmée. Propose au plus une option pour la suite.
 - JSON strict, commence directement par { sans aucun texte avant"""
 
 
@@ -427,9 +429,12 @@ def build_coach_blocks_user_message(
     time_in_zones_pct: dict | None,
     rpe: float | None,
     next_session_info: str | None,
+    coaching_mode: str = "goal",
 ) -> str:
     """Construit le message utilisateur pour generate_coach_blocks."""
     lines = ["DONNÉES SÉANCE :"]
+    if coaching_mode == "freestyle":
+        lines.append("- Cadre : mode libre, sans plan ni prochaine séance programmée")
 
     # Contexte semaine en cours (prioritaire pour form_interpretation)
     if sessions_done_week is not None and sessions_planned_week is not None:
@@ -492,7 +497,7 @@ _TID_CLASSIFICATION_FR: dict[str, str] = {
 # ne se différenciait que par ces deux consignes molles, jamais appliquées par force
 # (même max_tokens, même structure) : en pratique les 3 sorties convergeaient. Un seul
 # mode bien calibré vaut mieux (décision owner, 2026-09-21).
-REVIEW_WORD_BUDGET = "150 à 200 mots"
+REVIEW_WORD_BUDGET = "250 à 350 mots"
 
 REVIEW_VOCAB_RULE = (
     "Langage courant par défaut ; si un terme technique (TSS, CTL, ATL, TSB...) est "
@@ -560,11 +565,20 @@ récupération ou du contexte de vie.
 """
 
 
-def build_review_system_prompt(has_rpe: bool) -> str:
+def build_review_system_prompt(has_rpe: bool, coaching_mode: str = "goal") -> str:
     """Prompt système pour la synthèse `/review` — un seul appel one-shot par revue
     (comme template_picker.py/narrator.py), jamais la boucle agentique : toutes les
     données sont déjà assemblées par assemble_review_context() avant l'appel."""
     rpe_block = "" if has_rpe else f"\n{REVIEW_RPE_MISSING_RULE}"
+    freestyle_rule = ""
+    if coaching_mode == "freestyle":
+        freestyle_rule = """
+CADRE MODE LIBRE — cette sortie n'était rattachée à aucun plan :
+- Ne parle jamais de séance prévue, de cible, de conformité, de programme, de
+  progression planifiée ou de « pyramide à préserver ».
+- La conclusion peut ouvrir une option pour une prochaine sortie, mais ne prescrit pas
+  une séance. Formule-la comme un choix de l'athlète, pas comme une étape imposée.
+"""
 
     return f"""Tu es Banister, coach cyclisme. Tu reçois les données pré-calculées d'une
 séance déjà réalisée et loggée, que l'athlète relit après coup via /review.
@@ -573,16 +587,33 @@ Règles absolues :
 - Ne modifie/recalcule JAMAIS un chiffre — les valeurs fournies sont correctes.
 - N'invente jamais un chiffre qui n'est pas dans les données fournies.
 - {REVIEW_VOCAB_RULE}
-- Maximum {REVIEW_WORD_BUDGET}. Prose uniquement — pas de tableau, pas de liste à puces.
+- Maximum {REVIEW_WORD_BUDGET}. Pas de tableau ni de liste à puces.
 - Tutoiement, direct, pas de formules de politesse en ouverture.
 - **gras** autorisé avec parcimonie pour un chiffre clé — rien d'autre comme mise en forme.
+- Interprète les métriques : ne les récite jamais. Pour chaque chiffre retenu, explique
+  ce qu'il montre dans cette sortie et pourquoi cela compte.
+- Distingue fait, interprétation et hypothèse. Une influence possible de la chaleur,
+  du terrain ou de l'hydratation reste une hypothèse, jamais un diagnostic.
+- Ne compare une métrique à l'historique personnel que si une comparaison est fournie.
+  La tendance de charge et la distribution d'intensité sur 7 jours sont des contextes
+  récents, pas des références à une sortie identique.
+- Un TSB positif décrit de la fraîcheur relative face à la charge récente ; il ne prouve
+  ni un pic de forme ni une performance à venir. Lis-le avec CTL, ATL et la tendance de
+  charge lorsqu'ils sont fournis.
+{freestyle_rule}
 
-Structure obligatoire, dans cet ordre :
-1. Ça s'est bien passé ? (1-2 phrases, le ressenti global)
-2. Un point à corriger ou à remarquer (un seul, concret — ou "rien à signaler" si RAS)
-3. Ce que ça implique pour la prochaine séance (une recommandation)
-4. Si un signal de forme est préoccupant (TSB très négatif, tendance de charge en forte
-   hausse) : une phrase sur la vue d'ensemble. Sinon, omets ce point.
+Rédige cinq courts paragraphes, avec ces intertitres exacts en gras :
+**Lecture de l'effort** : durée, charge, zone, IF et type observé ; explique l'intensité
+réelle, sans la confondre avec une cible absente.
+**Pacing et réponse physiologique** : NP/puissance moyenne, VI, dérive cardiaque et
+contexte extérieur quand ils existent ; explique la régularité et la réponse cardio.
+**Ressenti et cohérence** : confronte le RPE aux données disponibles ; signale un accord
+ou une incohérence utile, sans inventer de problème.
+**Forme et charge** : CTL/ATL/TSB, tendance, monotonie, TID, phase ou récupération
+seulement s'ils sont fournis ; explique précisément leur portée.
+**Bilan** : une synthèse nette, le principal signal favorable, le seul point à surveiller
+et une implication proportionnée. Ne remplis pas avec « séance nickel », « rien à
+signaler », « charge équilibrée » ou « continue comme ça » sans preuve dans les données.
 {rpe_block}"""
 
 
@@ -594,6 +625,10 @@ def build_review_user_message(ctx, dfa=None) -> str:
     enregistrement, ou pas d'`source_activity_id` pour logguer manuel)."""
     log = ctx.log
     lines = ["DONNÉES SÉANCE :"]
+    if ctx.coaching_mode == "freestyle":
+        lines.append("- Cadre : sortie en mode libre, sans séance planifiée ni cible à évaluer")
+    else:
+        lines.append("- Cadre : sortie rattachée à un plan")
     lines.append(f"- Date : {log.logged_date:%d/%m/%Y}")
     if log.session_type_real:
         lines.append(f"- Type réalisé : {log.session_type_real}")
@@ -663,12 +698,10 @@ def build_review_user_message(ctx, dfa=None) -> str:
         lines.append("- Ressenti athlète : non renseigné")
 
     if ctx.fitness_at_session is not None:
-        from app.engine.atl_ctl import tsb_label
-
         f = ctx.fitness_at_session
         lines.append(
-            f"- Forme au moment de la séance : TSB {f.tsb:+.0f} ({tsb_label(f.tsb)}), "
-            f"CTL {f.ctl:.0f}, ATL {f.atl:.0f}"
+            f"- Charge et fraîcheur au moment de la séance : "
+            f"TSB {f.tsb:+.0f}, CTL {f.ctl:.0f}, ATL {f.atl:.0f}"
         )
 
     if REVIEW_DATA_BLOCKS["form_context"]:
@@ -701,7 +734,7 @@ def build_review_user_message(ctx, dfa=None) -> str:
     snap = ctx.weekly_snapshot
     if snap.monotony_index is not None:
         lines.append(f"- Monotonie de la semaine : {snap.monotony_index}")
-    if snap.load_trend_pct:
+    if snap.load_trend_pct is not None:
         trend_dir = "en hausse" if snap.load_trend_pct > 0 else "en baisse"
         lines.append(
             f"- Tendance de charge 7j vs habitude : {snap.load_trend_pct:+.0f}% ({trend_dir})"

@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import date
 
 from app.db.models.session_log import SessionLog
+from app.engine.atl_ctl import FitnessMetrics
 from app.engine.phase_detection import PhaseDetectionResult
 from app.engine.weekly_snapshot import WeeklySnapshot
 from app.llm import prompts
@@ -47,6 +48,34 @@ def test_raw_power_block_included_by_default():
     assert "Puissance normalisée (NP) : 210 W" in message
     assert "Intensity Factor (IF) : 0.82" in message
     assert "Variability Index (VI) : 1.03" in message
+
+
+def test_freestyle_review_declares_the_absence_of_a_plan_and_tsb_gloss():
+    ctx = _ctx()
+    ctx.fitness_at_session = FitnessMetrics(ctl=42.0, atl=29.0, tsb=13.0)
+
+    message = prompts.build_review_user_message(ctx)
+
+    assert "sortie en mode libre, sans séance planifiée ni cible à évaluer" in message
+    assert "TSB +13, CTL 42, ATL 29" in message
+    assert "Forme de pointe" not in message
+
+
+def test_freestyle_review_prompt_forbids_plan_language_and_requires_explanations():
+    prompt = prompts.build_review_system_prompt(has_rpe=True, coaching_mode="freestyle")
+
+    assert "CADRE MODE LIBRE" in prompt
+    assert "Ne parle jamais de séance prévue" in prompt
+    assert "Interprète les métriques : ne les récite jamais" in prompt
+    assert "TSB positif décrit de la fraîcheur relative" in prompt
+    for heading in (
+        "**Lecture de l'effort**",
+        "**Pacing et réponse physiologique**",
+        "**Ressenti et cohérence**",
+        "**Forme et charge**",
+        "**Bilan**",
+    ):
+        assert heading in prompt
 
 
 def test_variability_index_ignored_under_30_minutes():

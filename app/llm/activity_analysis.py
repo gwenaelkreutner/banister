@@ -367,6 +367,7 @@ async def generate_coach_blocks(
     time_in_zones_pct: dict | None = None,
     rpe: float | None = None,
     next_session_info: str | None = None,
+    coaching_mode: str = "goal",
     user_level: int = 0,
 ) -> dict[str, str]:
     """Retourne {"form_interpretation", "session_interpretation", "next_advice"}.
@@ -382,6 +383,15 @@ async def generate_coach_blocks(
     _log = _logging.getLogger(__name__)
 
     def _fallback() -> dict[str, str]:
+        if coaching_mode == "freestyle":
+            return {
+                "form_interpretation": tsb_label_str or "Données de forme calculées.",
+                "session_interpretation": "Sortie libre enregistrée avec ton ressenti.",
+                "next_advice": (
+                    "Si tu veux, je peux te proposer une prochaine sortie selon ton envie "
+                    "et ton temps disponible."
+                ),
+            }
         return {
             "form_interpretation": tsb_label_str or "Données de forme calculées.",
             "session_interpretation": "Séance enregistrée et comptabilisée dans ton plan.",
@@ -403,6 +413,7 @@ async def generate_coach_blocks(
         time_in_zones_pct=time_in_zones_pct,
         rpe=rpe,
         next_session_info=next_session_info,
+        coaching_mode=coaching_mode,
     )
 
     try:

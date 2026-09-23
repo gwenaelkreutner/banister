@@ -102,6 +102,25 @@ async def test_freestyle_log_has_no_session_spec(db_session):
     ctx = await assemble_review_context(db_session, user, log)
 
     assert ctx.session_spec is None
+    assert ctx.coaching_mode == "freestyle"
+
+
+async def test_plan_linked_log_keeps_goal_context_when_reviewed_later(db_session):
+    user = await _make_user(db_session, 9013)
+    plan = await plan_repo.create(
+        db_session, user_id=user.id, plan_technical=_plan_technical(),
+        start_date=date.today(), end_date=date.today(),
+    )
+    log = SessionLog(
+        user_id=user.id, plan_id=plan.id, week_number=1, day_of_week=2,
+        logged_date=date.today(), status="done", tss_actual=60.0,
+    )
+    db_session.add(log)
+    await db_session.flush()
+
+    ctx = await assemble_review_context(db_session, user, log)
+
+    assert ctx.coaching_mode == "goal"
 
 
 async def test_fitness_at_session_uses_the_stored_snapshot_not_current_fitness(db_session):

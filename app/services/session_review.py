@@ -15,6 +15,7 @@ même lookup semaine/jour ailleurs dans le repo — voir app/engine/schemas.py).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +38,11 @@ class ReviewContext:
     fitness_at_session: FitnessMetrics | None
     weekly_snapshot: WeeklySnapshot  # tendance/monotonie autour de la date de la séance
     tid: TIDResult | None  # TID/polarisation 7j autour de la séance (2026-09-21)
+    # Le review porte sur cette sortie, pas sur le mode actif au moment où il est relu.
+    # Un log sans plan est une sortie libre par construction (spec 009) : le LLM doit
+    # le savoir pour ne jamais inventer une cible, une adhérence ou une prochaine séance
+    # de programme.
+    coaching_mode: Literal["goal", "freestyle"] = "freestyle"
     # recovery_index et detected_phase — recalculés À LA DATE DE LA SÉANCE (log.logged_date),
     # jamais "aujourd'hui" comme le chat (app/llm/chat.py) : ré-afficher l'état de
     # récupération/la phase d'AUJOURD'HUI sur la relecture d'une séance passée serait
@@ -114,6 +120,7 @@ async def assemble_review_context(
         fitness_at_session=fitness_at_session,
         weekly_snapshot=weekly_snapshot,
         tid=tid,
+        coaching_mode="freestyle" if log.plan_id is None else "goal",
         recovery_index=recovery_index,
         detected_phase=detected_phase,
         hydration_volume_l=hydration_volume_l,

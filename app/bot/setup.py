@@ -15,7 +15,7 @@ BOT_COMMANDS = [
     BotCommand(command="week", description="Voir une semaine du plan (ex: /week 3)"),
     BotCommand(command="forme", description="Métriques de forme (CTL/ATL/TSB)"),
     BotCommand(command="recap", description="Récapitulatif hebdomadaire"),
-    BotCommand(command="review", description="Relire une séance passée (brief/deep en argument)"),
+    BotCommand(command="review", description="Analyse complète d'une séance passée"),
     BotCommand(command="goal", description="Changer d'objectif et régénérer le plan"),
     BotCommand(command="publish", description="Publier les 2 prochaines semaines au calendrier"),
     BotCommand(command="unpublish", description="Retirer les séances publiées"),

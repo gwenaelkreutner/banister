@@ -216,24 +216,23 @@ def project_fitness_from_plan(
 
 def tsb_label(tsb: float) -> str:
     """
-    Interprétation courte du TSB pour affichage rapide.
+    Libellé court et descriptif du TSB pour les surfaces qui n'ont pas le contexte
+    complet. Le TSB mesure la fraîcheur relative à la charge récente : il ne prédit pas
+    seul la performance ni l'existence d'un vrai affûtage. Les libellés évitent donc
+    volontairement « pic/forme de pointe » ; cette conclusion réclame aussi le CTL, la
+    continuité de l'entraînement et le contexte de l'objectif.
 
-    Bandes calibrées pour la compétition cycliste :
-      < -30          → surmenage (risque de surentraînement)
-      -30 à  0       → fatigue normale (charge en cours)
-        0 à +5       → bonne forme (juste équilibré)
-       +5 à +15      → forme de pointe — zone cible affûtage (peak performance)
-      +15 à +20      → très frais (bénéfique en semaine de taper)
-       > +20         → transition — risque de désentraînement si prolongé
+    Référence : TrainingPeaks, "Form (TSB)" et "The Science of the Performance
+    Manager" (consultées le 2026-09-23).
     """
     if tsb < -30:
-        return "🔴 Surmenage"
+        return "🔴 Fatigue très élevée"
     if tsb < 0:
-        return "🟡 Fatigue normale"
+        return "🟡 Fatigue d'entraînement"
     if tsb <= 5:
-        return "🟢 Bonne forme"
+        return "🟢 Équilibre charge/fatigue"
     if tsb <= 15:
-        return "✨ Forme de pointe"
+        return "✨ Fraîcheur élevée"
     if tsb <= 20:
-        return "🔵 Très frais"
-    return "⚪ Transition — risque de désentraînement"
+        return "🔵 Fraîcheur très élevée"
+    return "⚪ Charge récente très basse"

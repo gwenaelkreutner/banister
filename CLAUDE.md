@@ -1256,9 +1256,26 @@ ratio observé chez Enduragent (référence open source). Retiré après revue �
 différenciaient que par deux consignes de prompt molles (un budget de mots suggéré, une permission de
 vocabulaire technique), **jamais appliquées par force** (même `max_tokens` fixe pour les 3, aucune
 troncature, structure obligatoire identique en 4 points) : en pratique rien ne garantissait que les 3
-sorties diffèrent, et aucun test ne le vérifiait. `build_review_system_prompt(has_rpe)` (`app/llm/
-prompts.py`) ne prend plus de paramètre de profondeur — un seul `REVIEW_WORD_BUDGET` (150-200 mots) et un
+sorties diffèrent, et aucun test ne le vérifiait. `build_review_system_prompt(has_rpe, coaching_mode)` (`app/llm/
+prompts.py`) ne prend plus de paramètre de profondeur — un seul `REVIEW_WORD_BUDGET` (désormais 250-350 mots) et un
 seul `REVIEW_VOCAB_RULE`.
+
+**Analyse complète, pas doublon du feedback auto** (2026-09-23) : `/review` est le débrief technique
+volontaire de l'athlète, distinct du message post-sortie rapide. Son prompt impose cinq paragraphes
+(effort, pacing/réponse physiologique, cohérence RPE, forme/charge, bilan), une interprétation de chaque
+métrique retenue et la distinction fait/hypothèse. Budget : 250-350 mots. Il ne compare jamais une sortie
+à l'historique sans comparaison déterministe fournie ; TID/tendance sont explicitement un contexte récent,
+pas une référence à une sortie semblable.
+
+**Contexte mode libre à la sortie relue** : `ReviewContext.coaching_mode` est dérivé du `plan_id` du log,
+pas du plan actif au moment de la commande. Un log sans plan injecte une règle stricte : aucun vocabulaire
+de plan/cible/conformité/progression, et une éventuelle prochaine sortie reste un choix proposé. Même
+contexte passé au feedback auto et à son fallback.
+
+**TSB : fraîcheur, jamais preuve de pic** (2026-09-23) : `tsb_label()` utilise désormais des libellés
+descriptifs (« fraîcheur élevée », etc.), sans « forme de pointe ». Un TSB positif mesure la fraîcheur
+relative à la charge récente et ne prédit pas seul la performance ni un affûtage ; voir TrainingPeaks,
+« Form (TSB) » et « The Science of the Performance Manager ». Le highlight post-sortie suit la même règle.
 
 **Règle non-négociable conservée** : si le RPE n'est pas loggé sur la séance, `REVIEW_RPE_MISSING_RULE`
 interdit au LLM de juger "séance réussie" sur les seuls chiffres (durée/TSS/zones ne disent rien de la

@@ -176,14 +176,18 @@ def _select_candidates(
             1.3,
         ))
 
-    # TSB_SIGNAL — forme de pointe ou surmenage
+    # TSB_SIGNAL — fraîcheur relative ou fatigue élevée. TSB seul ne démontre pas un
+    # pic de performance : il exprime l'écart CTL/ATL, donc la charge récente relative.
     if tsb >= 10:
         candidates.append((
             HighlightResult(
                 category="TSB_SIGNAL",
-                teaser=f"📈 Aujourd'hui, tu roulais avec des ailes (TSB {tsb:+.0f})",
-                hero_metric=f"Forme de pointe : TSB {tsb:+.0f} ✨",
-                hero_detail="Pic de fraîcheur — tu es dans ta meilleure fenêtre",
+                teaser=f"📈 Aujourd'hui, tu disposais de fraîcheur (TSB {tsb:+.0f})",
+                hero_metric=f"Fraîcheur relative : TSB {tsb:+.0f} ✨",
+                hero_detail=(
+                    "Charge récente plus basse que ta charge historique — "
+                    "à lire avec la continuité"
+                ),
             ),
             0.9,
         ))

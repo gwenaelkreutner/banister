@@ -5,11 +5,13 @@ Seules les fonctions pures (sans appel LLM) sont testées ici :
   _compute_match_score, _detect_rpe_mismatch, _tsb_tone.
 """
 
+from app.engine.atl_ctl import tsb_label
 from app.llm.activity_analysis import (
     _compute_match_score,
     _detect_rpe_mismatch,
     _tsb_tone,
 )
+from app.llm.prompts import build_coach_blocks_user_message
 
 
 # ── _compute_match_score ───────────────────────────────────────────────────────
@@ -146,3 +148,30 @@ def test_tsb_tone_balanced_in_middle():
 def test_tsb_tone_none_returns_balanced():
     tone = _tsb_tone(None)
     assert "équilibré" in tone
+
+
+def test_tsb_label_describes_freshness_without_claiming_peak_performance():
+    assert "Fraîcheur élevée" in tsb_label(13)
+    assert "Forme de pointe" not in tsb_label(13)
+
+
+def test_freestyle_coach_blocks_context_excludes_a_programmed_next_session():
+    message = build_coach_blocks_user_message(
+        tsb=13,
+        tsb_label_str="✨ Fraîcheur élevée",
+        load_trend_pct=-25,
+        tss_6w_daily_avg=40,
+        sessions_done_week=None,
+        sessions_planned_week=None,
+        tss_actual=40,
+        tss_planned=None,
+        session_type_real="endurance",
+        planned_workout_type=None,
+        dominant_zone="Z2",
+        time_in_zones_pct={"Z2": 90},
+        rpe=3,
+        next_session_info=None,
+        coaching_mode="freestyle",
+    )
+
+    assert "mode libre, sans plan ni prochaine séance programmée" in message

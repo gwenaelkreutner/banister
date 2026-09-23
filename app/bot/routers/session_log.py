@@ -214,6 +214,7 @@ async def _reveal_activity_analysis(message, *, kpi_block: str | None = None, **
             time_in_zones_pct=_compute_zones_pct(kwargs.get("time_in_zones_s")),
             rpe=kwargs.get("rpe"),
             next_session_info=kwargs.get("next_session_info"),
+            coaching_mode=kwargs.get("coaching_mode", "goal"),
             user_level=kwargs.get("user_level", 0),
         )
         next_day = _extract_next_day(kwargs.get("next_session_info"))
@@ -434,6 +435,7 @@ async def cb_rpe(callback: CallbackQuery, session: AsyncSession, user: User):
         sessions_planned_week=_get_sessions_planned_week(plan, log.week_number),
         sessions_done_week=_sessions_done_week_s,
         next_session_info=_get_next_session_info(plan, log.week_number, log.day_of_week),
+        coaching_mode="freestyle" if plan is None else "goal",
         storytelling_mode=storytelling_mode,
         highlight_category=highlight_category,
         personal_record=personal_record_dict,
