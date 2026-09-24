@@ -10,8 +10,10 @@ Flux :
 """
 
 import logging
+import re
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,12 +35,34 @@ WORKOUT_FR = {
     "recovery": "Récupération",
 }
 
+_ACTION_CLAIM_RE = re.compile(
+    r"\b(?:c['’]est|ça a été|cela a été|je l['’]ai|je viens de)\s+"
+    r"(?:bien\s+)?(?:noté|enregistré|ajouté|modifié|supprimé|publié)\b",
+    re.IGNORECASE,
+)
+
+
+def _verify_action_claim(response_text: str, tool_calls_log: list[dict]) -> str:
+    """A conversational claim cannot substitute for an executed tool."""
+    meal_calls = [call for call in tool_calls_log if call.get("name") == "log_meal"]
+    if meal_calls:
+        saved = sum((call.get("result") or {}).get("ok") is True for call in meal_calls)
+        if saved == len(meal_calls):
+            return "Repas enregistré. Le détail exact est juste en dessous."
+        if saved:
+            return "Une partie seulement a été enregistrée. Le détail est juste en dessous."
+        return "Le repas n'a pas été enregistré. Le détail est juste en dessous."
+    if not tool_calls_log and _ACTION_CLAIM_RE.search(response_text):
+        return "Aucun outil n'a été exécuté : rien n'a été enregistré ni modifié."
+    return response_text
+
 
 async def run_chat(
     user_message: str,
     user: User,
     session: AsyncSession,
     reply_context: str | None = None,
+    on_tool_event=None,
 ) -> tuple[str, str | None, str | None, dict | None, dict, str | None]:
     """
     Exécute le cycle de chat agentique pour un message utilisateur.
@@ -301,7 +325,9 @@ async def run_chat(
         tools=tools_for_mode(mode_from_plan(plan)),
         tool_executor=tool_executor,
         parallel_tool_names=PARALLEL_READ_TOOLS,
+        on_tool_event=on_tool_event,
     )
+    response_text = _verify_action_claim(response_text, tool_calls_log)
 
     # Voix demandée introuvable → on répond avec la voix par défaut et on le dit (FR-026).
     if _voice_fell_back and response_text:
@@ -1026,6 +1052,11 @@ _CALORIES_MIN = 1
 _CALORIES_MAX = 8000
 
 
+def _nutrition_today() -> date:
+    """Nutrition dates follow the Paris date shown to the athlete in the prompt."""
+    return datetime.now(ZoneInfo("Europe/Paris")).date()
+
+
 async def _tool_log_meal(args: dict, user: User, session: AsyncSession, raw_message: str) -> dict:
     """Enregistre un repas ou un récap de journée (contracts/nutrition-tools.md §1).
     L'estimation calorique vient du LLM (research R2 — hors du périmètre du Principe I,
@@ -1051,7 +1082,7 @@ async def _tool_log_meal(args: dict, user: User, session: AsyncSession, raw_mess
         days_ago = max(0, min(int(args.get("days_ago", 0) or 0), _MEAL_DAYS_AGO_MAX))
     except (TypeError, ValueError):
         days_ago = 0
-    entry_date = date.today() - timedelta(days=days_ago)
+    entry_date = _nutrition_today() - timedelta(days=days_ago)
 
     meal_slot = args.get("meal_slot") if entry_type == "meal" else None
 
@@ -1089,7 +1120,7 @@ async def _tool_undo_last_meal_entry(user: User, session: AsyncSession) -> dict:
     jour, une correction est un geste dans la même session."""
     from app.db.repositories import meal_entry_repo
 
-    today = date.today()
+    today = _nutrition_today()
     latest = await meal_entry_repo.get_latest_for_date(session, user.id, today)
     if latest is None:
         return {"ok": False, "error": "aucune entrée aujourd'hui à annuler"}
@@ -1118,7 +1149,7 @@ async def _tool_get_calorie_history(args: dict, user: User, session: AsyncSessio
     except (TypeError, ValueError):
         days = 7
 
-    today = date.today()
+    today = _nutrition_today()
     start = today - timedelta(days=days - 1)
     totals = await meal_entry_repo.daily_totals(session, user.id, start, today)
     by_date = {t.entry_date: t for t in totals}

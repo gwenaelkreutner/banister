@@ -1035,6 +1035,19 @@ appeler l'outil et ne l'a pas fait — seule l'absence de message le trahit).
 `app/bot/routers/chat.py::_send_meal_log()` l'envoie juste après le message normal, sur les 3 chemins de
 réponse (normal, `pending_proposal` plan, `freestyle_publish`).
 
+**Choix et trace des outils** (2026-09-24) : le premier appel du chat demande au modèle de choisir
+explicitement un outil (`tool_choice=required`). `respond_without_tool` est le choix explicite pour une
+réponse sans action ; il ne lance aucun outil applicatif. Ce protocole général remplace les tentatives de
+déduire l'intention nutritionnelle avec des mots-clés ou d'obliger l'athlète à écrire « appelle meal ».
+Dans Telegram, un message de suivi apparaît dès le premier appel d'outil et se met à jour avant la réponse :
+nom exact de chaque outil et statut ⏳/✅/❌, sans paramètres ni résultats détaillés. Le choix
+`respond_without_tool` est visible également. Une panne d'édition de ce message ne doit jamais bloquer une
+écriture. Si aucun outil applicatif n'a tourné, une phrase du modèle telle que « c'est noté » est remplacée
+par un constat sans action. Quand `log_meal` tourne, la réponse libre est remplacée par le résultat réel de
+l'écriture, puis par la confirmation nutrition détaillée existante ; le modèle ne peut plus inventer un
+total du jour dans cette réponse. Les dates de `log_meal`, annulation et historique suivent la date de Paris,
+comme l'horloge montrée à l'athlète dans le prompt.
+
 **Rappel du soir** — `app/main.py::_nutrition_reminder_scheduler` envoie un message vers 22h00 heure de
 Paris (`PARIS_TZ`, même `ZoneInfo("Europe/Paris")` que `_run_session_reminders` depuis la correction du
 2026-09-18 — c'était un décalage UTC+1 fixe avant, voir research R4 de spec 008) si rien n'a été loggé ce

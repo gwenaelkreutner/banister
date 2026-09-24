@@ -19,6 +19,27 @@ logger = logging.getLogger(__name__)
 
 _client: AsyncOpenAI | None = None
 
+_NO_TOOL_NAME = "respond_without_tool"
+_NO_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": _NO_TOOL_NAME,
+        "description": (
+            "Réponds sans outil UNIQUEMENT si aucun des autres outils ne correspond à la "
+            "demande de l'athlète. Si un outil peut conserver une information que "
+            "l'athlète vient de donner, choisis cet outil. Ne prétends jamais avoir lu, "
+            "enregistré, modifié ou supprimé des données avec cette option."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "answer": {"type": "string", "description": "Réponse sans action effectuée."},
+            },
+            "required": ["answer"],
+        },
+    },
+}
+
 # Regex pour détecter TOOLCALL>[...] émis par les modèles sans function calling natif
 _TEXT_TOOLCALL_RE = re.compile(r'TOOLCALL>\[(.+?)(?:\]>|(?=\s*$))', re.DOTALL)
 
@@ -75,6 +96,7 @@ async def run_agentic_loop(
     model: str | None = None,
     max_iterations: int = 3,
     parallel_tool_names: frozenset[str] = frozenset(),
+    on_tool_event=None,  # async callable(name, "started" | "finished" | "failed")
 ) -> tuple[str, str | None, dict | None, dict, list[dict]]:
     """
     Exécute la boucle agentique tool_use → tool_result jusqu'à end_turn.
@@ -96,6 +118,7 @@ async def run_agentic_loop(
     effective_model = model or settings.chat_model
 
     all_messages = list(messages)
+    decision_tools = [*tools, _NO_TOOL_DEFINITION]
     tool_used = None
     last_tool_result: dict | None = None
     tool_calls_log: list[dict] = []
@@ -112,7 +135,7 @@ async def run_agentic_loop(
 
     for iteration in range(max_iterations):
         logger.info("[LLM →] agentic iter=%d/%d | model=%s | messages=%d | tools=%d",
-                    iteration + 1, max_iterations, effective_model, len(all_messages) + 1, len(tools))
+                    iteration + 1, max_iterations, effective_model, len(all_messages) + 1, len(decision_tools))
         logger.debug("[LLM AGENTIC SYSTEM]\n%s", system)
         logger.debug("[LLM AGENTIC MESSAGES]\n%s",
                      json.dumps(all_messages[-4:], ensure_ascii=False, indent=2))
@@ -121,8 +144,8 @@ async def run_agentic_loop(
             response = await client.chat.completions.create(
                 model=effective_model,
                 messages=[{"role": "system", "content": system}] + all_messages,
-                tools=tools,
-                tool_choice="auto",
+                tools=decision_tools,
+                tool_choice="required" if iteration == 0 else "auto",
                 max_tokens=4096,
                 # Found live (2026-09-18): with reasoning left on, deepseek-v4-flash
                 # burns 1000-2000+ hidden reasoning tokens on this exact production
@@ -174,6 +197,17 @@ async def run_agentic_loop(
 
             # Détection : modèle sans function calling natif → tool call en texte brut
             text_calls = _parse_text_tool_calls(content)
+            if len(text_calls) == 1 and text_calls[0]["name"] == _NO_TOOL_NAME:
+                arguments = text_calls[0].get("arguments")
+                answer = arguments.get("answer", "") if isinstance(arguments, dict) else ""
+                if on_tool_event:
+                    await on_tool_event(_NO_TOOL_NAME, "started")
+                    await on_tool_event(_NO_TOOL_NAME, "finished")
+                answer = (
+                    answer if isinstance(answer, str) and answer
+                    else "Je n'ai utilisé aucun outil pour ce message."
+                )
+                return answer, tool_used, last_tool_result, usage_total, tool_calls_log
             if text_calls:
                 logger.info("[LLM TEXT TOOL] %d tool call(s) détecté(s) dans le texte", len(text_calls))
                 tool_results_for_prompt = []
@@ -181,7 +215,14 @@ async def run_agentic_loop(
                 for tc in text_calls:
                     name = tc["name"]
                     args = tc["arguments"] if isinstance(tc["arguments"], dict) else {}
+                    if name == _NO_TOOL_NAME:
+                        if on_tool_event:
+                            await on_tool_event(name, "started")
+                            await on_tool_event(name, "finished")
+                        continue
                     tool_used = name
+                    if on_tool_event:
+                        await on_tool_event(name, "started")
                     logger.info("[LLM TOOL (text) →] %s | args: %.200s", name, str(args))
                     try:
                         result = await tool_executor(name, args)
@@ -192,6 +233,12 @@ async def run_agentic_loop(
                         result = {"error": str(e)}
                         last_tool_result = result
                     tool_calls_log.append({"name": name, "args": args, "result": result})
+                    if on_tool_event:
+                        status = (
+                            "failed" if result.get("error") or result.get("ok") is False
+                            else "finished"
+                        )
+                        await on_tool_event(name, status)
                     tool_results_for_prompt.append((name, result))
 
                 # Appel final sans tools — présenter les résultats comme contexte texte
@@ -236,6 +283,20 @@ async def run_agentic_loop(
                 usage_total, tool_calls_log,
             )
 
+        if len(tool_calls) == 1 and tool_calls[0].function.name == _NO_TOOL_NAME:
+            try:
+                answer = json.loads(tool_calls[0].function.arguments).get("answer", "")
+            except (AttributeError, TypeError, ValueError):
+                answer = ""
+            if on_tool_event:
+                await on_tool_event(_NO_TOOL_NAME, "started")
+                await on_tool_event(_NO_TOOL_NAME, "finished")
+            answer = (
+                answer if isinstance(answer, str) and answer
+                else "Je n'ai utilisé aucun outil pour ce message."
+            )
+            return answer, tool_used, last_tool_result, usage_total, tool_calls_log
+
         # Ajouter le message assistant avec les tool calls
         all_messages.append({
             "role": "assistant",
@@ -252,6 +313,13 @@ async def run_agentic_loop(
 
         async def execute_native_tool(tc):
             name = tc.function.name
+            if name == _NO_TOOL_NAME:
+                if on_tool_event:
+                    await on_tool_event(name, "started")
+                    await on_tool_event(name, "finished")
+                return name, {}, {"ok": True}, tc.id
+            if on_tool_event:
+                await on_tool_event(name, "started")
             logger.info("[LLM TOOL →] %s | args: %.200s", name, tc.function.arguments)
             args: dict = {}
             try:
@@ -261,6 +329,12 @@ async def run_agentic_loop(
             except Exception as e:
                 logger.warning("Erreur tool %s: %s", name, e)
                 result = {"error": str(e)}
+            if on_tool_event:
+                status = (
+                    "failed" if result.get("error") or result.get("ok") is False
+                    else "finished"
+                )
+                await on_tool_event(name, status)
             return name, args, result, tc.id
 
         if all(tc.function.name in parallel_tool_names for tc in tool_calls):
@@ -269,9 +343,10 @@ async def run_agentic_loop(
             executed_tools = [await execute_native_tool(tc) for tc in tool_calls]
 
         for name, args, result, tool_call_id in executed_tools:
-            tool_used = name
-            last_tool_result = result
-            tool_calls_log.append({"name": name, "args": args, "result": result})
+            if name != _NO_TOOL_NAME:
+                tool_used = name
+                last_tool_result = result
+                tool_calls_log.append({"name": name, "args": args, "result": result})
             all_messages.append({
                 "role": "tool",
                 "content": json.dumps(result, ensure_ascii=False, default=str),

@@ -31,6 +31,16 @@ class _Message:
 
     async def answer(self, text, **kw):
         self.sent.append((text, kw.get("reply_markup")))
+        return _EditableMessage(self, len(self.sent) - 1)
+
+
+class _EditableMessage:
+    def __init__(self, owner, index):
+        self.owner = owner
+        self.index = index
+
+    async def edit_text(self, text):
+        self.owner.sent[self.index] = (text, None)
 
 
 class _State:
@@ -119,3 +129,25 @@ async def test_no_meal_log_means_no_second_message(db_session, monkeypatch):
     await handle_chat_message(message, state, db_session, user)
 
     assert len(message.sent) == 1
+
+
+async def test_tool_trace_precedes_coach_reply(db_session, monkeypatch):
+    user = await _make_user(db_session, 9003)
+    message = _Message("montre-moi mon planning")
+
+    async def _fake_run_chat(**kwargs):
+        await kwargs["on_tool_event"]("get_upcoming_sessions", "started")
+        assert message.sent == [("Outils utilisés :\n⏳ get_upcoming_sessions", None)]
+        await kwargs["on_tool_event"]("get_upcoming_sessions", "finished")
+        return (
+            "Voici ton planning.", "chat", "get_upcoming_sessions", None,
+            {"prompt_tokens": 10, "completion_tokens": 5}, None,
+        )
+
+    monkeypatch.setattr("app.llm.chat.run_chat", _fake_run_chat)
+    await handle_chat_message(message, _State(initial=PlanStates.ACTIVE), db_session, user)
+
+    assert message.sent == [
+        ("Outils utilisés :\n✅ get_upcoming_sessions", None),
+        ("Voici ton planning.", None),
+    ]

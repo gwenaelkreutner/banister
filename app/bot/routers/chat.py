@@ -5,6 +5,7 @@ Intercepte tous les messages texte libres quand l'utilisateur est en PlanStates.
 Appelle le cycle agentique (Tool Use) via app/llm/chat.py.
 """
 
+import asyncio
 import logging
 import re
 
@@ -49,6 +50,40 @@ _FALLBACK_ERROR = (
 _REPLY_CONTEXT_MAX_CHARS = 500
 
 
+class _ToolTrace:
+    """One Telegram message, updated as actual tool calls start and finish."""
+
+    def __init__(self, incoming: Message):
+        self.incoming = incoming
+        self.sent: Message | None = None
+        self.calls: list[dict[str, str]] = []
+        self.lock = asyncio.Lock()
+
+    def _text(self) -> str:
+        icons = {"started": "⏳", "finished": "✅", "failed": "❌"}
+        return "Outils utilisés :\n" + "\n".join(
+            f"{icons[call['status']]} {call['name']}" for call in self.calls
+        )
+
+    async def __call__(self, name: str, status: str) -> None:
+        async with self.lock:
+            if status == "started":
+                self.calls.append({"name": name, "status": status})
+            else:
+                for call in reversed(self.calls):
+                    if call["name"] == name and call["status"] == "started":
+                        call["status"] = status
+                        break
+            try:
+                if self.sent is None:
+                    self.sent = await self.incoming.answer(self._text())
+                else:
+                    await self.sent.edit_text(self._text())
+            except Exception:
+                # Telegram UI failure must never interrupt a DB write or tool result.
+                logger.warning("Impossible de mettre à jour la trace des outils", exc_info=True)
+
+
 async def _send_meal_log(message: Message, meal_log: str | None) -> None:
     """Deuxième message Telegram, séparé de la réponse du coach — confirmation déterministe
     de ce que `log_meal`/`undo_last_meal_entry` ont réellement écrit en base ce tour (voir
@@ -85,6 +120,7 @@ async def handle_chat_message(
         if reply_context:
             reply_context = reply_context[:_REPLY_CONTEXT_MAX_CHARS]
 
+    tool_trace = _ToolTrace(message)
     try:
         from app.llm.chat import run_chat
         response_text, intent, tool_used, pending_proposal, usage, meal_log = await run_chat(
@@ -92,6 +128,7 @@ async def handle_chat_message(
             user=user,
             session=session,
             reply_context=reply_context,
+            on_tool_event=tool_trace,
         )
     except Exception:
         logger.exception("Erreur chat agentique")
