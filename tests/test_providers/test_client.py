@@ -231,6 +231,21 @@ class TestGetActivity:
         assert result["device_watts"] is None
 
 
+class TestUpdateActivityRpe:
+    async def test_puts_only_icu_rpe_on_existing_activity(self, patch_transport):
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.method == "PUT"
+            assert request.url.path == "/api/v1/activity/i123"
+            assert json.loads(request.content) == {"icu_rpe": 8}
+            return httpx.Response(200, json={"id": "i123", "icu_rpe": 8})
+
+        patch_transport(handler)
+
+        result = await IntervalsClient("test-key").update_activity_rpe("i123", 8)
+
+        assert result["icu_rpe"] == 8
+
+
 class TestListWellness:
     async def test_passes_date_window_params(self, patch_transport):
         seen = {}

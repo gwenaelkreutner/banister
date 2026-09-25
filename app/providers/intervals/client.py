@@ -122,6 +122,12 @@ class IntervalsClient:
         assert isinstance(result, dict)
         return result
 
+    async def update_activity_rpe(self, activity_id: str, rpe: int) -> dict:
+        """Update only the athlete's perceived exertion on an existing activity."""
+        result = await self._put(f"/activity/{activity_id}", json={"icu_rpe": rpe})
+        assert isinstance(result, dict)
+        return result
+
     async def get_activity_streams(self, activity_id: str, *, types: list[str]) -> list[dict]:
         """Fetch raw time-series streams for one activity — a list of `{type, data}`
         objects, one per requested stream that actually has data (verified against the

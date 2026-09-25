@@ -653,9 +653,10 @@ explicitement renseigné côté source.
   touche `log.rpe` que s'il est encore vide, consomme `icu_rpe` tel quel (pas de bucketing), persiste la
   correction (mutation in-place, committée par `session.begin()` du middleware). Silencieux si pas
   d'activité source, appel en échec, ou pas de valeur côté source.
-- **Écriture-retour (Telegram → intervals.icu) explicitement pas faite** — même doctrine que la correction
-  FTP (spec 007 FR-007, voir § Flux de configuration ci-dessous) : lecture seule pour l'instant, décision
-  owner 2026-09-21, pas de PUT vérifié contre l'API réelle.
+- **Écriture-retour (Telegram → intervals.icu)** : le callback RPE envoie la valeur numérique choisie
+  sur l'activité source (`PUT /activity/{id}`, corps limité à `icu_rpe`). Le bouton « passer » n'écrit rien.
+  Si l'appel échoue, le RPE local reste enregistré et Telegram signale l'échec du transfert ; aucun nouvel
+  essai automatique n'est prévu. Cette écriture répond à la demande de l'owner du 2026-09-25.
 - Au passage, `REVIEW_RPE_MISSING_RULE` (`app/llm/prompts.py`) corrigée : elle forçait les points 2 et 3 de
   la structure `/review` à répéter "ressenti manquant" (vu en direct — 3 paragraphes sur le même fait, zéro
   analyse utile). Maintenant : seul le point 1 énonce l'absence de RPE ; les points 2/3 doivent puiser dans

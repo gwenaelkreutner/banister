@@ -21,13 +21,15 @@ from aiogram.types import CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.text_format import to_telegram_html
+from app.config import settings
 from app.db import repositories as repo
 from app.db.models.user import User
+from app.engine.adherence_kpi import compute_weekly_kpi_block
 from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any, estimate_initial_ctl
-from app.engine.adherence_kpi import compute_session_kpi, compute_weekly_kpi_block
-from app.engine.tss import detect_fatigue_anomaly_scalar, tss_from_weekly_hours
 from app.engine.schemas import TrainingPlanSchema
-from app.engine.weekly_snapshot import WeeklySnapshot, compute_weekly_snapshot
+from app.engine.tss import detect_fatigue_anomaly_scalar, tss_from_weekly_hours
+from app.engine.weekly_snapshot import compute_weekly_snapshot
+from app.providers.intervals.client import IntervalsClient
 from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
@@ -91,7 +93,10 @@ def _get_next_session_info(plan, week_num: int, current_dow: int) -> str | None:
             s = upcoming[0]
             dow_label = _DOW_FR[s.day_of_week]
             type_label = _TYPE_FR.get(s.workout_type, s.workout_type)
-            return f"{dow_label} — {type_label} {s.zone_code}, {s.duration_minutes} min ({s.tss_target:.0f} TSS)"
+            return (
+                f"{dow_label} — {type_label} {s.zone_code}, "
+                f"{s.duration_minutes} min ({s.tss_target:.0f} TSS)"
+            )
 
     # Semaine suivante : première session
     next_week = weeks_by_num.get(week_num + 1)
@@ -101,7 +106,10 @@ def _get_next_session_info(plan, week_num: int, current_dow: int) -> str | None:
             s = upcoming[0]
             dow_label = _DOW_FR[s.day_of_week]
             type_label = _TYPE_FR.get(s.workout_type, s.workout_type)
-            return f"{dow_label} (sem. suivante) — {type_label} {s.zone_code}, {s.duration_minutes} min ({s.tss_target:.0f} TSS)"
+            return (
+                f"{dow_label} (sem. suivante) — {type_label} {s.zone_code}, "
+                f"{s.duration_minutes} min ({s.tss_target:.0f} TSS)"
+            )
 
     return None
 
@@ -194,8 +202,8 @@ async def _reveal_activity_analysis(message, *, kpi_block: str | None = None, **
     try:
         await message.bot.send_chat_action(message.chat.id, "typing")
         await asyncio.sleep(1.5)
-        from app.llm.activity_analysis import generate_coach_blocks
         from app.engine.atl_ctl import tsb_label as _tsb_label
+        from app.llm.activity_analysis import generate_coach_blocks
 
         snap = kwargs.get("weekly_snapshot")
         tsb = kwargs.get("tsb")
@@ -275,6 +283,20 @@ def _highlight_category_from_log(log) -> str | None:
 
 # ── RPE ──────────────────────────────────────────────────────────────────────
 
+async def _sync_rpe_to_intervals(activity_id: str, rpe: float) -> bool:
+    """Return whether the source activity accepted the Telegram RPE."""
+    try:
+        client = IntervalsClient(
+            settings.intervals_api_key.get_secret_value(),
+            athlete_id=settings.intervals_athlete_id,
+        )
+        await client.update_activity_rpe(activity_id, int(rpe))
+    except Exception:
+        logger.exception("Impossible de synchroniser le RPE vers intervals.icu")
+        return False
+    return True
+
+
 @router.callback_query(F.data.startswith("log:rpe:"))
 async def cb_rpe(callback: CallbackQuery, session: AsyncSession, user: User):
     # Format : log:rpe:{log_id}:{valeur 1-10 | "skip"} — le clavier envoie une valeur
@@ -303,13 +325,26 @@ async def cb_rpe(callback: CallbackQuery, session: AsyncSession, user: User):
     )
     await callback.answer()
 
+    if rpe_effective is not None and log.source_activity_id:
+        if not await _sync_rpe_to_intervals(log.source_activity_id, rpe_effective):
+            try:
+                await callback.message.answer(
+                    "Ton ressenti est enregistré ici, mais son transfert vers "
+                    "Intervals.icu a échoué."
+                )
+            except Exception:
+                logger.exception("Impossible de signaler l'échec de synchronisation du RPE")
+
     # Charger les logs + activités pré-plan pour fitness cohérente avec /forme
     logs = await repo.session_log_repo.get_all_for_user(session, user.id)
     metrics, all_items = await _get_fitness_metrics(session, user.id, logs)
 
     # Analyse LLM post-RPE (non-bloquant) — contexte enrichi depuis SessionLog
     plan = await repo.plan_repo.get_active_plan(session, user.id)
-    _spec = _get_session_spec(plan, log.week_number, log.day_of_week) if plan and log.week_number is not None else None
+    _spec = (
+        _get_session_spec(plan, log.week_number, log.day_of_week)
+        if plan and log.week_number is not None else None
+    )
     planned_tss = _spec.tss_target if _spec else None
     planned_duration = _spec.duration_minutes if _spec else None
     planned_workout_type = _spec.workout_type if _spec else None
@@ -336,8 +371,8 @@ async def cb_rpe(callback: CallbackQuery, session: AsyncSession, user: User):
                 fatigue_anomaly = dataclasses.asdict(fa)
 
     # ── Variable Reward — sélection du mode et détection PR ───────────────
-    from app.providers.analysis.highlight import detect_personal_records
     from app.db.models.session_log import SessionLog as SessionLogModel
+    from app.providers.analysis.highlight import detect_personal_records
 
     storytelling_mode = _select_storytelling_mode(log.session_type_real)
     highlight_category = _highlight_category_from_log(log)
