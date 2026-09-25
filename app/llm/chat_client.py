@@ -14,31 +14,33 @@ import re
 from openai import AsyncOpenAI
 
 from app.config import settings
+from app.core.localization import t
 
 logger = logging.getLogger(__name__)
 
 _client: AsyncOpenAI | None = None
 
 _NO_TOOL_NAME = "respond_without_tool"
-_NO_TOOL_DEFINITION = {
-    "type": "function",
-    "function": {
-        "name": _NO_TOOL_NAME,
-        "description": (
-            "Réponds sans outil UNIQUEMENT si aucun des autres outils ne correspond à la "
-            "demande de l'athlète. Si un outil peut conserver une information que "
-            "l'athlète vient de donner, choisis cet outil. Ne prétends jamais avoir lu, "
-            "enregistré, modifié ou supprimé des données avec cette option."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "answer": {"type": "string", "description": "Réponse sans action effectuée."},
+
+
+def _no_tool_definition() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": _NO_TOOL_NAME,
+            "description": t("llm.tools.respond_without_tool.description"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "answer": {
+                        "type": "string",
+                        "description": t("llm.tools.respond_without_tool.answer_description"),
+                    },
+                },
+                "required": ["answer"],
             },
-            "required": ["answer"],
         },
-    },
-}
+    }
 
 # Regex pour détecter TOOLCALL>[...] émis par les modèles sans function calling natif
 _TEXT_TOOLCALL_RE = re.compile(r'TOOLCALL>\[(.+?)(?:\]>|(?=\s*$))', re.DOTALL)
@@ -118,7 +120,7 @@ async def run_agentic_loop(
     effective_model = model or settings.chat_model
 
     all_messages = list(messages)
-    decision_tools = [*tools, _NO_TOOL_DEFINITION]
+    decision_tools = [*tools, _no_tool_definition()]
     tool_used = None
     last_tool_result: dict | None = None
     tool_calls_log: list[dict] = []
@@ -205,7 +207,7 @@ async def run_agentic_loop(
                     await on_tool_event(_NO_TOOL_NAME, "finished")
                 answer = (
                     answer if isinstance(answer, str) and answer
-                    else "Je n'ai utilisé aucun outil pour ce message."
+                    else t("llm.chat_client.no_tool_used_fallback")
                 )
                 return answer, tool_used, last_tool_result, usage_total, tool_calls_log
             if text_calls:
@@ -248,9 +250,8 @@ async def run_agentic_loop(
                 )
                 final_messages = all_messages + [
                     {"role": "assistant", "content": content},
-                    {"role": "user", "content": (
-                        f"Résultats des outils :\n{result_ctx}\n\n"
-                        "Réponds maintenant à l'athlète en expliquant ce qui est proposé."
+                    {"role": "user", "content": t(
+                        "llm.chat_client.tool_results_followup", context=result_ctx
                     )},
                 ]
                 logger.info("[LLM →] agentic final (text-tool) | model=%s", effective_model)
@@ -293,7 +294,7 @@ async def run_agentic_loop(
                 await on_tool_event(_NO_TOOL_NAME, "finished")
             answer = (
                 answer if isinstance(answer, str) and answer
-                else "Je n'ai utilisé aucun outil pour ce message."
+                else t("llm.chat_client.no_tool_used_fallback")
             )
             return answer, tool_used, last_tool_result, usage_total, tool_calls_log
 

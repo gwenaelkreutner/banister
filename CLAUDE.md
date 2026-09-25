@@ -641,11 +641,10 @@ explicitement renseigné côté source.
   bornes**, documenté comme tel), `rpe_emoji()` (affichage compact 😫/😐/🙂/—), `rpe_label()` (libellé FR
   pour le contexte LLM, ex. "8/10 (dur)"). `icu_rpe` (intervals.icu) est **consommé tel quel** dans
   `mapper.py` (Principe IV — plus de bucketing à l'ingestion depuis que le stockage est numérique).
-- **Le clavier Telegram (`cb_rpe`, `app/bot/routers/session_log.py`) écrit une valeur représentative sur
-  cette même échelle** — 3 boutons emoji pour l'UX (choix rapide d'une bande large), `RPE_EASY_VALUE=3`/
-  `RPE_NORMAL_VALUE=5`/`RPE_HARD_VALUE=8` dans `app/engine/rpe.py` (reprend les valeurs déjà choisies par
-  l'ancien `RPE_EMOJI_INT_MAP` de `app/engine/tss.py`, retiré au profit de ce module unique — plus de
-  double source de vérité pour la même conversion). **Reste toujours prioritaire sur intervals.icu**
+- **Le clavier Telegram (`app/bot/keyboards/session_log.py`) propose les dix notes 1-10 avec les libellés
+  de la capture Intervals.icu** (`RPE_SCALE_LABELS_FR` dans `app/engine/rpe.py`, source canonique de l'échelle).
+  Le callback `cb_rpe` enregistre la note exacte ; « Passer » ne saisit aucune valeur Telegram. La valeur Telegram
+  **reste prioritaire sur intervals.icu**
   (décision owner) — la valeur source n'est qu'un point de départ à l'ingestion, jamais une correction qui
   écrase une réponse déjà donnée sur Telegram.
 - **Rattrapage pour les séances déjà loguées avant ce fix** : `app/bot/routers/review.py::

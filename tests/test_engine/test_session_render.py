@@ -8,8 +8,8 @@ from __future__ import annotations
 import inspect
 
 from app.engine.plan_builder import generate_plan
-from app.engine.schemas import RepeatGroup, Step
-from app.engine.session_render import render_description
+from app.engine.schemas import RepeatGroup, SessionSpec, Step
+from app.engine.session_render import render_description, render_session_description
 
 
 def _threshold_steps():
@@ -119,6 +119,97 @@ class TestLanguageParameter:
         desc_en = render_description("intervals", steps, coaching_mode="hr", language="en")
         assert "cardio" in desc_fr
         assert "heart rate" in desc_en
+
+
+class TestStoredSessionDisplay:
+    def test_structured_session_renders_in_both_languages_without_changing_steps(self):
+        steps = _threshold_steps()
+        session = SessionSpec(
+            day_of_week=1,
+            workout_type="intervals",
+            zone_code="Z4",
+            duration_minutes=78,
+            target_time_in_zone_minutes=36,
+            tss_target=80.0,
+            description_fr="Ancienne description française",
+            steps=steps,
+        )
+        original = session.model_dump()
+
+        fr = render_session_description(session, coaching_mode="power", language="fr")
+        en = render_session_description(session, coaching_mode="power", language="en")
+
+        assert fr == "Ancienne description française"
+        assert "3×12min Z4 (Lactate threshold)" in en
+        assert "Ancienne description" not in en
+        assert session.model_dump() == original
+
+    def test_legacy_session_keeps_stored_text_verbatim_in_both_languages(self):
+        session = SessionSpec(
+            day_of_week=1,
+            workout_type="intervals",
+            zone_code="Z4",
+            duration_minutes=78,
+            target_time_in_zone_minutes=36,
+            tss_target=80.0,
+            description_fr="3×12min au seuil — texte historique",
+        )
+
+        assert render_session_description(session, language="fr") == session.description_fr
+        assert render_session_description(session, language="en") == session.description_fr
+
+    def test_race_day_marker_keeps_its_event_instructions(self):
+        steps = [Step(kind="steady", duration_minutes=20, zone_code="Z2")]
+        session = SessionSpec(
+            day_of_week=6,
+            workout_type="long_ride",
+            zone_code="Z2",
+            duration_minutes=20,
+            target_time_in_zone_minutes=0,
+            tss_target=1.0,
+            description_fr=(
+                "JOUR DE COURSE — Bonne chance ! Échauffement 20min Z1-Z2 avant le départ. "
+                "Ta sortie sera automatiquement importée depuis intervals.icu."
+            ),
+            steps=steps,
+        )
+
+        assert render_session_description(session, language="fr") == session.description_fr
+        en = render_session_description(session, language="en")
+        assert "RACE DAY" in en
+        assert "20 min" in en
+        assert "automatically" in en
+        assert "Long ride" not in en
+
+    def test_pre_race_activation_retains_purpose_and_interval_shape(self):
+        steps = [
+            Step(kind="warmup", duration_minutes=20, zone_code="Z2"),
+            RepeatGroup(repeat=5, steps=[
+                Step(kind="work", duration_minutes=5, zone_code="Z5"),
+                Step(kind="recovery", duration_minutes=3, zone_code="Z1"),
+            ]),
+            Step(kind="cooldown", duration_minutes=10, zone_code="Z1"),
+        ]
+        session = SessionSpec(
+            day_of_week=3,
+            workout_type="intervals",
+            zone_code="Z5",
+            duration_minutes=70,
+            target_time_in_zone_minutes=25,
+            tss_target=64.0,
+            description_fr=(
+                "Activation pre-course — 20min Z2 échauffement, puis 5×5min Z5 / "
+                "3min Z1 récup, 10min Z1 retour au calme. "
+                "Rappels neuromusculaires pour ouvrir les jambes sans fatigue."
+            ),
+            steps=steps,
+        )
+
+        assert render_session_description(session, language="fr") == session.description_fr
+        en = render_session_description(session, language="en")
+        assert "Pre-race activation" in en
+        assert "5×5min Z5" in en
+        assert "without adding fatigue" in en
 
 
 class TestNoHardcodedFrenchRemainsInPlanBuilder:

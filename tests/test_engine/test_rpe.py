@@ -2,10 +2,8 @@
 l'ancien rpe_emoji catégoriel)."""
 from app.engine.rpe import (
     RPE_EASY_MAX,
-    RPE_EASY_VALUE,
     RPE_HARD_MIN,
-    RPE_HARD_VALUE,
-    RPE_NORMAL_VALUE,
+    RPE_SCALE_LABELS_FR,
     rpe_band,
     rpe_emoji,
     rpe_label,
@@ -26,12 +24,11 @@ def test_normal_band_between_thresholds():
     assert rpe_band(5) == "normal"
 
 
-def test_representative_values_land_in_the_expected_band():
-    """Les 3 boutons Telegram écrivent ces valeurs — elles doivent retomber dans la
-    bande que leur nom suggère, sinon le bouton "Facile" pourrait afficher 😫 ailleurs."""
-    assert rpe_band(RPE_EASY_VALUE) == "easy"
-    assert rpe_band(RPE_NORMAL_VALUE) == "normal"
-    assert rpe_band(RPE_HARD_VALUE) == "hard"
+def test_scale_has_the_ten_ordered_choices():
+    assert len(RPE_SCALE_LABELS_FR) == 10
+    assert RPE_SCALE_LABELS_FR[0] == "Aucun effort"
+    assert RPE_SCALE_LABELS_FR[4] == "Légèrement difficile"
+    assert RPE_SCALE_LABELS_FR[-1] == "Effort maximal"
 
 
 def test_emoji_none_is_a_dash():
@@ -39,9 +36,9 @@ def test_emoji_none_is_a_dash():
 
 
 def test_emoji_matches_band():
-    assert rpe_emoji(RPE_EASY_VALUE) == "🙂"
-    assert rpe_emoji(RPE_NORMAL_VALUE) == "😐"
-    assert rpe_emoji(RPE_HARD_VALUE) == "😫"
+    assert rpe_emoji(3) == "🙂"
+    assert rpe_emoji(5) == "😐"
+    assert rpe_emoji(8) == "😫"
 
 
 def test_label_shows_integer_without_decimal():

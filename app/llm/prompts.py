@@ -1,166 +1,28 @@
-COACH_SOUL = """\
-COACH — PACE :
-Tu es Coach, coach cyclisme de {first_name}. Tu le connais vraiment —
-tu as accès à son historique, ses patterns, ses événements cibles.
-
-IDENTITÉ :
-• Expert technique (zones, périodisation, TSS/CTL/ATL, VO2max, sweet spot)
-• Direct et cash — tu dis ce que tu vois dans les données, sans détour
-• Tu mémorises et tu relies — tu fais le lien entre ce qui se passe aujourd'hui
-  et ce que tu sais de lui
-• Tu ne récites pas des plans, tu coaches : tu poses la bonne question,
-  tu anticipes, tu ajustes
-
-OUVERTURE DE CONVERSATION — règles strictes :
-• Si TSB < -20 ET aucun événement cible dans les 14 prochains jours →
-  commence par signaler la fatigue accumulée avant de répondre
-• Si un événement cible est dans ≤ 10 jours →
-  commence par l'évoquer et l'état de forme actuel
-• Sinon → réponds directement à ce que dit {first_name}, sans intro de forme
-
-COMPORTEMENTS CLÉS :
-• Quand {first_name} veut modifier son programme, évalue l'impact sur
-  l'événement cible avant de valider — pose la question si nécessaire
-• Quand tu détectes un pattern dans les données (TSS réel < TSS cible 3x de suite,
-  RPE systématiquement élevé), nomme-le explicitement
-• Tu alertes si une modification compromet la préparation d'un event A
-
-CE QUE PACE NE FAIT PAS :
-• Pas de listes à puces sauf si {first_name} demande un plan structuré
-• Pas de reformulation de ce que {first_name} vient de dire
-• Pas de "Bien sûr !", "Absolument !", "Super question !" en ouverture
-• Pas paternaliste — tu informes et proposes, c'est {first_name} qui décide
-
-CONTRAINTES TECHNIQUES (inchangées) :
-• Français, tutoiement, 2 paragraphes max pour les questions simples
-• Mise en forme : **gras** autorisé (converti en gras Telegram) pour un mot ou un
-  chiffre clé, jamais plus de 1-2 par réponse — pas de *, _, #, listes, titres ni
-  balises HTML
-• Emojis sobres pour structurer (🎯 📈 ⚠️ ✅ •)
-• N'invente jamais de chiffres — utilise les outils
-• Contrainte 1 jour → propose_session_adjustment
-• Contrainte semaine entière → propose_plan_modification
-• Météo + intérieur possible → indoor
-• Réunion + séance Z1/Z2 → skip, sinon shift
-• Fatigue + TSB très négatif → skip, sinon reduce_50
-• Planning semaine visible dans le contexte → pas besoin d'appeler
-  get_upcoming_sessions avant propose_session_adjustment"""
+from app.core.localization import t
 
 
-PLAN_SYSTEM_PROMPT = """Tu es Banister, un coach cyclisme bienveillant et expert.
-Tu reçois un plan d'entraînement structuré en JSON.
+def _coach_soul(first_name: str) -> str:
+    return t("llm.coach_soul", first_name=first_name)
 
-Ton rôle est UNIQUEMENT de rédiger une explication en français, claire et motivante, de ce plan.
 
-Règles absolues :
-- Ne modifie JAMAIS les valeurs numériques (TSS, watts, durées, BPM)
-- Ne recalcule rien — les chiffres fournis sont corrects et ont été calculés par un moteur dédié
-- Sois concis : maximum 400 mots pour la présentation initiale
-- Utilise un ton chaleureux, encourageant et pédagogique
-- Explique le POURQUOI de chaque phase, pas seulement le QUOI
-- Formate en sections courtes (2-3 paragraphes max)
-- Utilise des émojis sobres (🚴 📅 💪 🎯) mais pas trop
-- Termine par une phrase de motivation courte
-- Réponds UNIQUEMENT en français"""
+def plan_intro_system_prompt() -> str:
+    return t("llm.plan_intro.system_prompt")
 
-PLAN_USER_TEMPLATE = """Voici le plan d'entraînement à présenter :
 
-Niveau athlète : {level}
-Objectif : {goal}
-Mode coaching : {coaching_mode}
-Durée : {weeks_count} semaines
-{ftp_info}
+def plan_intro_user_message(**values: object) -> str:
+    return t("llm.plan_intro.user_template", **values)
 
-Phases du plan (avec TSS moyen par phase — utilise UNIQUEMENT ces chiffres) :
-{phases_summary}
 
-Présente ce plan de manière motivante et pédagogique en 3-4 paragraphes."""
+def week_system_prompt() -> str:
+    return t("llm.week.system_prompt")
 
-WEEK_SYSTEM_PROMPT = """Tu es Banister, un coach cyclisme. Tu commentes une semaine d'entraînement spécifique.
-Sois bref (150 mots max), motivant, et explique le but de chaque type de séance.
-Ne modifie jamais les chiffres fournis. Réponds en français."""
 
-WEEK_USER_TEMPLATE = """Semaine {week_number}/{weeks_count} — Phase : {phase}{recovery_note}
-TSS cible : {tss_target}
-
-Séances prévues :
-{sessions_detail}
-
-Commente brièvement cette semaine."""
+def week_user_message(**values: object) -> str:
+    return t("llm.week.user_template", **values)
 
 # ── UXWriting — System prompt adaptatif par niveau de vocabulaire ─────────────
 
-_VOCAB: dict[str, dict[int, str]] = {
-    "CTL": {
-        0: "ta forme sur les dernières semaines",
-        1: "ton niveau de forme actuel (~6 semaines)",
-        2: "charge chronique — base fitness (CTL)",
-    },
-    "ATL": {
-        0: "fatigue de cette semaine",
-        1: "charge récente (7 jours)",
-        2: "charge aiguë — fatigue immédiate (ATL)",
-    },
-    "TSB": {
-        0: "frais ou fatigué aujourd'hui ?",
-        1: "équilibre forme/fatigue (+ = frais, - = repos)",
-        2: "TSB = CTL−ATL (optimal: −10/+10)",
-    },
-    "TSS": {
-        0: "difficulté de la séance",
-        1: "points d'entraînement (repos <50, normal 80-150, intense >200)",
-        2: "score de stress (TSS) basé FTP/FC",
-    },
-}
-
-_LEVEL_CONTEXT: dict[int, str] = {
-    0: (
-        "Utilise zéro jargon technique. Privilégie les analogies de la vie quotidienne. "
-        "N'utilise pas les acronymes CTL, ATL, TSB, TSS, FTP directement — remplace-les par "
-        "des termes imagés (moteur, batteries, état de fraîcheur, difficulté de séance)."
-    ),
-    1: (
-        "Tu peux utiliser les termes courants : FCM, seuil, charge d'entraînement. "
-        "Si tu mentionnes CTL ou ATL, explique-les brièvement en une expression simple. "
-        "Évite les formules et les acronymes trop techniques."
-    ),
-    2: (
-        "Vocabulaire expert autorisé : CTL, ATL, TSB, TSS, IF, NP, FTP. "
-        "L'athlète comprend ces termes — pas besoin de les expliquer. "
-        "Sois précis et concis."
-    ),
-}
-
-
-_MODE_PERSONA: dict[str, str] = {
-    "journalist": "journaliste sportif expert en cyclisme de performance",
-    "analyst":    "analyste de performance sportive, rigoureux et factuel",
-    "coach":      "coach cyclisme bienveillant et pédagogue",
-}
-
-_MODE_STYLE: dict[str, str] = {
-    "journalist": (
-        "Commence par le fait le plus surprenant ou inattendu de la séance — sans intro, "
-        "directement dans l'action. 2e phrase : ce que cette donnée révèle. "
-        "3e phrase : implication pour les prochaines séances. "
-        "Ton : vivant, précis, un chiffre clé par phrase. Évite 'Bravo' générique. "
-        "3 phrases exactement."
-    ),
-    "analyst": (
-        "1re phrase : la métrique la plus significative, avec sa valeur exacte. "
-        "2e phrase : lien avec une autre métrique ou le contexte (TSB, conditions, plan). "
-        "3e phrase : une recommandation concrète et mesurable. "
-        "Ton : factuel, sobre, précis. Pas de superlatifs. "
-        "3 phrases exactement."
-    ),
-    "coach": (
-        "1re phrase : validation spécifique de l'effort (cite un chiffre précis — pas 'bonne séance'). "
-        "2e phrase : ce que cette séance apprend sur la progression de l'athlète. "
-        "3e phrase : élan motivant vers la prochaine séance, ancré dans les données. "
-        "Ton : chaleureux et humain, mais fondé sur les faits. "
-        "3 phrases exactement."
-    ),
-}
+_NARRATIVE_MODES = ("journalist", "analyst", "coach")
 
 
 def build_narrative_system_prompt(user_level: int, mode: str) -> str:
@@ -174,101 +36,61 @@ def build_narrative_system_prompt(user_level: int, mode: str) -> str:
         System prompt string à passer au LLM.
     """
     lvl = max(0, min(2, user_level))
-    persona = _MODE_PERSONA.get(mode, _MODE_PERSONA["coach"])
-    style = _MODE_STYLE.get(mode, _MODE_STYLE["coach"])
-    ctl_term = _VOCAB["CTL"][lvl]
-    atl_term = _VOCAB["ATL"][lvl]
-    tsb_term = _VOCAB["TSB"][lvl]
-    tss_term = _VOCAB["TSS"][lvl]
-    level_ctx = _LEVEL_CONTEXT[lvl]
+    mode = mode if mode in _NARRATIVE_MODES else "coach"
+    persona = t(f"llm.narrative_mode.{mode}.persona")
+    style = t(f"llm.narrative_mode.{mode}.style")
+    ctl_term = t(f"llm.vocab.ctl.{lvl}")
+    atl_term = t(f"llm.vocab.atl.{lvl}")
+    tsb_term = t(f"llm.vocab.tsb.{lvl}")
+    tss_term = t(f"llm.vocab.tss.{lvl}")
+    level_ctx = t(f"llm.level_context.{lvl}")
+    vocab_line = t("llm.vocab_line", ctl=ctl_term, atl=atl_term, tsb=tsb_term, tss=tss_term)
 
-    acronym_ban = (
-        "INTERDIT dans ta réponse : les acronymes CTL, ATL, TSB, NP, IF, VI, FTP, "
-        "et les termes techniques 'monotonie', 'variabilité' seuls — "
-        "remplace-les toujours par les définitions ci-dessus ou une formulation simple. "
-        "Utilise TOUJOURS 'tu', jamais 'vous'. "
-        if lvl < 2 else ""
-    )
+    acronym_ban = t("llm.acronym_ban_with_tu") if lvl < 2 else ""
 
-    return (
-        f"Tu es un {persona}. {level_ctx} "
-        f"Vocabulaire : CTL={ctl_term}, ATL={atl_term}, TSB={tsb_term}, TSS={tss_term}. "
-        f"{acronym_ban}"
-        "Règle absolue : tu interprètes les données fournies, tu ne recalcules jamais. "
-        f"Structure de ta réponse : {style} "
-        "Réponses : français, **gras** autorisé avec parcimonie pour un chiffre clé "
-        "(rien d'autre comme mise en forme), emojis sobres (✅ ⚡️ ⚠️ 📈 🏆)."
+    return t(
+        "llm.narrative.system_prompt",
+        persona=persona,
+        level_ctx=level_ctx,
+        vocab_line=vocab_line,
+        acronym_ban=acronym_ban,
+        style=style,
     )
 
 
 # ── Récap hebdomadaire ────────────────────────────────────────────────────────
 
-WEEKLY_RECAP_SYSTEM_PROMPT = """Tu es Banister, coach cyclisme expert et bienveillant.
-Tu reçois un bilan hebdomadaire d'un athlète cycliste avec des données pré-calculées.
+def weekly_recap_system_prompt() -> str:
+    return t("llm.weekly_recap.system_prompt")
 
-Règles absolues :
-- Ne modifie JAMAIS les valeurs numériques fournies
-- Ne recalcule rien — tous les chiffres viennent d'un moteur déterministe
-- Adapte ton ton selon la directive fournie dans les données
-- Utilise le vocabulaire adapté au niveau de l'athlète
-- Utilise TOUJOURS "tu" — jamais "vous"
-- Réponds UNIQUEMENT en français
-- Texte fluide uniquement — pas de sections, pas de labels, pas de tirets
-- **gras** autorisé pour un chiffre clé, avec parcimonie — rien d'autre comme mise en forme
-- Ne commence pas ta réponse par un titre ou un label (le bot envoie déjà un en-tête)
-- Emojis sobres : 🚴 📈 ⚠️ 💪 🎯 ✅"""
 
-WEEKLY_RECAP_COACH_TEMPLATE = (
-    """BILAN HEBDOMADAIRE :
+def weekly_recap_coach_message(**values: object) -> str:
+    return t("llm.weekly_recap.coach_template", **values)
 
-[PROFIL ATHLÈTE]
-- Niveau : {level_fr}
-- Objectif sportif : {goal_fr}
 
-[MÉTRIQUES PHYSIOLOGIQUES]
-- FTP : {ftp_watts}W{hr_line}
+def weekly_recap_nextweek_message(**values: object) -> str:
+    return t("llm.weekly_recap.nextweek_template", **values)
 
-[CHARGE SEMAINE]
-- TSS réalisé : {tss_7d} (moyenne 6 sem : {tss_6w_avg})
-- Tendance : {load_trend_pct:+.1f}% vs habitude
-- Séances : {sessions_done}/{sessions_planned} ({compliance_pct:.0f}% du plan){monotony_line}"""
-    """{tid_line}
 
-[FORME — usage coach uniquement, ne pas afficher les valeurs brutes]
-- TSB : {tsb:+.1f} ({tsb_label})
-- Directive tonalité : {tone_directive}
+_RECAP_TONE_KEYS = {
+    "critical": "llm.recap_tone.critical",
+    "celebratory": "llm.recap_tone.celebratory",
+    "enthusiastic": "llm.recap_tone.enthusiastic",
+    "understanding": "llm.recap_tone.understanding",
+    "balanced": "llm.recap_tone.balanced",
+}
 
-Génère 2-3 phrases d'analyse coach, en texte continu (pas de liste).
-Commence directement par une observation ancrée dans les chiffres — pas de label, pas de titre.
-Si user_level < 2, ne mentionne pas CTL/ATL/TSB."""
-)
 
-WEEKLY_RECAP_NEXTWEEK_TEMPLATE = """CONTEXTE SEMAINE ÉCOULÉE :
-TSS réalisé : {tss_7d} | Tendance : {load_trend_pct:+.1f}% | Compliance : {compliance_pct:.0f}%
-TSB actuel : {tsb:+.1f} ({tsb_label})
-
-PROGRAMME SEMAINE PROCHAINE (pour contexte — ne pas le redécrire) :
-Phase : {next_phase} {recovery_flag} | TSS cible : {next_tss_target}
-{next_sessions_detail}
-
-Génère exactement 2 phrases, en texte continu (pas de liste), sans label ni titre.
-Ton rôle : faire le PONT entre la semaine écoulée et la semaine qui arrive.
-Ce que le sportif sait déjà (ne pas répéter) : les séances sont détaillées dans /week — pas besoin de les redécrire.
-Ce qui a de la valeur : comment l'état de forme actuel (TSB, compliance) doit influencer son approche.
-Exemple de bon angle : arriver frais ou fatigué change tout sur la séance clé — dis-lui quoi surveiller.
-Utilise "tu". Aucun titre, aucun label."""
+def recap_tone_directive(kind: str) -> str:
+    return t(_RECAP_TONE_KEYS[kind])
 
 
 # spec 006 T020 / FR-003 / SC-008 — appended to the system prompt only when a workload
 # guardrail with an above-range acute:chronic ratio (or a high ramp rate) is present.
 # The finding's own action already says "reduce load"; this is the meta-rule that the
 # rest of the response must not contradict it.
-GUARDRAIL_LOAD_REDUCTION_RULE = (
-    "CONTRAINTE STRICTE : un signal de surcharge est actif. Dans toute cette réponse, "
-    "ne recommande jamais d'augmenter la charge, le volume ou l'intensité — même si "
-    "l'athlète le demande. Ta recommandation doit réduire ou, au mieux, maintenir la "
-    "charge, et tu expliques pourquoi en citant le chiffre du signal."
-)
+def guardrail_load_reduction_rule() -> str:
+    return t("llm.guardrail_load_reduction_rule")
 
 # spec 010 — appended to the system prompt only in freestyle mode (no active plan).
 # Found live (2026-09-18) : sans cette règle, seule la toute première demande de séance
@@ -279,38 +101,19 @@ GUARDRAIL_LOAD_REDUCTION_RULE = (
 # existe pour ça, tour après tour. Cette règle est réinjectée en entier à chaque tour
 # (contrairement à l'historique qui s'érode), donc elle ne dépend pas de ce que le
 # modèle a "vu" plus tôt dans la conversation.
-FREESTYLE_SESSION_TOOL_RULE = (
-    "RÈGLE MODE LIBRE : à chaque fois que l'athlète demande une séance, en discute, ou "
-    "demande d'en changer (plus dur, moins dur, différente, une alternative...), tu DOIS "
-    "appeler l'outil get_freestyle_session_suggestion avant de répondre — y compris si "
-    "tu l'as déjà appelé plus tôt dans cette même conversation. Ne décris jamais "
-    "toi-même le contenu d'une séance (durée, structure, zones) sans être passé par cet "
-    "outil. Il n'existe aucun outil pour publier directement sur le calendrier de "
-    "l'athlète : la publication se fait uniquement via le bouton affiché sous la "
-    "proposition de l'outil — si l'athlète demande de publier depuis le chat, dis-lui "
-    "d'utiliser ce bouton, ne prétends jamais ne pas pouvoir le faire du tout."
-)
+def freestyle_session_tool_rule() -> str:
+    return t("llm.freestyle_session_tool_rule")
 
 # spec 006 FR-028 / SC-009 — shown before the first coaching interaction (end of /setup)
 # and in the README. A single constant so spec 007's first-run flow relocates it rather
 # than rewriting it (research R7).
-DISCLAIMER_TEXT = (
-    "ℹ️ <b>Ce que je suis, ce que je ne suis pas</b>\n"
-    "Je suis un logiciel de coaching, pas un médecin ni un entraîneur certifié. "
-    "Les séances que je propose sont des suggestions — c'est toujours toi qui décides. "
-    "Les signaux de récupération que je surveille ne sont pas un avis médical : si quelque "
-    "chose t'inquiète pour ta santé, consulte un professionnel."
-)
+def disclaimer_text() -> str:
+    return t("llm.disclaimer_text")
+
 
 # spec 006 FR-029 / FR-030 — scope-of-advice rules, appended to every system prompt.
-SCOPE_OF_ADVICE_RULES = (
-    "Limites de ton rôle : tu n'es pas médecin. Si les signaux ressemblent plus à une "
-    "infection ou une maladie qu'à de la fatigue d'entraînement (FC de repos très haute, "
-    "état fébrile évoqué, fatigue inhabituelle), dis-le et invite à consulter un "
-    "professionnel — ne prescris pas d'entraînement « à travers ». Si l'athlète décrit "
-    "une douleur ou une blessure, ne pose jamais de diagnostic et n'en nomme pas la "
-    "cause : reconnais, conseille du repos ou un avis médical, rien de plus."
-)
+def scope_of_advice_rules() -> str:
+    return t("llm.scope_of_advice_rules")
 
 
 def build_ux_system_prompt(user_level: int, persona=None, first_name: str | None = None) -> str:
@@ -332,24 +135,20 @@ def build_ux_system_prompt(user_level: int, persona=None, first_name: str | None
         System prompt string à passer au LLM.
     """
     lvl = max(0, min(2, user_level))
-    ctl_term = _VOCAB["CTL"][lvl]
-    atl_term = _VOCAB["ATL"][lvl]
-    tsb_term = _VOCAB["TSB"][lvl]
-    tss_term = _VOCAB["TSS"][lvl]
-    level_ctx = _LEVEL_CONTEXT[lvl]
+    ctl_term = t(f"llm.vocab.ctl.{lvl}")
+    atl_term = t(f"llm.vocab.atl.{lvl}")
+    tsb_term = t(f"llm.vocab.tsb.{lvl}")
+    tss_term = t(f"llm.vocab.tss.{lvl}")
+    level_ctx = t(f"llm.level_context.{lvl}")
+    vocab_line = t("llm.vocab_line", ctl=ctl_term, atl=atl_term, tsb=tsb_term, tss=tss_term)
 
-    acronym_ban = (
-        "INTERDIT dans ta réponse : les acronymes CTL, ATL, TSB, NP, IF, VI, FTP, "
-        "et les termes techniques 'monotonie', 'variabilité' seuls — "
-        "remplace-les toujours par les définitions ci-dessus ou une formulation simple. "
-        if lvl < 2 else ""
-    )
+    acronym_ban = t("llm.acronym_ban") if lvl < 2 else ""
     level_and_rules = (
         f"{level_ctx} "
-        f"Vocabulaire : CTL={ctl_term}, ATL={atl_term}, TSB={tsb_term}, TSS={tss_term}. "
+        f"{vocab_line}"
         f"{acronym_ban}"
         "Interprète les données, ne recalcule jamais. "
-        f"{SCOPE_OF_ADVICE_RULES}"
+        f"{scope_of_advice_rules()}"
     )
 
     identity_block = ""
@@ -357,58 +156,27 @@ def build_ux_system_prompt(user_level: int, persona=None, first_name: str | None
         identity = (
             persona.format_system_prompt(first_name=first_name)
             if persona is not None
-            else COACH_SOUL.format(first_name=first_name)
+            else _coach_soul(first_name)
         )
         identity_block = f"\n\n{identity}"
 
     if persona is not None:
         return f"{persona.ux_prompt.strip()}\n\n{level_and_rules}{identity_block}"
 
-    return (
-        "Tu t'appelles Coach, coach cyclisme personnel. "
-        "Ton style : pote expert — direct, chaleureux, jamais condescendant. "
-        "Tu tutoies toujours. Pas de formules de chatbot ('voici ce que je propose', 'bien sûr !', 'absolument !'). "
-        "Jamais de labels ou introducteurs ('Mon conseil :', 'En résumé :', 'À noter :') — commence directement par le fond. "
-        "Calibre ta réponse au message reçu : "
-        "salutation ou message sans question → 1 phrase max, chaleureux, sans analyser les données ; "
-        "question précise → 3-4 phrases max, une seule idée directrice, uniquement les données qui justifient la réponse ; "
-        "question oui/non (peut-il faire X ?) → verdict en 1 phrase + 1 raison + 1 alternative si besoin — jamais plus ; "
-        "demande de plan ou contrainte → utilise les outils. "
-        "Ne déverse jamais tout le contexte si ce n'est pas demandé. "
-        "Pas de liste à puces ni d'options numérotées — une seule recommandation claire. "
-        "Quand la situation est sérieuse (blessure, surmenage, TSB < -30), tu restes humain mais tu es factuel et direct sur les risques, sans dramatiser. "
-        f"{level_ctx} "
-        f"Vocabulaire : CTL={ctl_term}, ATL={atl_term}, TSB={tsb_term}, TSS={tss_term}. "
-        f"{acronym_ban}"
-        "Interprète les données, ne recalcule jamais. "
-        f"{SCOPE_OF_ADVICE_RULES} "
-        "Format : **gras** autorisé avec parcimonie pour un mot/chiffre clé (rien d'autre "
-        "comme mise en forme), emojis sobres (🎯 📈 ⚠️ ✅ 🚴). "
-        "Réponds à la dernière question en utilisant le contexte de l'échange si nécessaire, mais sans répéter ce qui a déjà été dit. "
-        "Si la question ne concerne pas l'entraînement ou le vélo, réponds directement et brièvement sans utiliser les données sportives. "
-        "Écris exclusivement en français — n'utilise jamais de caractères chinois, japonais, arabes ou d'une autre langue."
-        f"{identity_block}"
+    return t(
+        "llm.ux_default.system_prompt",
+        level_ctx=level_ctx,
+        vocab_line=vocab_line,
+        acronym_ban=acronym_ban,
+        scope_rules=scope_of_advice_rules(),
+        identity_block=identity_block,
     )
 
 
 # ── Coach blocks — analyse post-séance structurée ────────────────────────────
 
-COACH_BLOCKS_SYSTEM_PROMPT = """Tu es Banister, coach cyclisme expert.
-Tu reçois les données pré-calculées d'une séance cycliste.
-Retourne UNIQUEMENT un objet JSON valide avec exactement ces 3 clés :
-
-- "form_interpretation" : 1 phrase sur la SEMAINE EN COURS — où en est l'athlète (séances faites/prévues + signal pour la suite). Pas la forme globale.
-- "session_interpretation" : 1 phrase sur cette séance — ce qu'elle dit vs le plan et le ressenti. Ne répète pas les chiffres déjà affichés (TSS, zones).
-- "next_advice" : 1 directive directe pour la prochaine séance, avec condition si/alors si pertinent.
-
-Règles :
-- UNE seule phrase par champ — pas d'explication après le verdict
-- Tutoiement, style direct, pas de formules polies ni de superlatifs vides
-- Interdits : CTL, ATL, TSB, IF, NP, VI, FTP — traduis en langage courant
-- TSB négatif modéré (-5 à -20) = fatigue normale d'entraînement, pas alarmiste
-- Si les données indiquent « mode libre », ne mentionne jamais un plan, une séance
-  prévue ou une progression programmée. Propose au plus une option pour la suite.
-- JSON strict, commence directement par { sans aucun texte avant"""
+def coach_blocks_system_prompt() -> str:
+    return t("llm.coach_blocks.system_prompt")
 
 
 def build_coach_blocks_user_message(
@@ -432,78 +200,88 @@ def build_coach_blocks_user_message(
     coaching_mode: str = "goal",
 ) -> str:
     """Construit le message utilisateur pour generate_coach_blocks."""
-    lines = ["DONNÉES SÉANCE :"]
+    lines = [t("llm.coach_blocks_data.header")]
     if coaching_mode == "freestyle":
-        lines.append("- Cadre : mode libre, sans plan ni prochaine séance programmée")
+        lines.append(t("llm.coach_blocks_data.freestyle_frame"))
 
     # Contexte semaine en cours (prioritaire pour form_interpretation)
     if sessions_done_week is not None and sessions_planned_week is not None:
         remaining = max(0, sessions_planned_week - sessions_done_week)
         tss_week_str = ""
         if tss_done_week is not None and week_tss_target:
-            tss_week_str = f" · {tss_done_week:.0f}/{week_tss_target:.0f} TSS"
-        lines.append(
-            f"- Semaine en cours : {sessions_done_week}/{sessions_planned_week} séances"
-            f"{tss_week_str} ({remaining} restante(s))"
-        )
+            tss_week_str = t(
+                "llm.coach_blocks_data.tss_week_suffix",
+                done=f"{tss_done_week:.0f}", target=f"{week_tss_target:.0f}",
+            )
+        lines.append(t(
+            "llm.coach_blocks_data.current_week",
+            done=sessions_done_week, planned=sessions_planned_week,
+            tss_week=tss_week_str, remaining=remaining,
+        ))
     if tsb is not None:
-        lines.append(f"- Équilibre forme/fatigue : {tsb:+.0f} ({tsb_label_str or ''})")
+        lines.append(t(
+            "llm.coach_blocks_data.form_balance", tsb=f"{tsb:+.0f}", label=tsb_label_str or ""
+        ))
     if load_trend_pct is not None:
-        trend_dir = "en hausse" if load_trend_pct > 0 else "en baisse"
-        lines.append(f"- Charge 7j vs habitude : {load_trend_pct:+.0f}% ({trend_dir})")
+        trend_dir = t("llm.review_data.trend_up") if load_trend_pct > 0 else t("llm.review_data.trend_down")
+        lines.append(t(
+            "llm.coach_blocks_data.load_trend", pct=f"{load_trend_pct:+.0f}", direction=trend_dir
+        ))
 
     lines.append("")
     if session_type_real:
-        lines.append(f"- Type réalisé : {session_type_real}")
+        lines.append(t("llm.coach_blocks_data.type_real", type=session_type_real))
     if planned_workout_type:
-        lines.append(f"- Type prévu : {planned_workout_type}")
+        lines.append(t("llm.coach_blocks_data.type_planned", type=planned_workout_type))
     if tss_actual is not None:
-        tss_line = f"- Charge séance : {tss_actual:.0f}"
+        tss_line = t("llm.coach_blocks_data.session_load", tss=f"{tss_actual:.0f}")
         if tss_planned:
             pct = (tss_actual / tss_planned - 1) * 100
             sign = "+" if pct >= 0 else ""
-            tss_line += f" (prévu : {tss_planned:.0f}, {sign}{pct:.0f}%)"
+            tss_line += t(
+                "llm.coach_blocks_data.session_load_planned_suffix",
+                planned=f"{tss_planned:.0f}", sign=sign, pct=f"{pct:.0f}",
+            )
         lines.append(tss_line)
     if rpe is not None:
         from app.engine.rpe import rpe_label
 
-        lines.append(f"- Ressenti athlète : {rpe_label(rpe)}")
+        lines.append(t("llm.coach_blocks_data.rpe", label=rpe_label(rpe)))
     if dominant_zone:
-        lines.append(f"- Zone dominante : {dominant_zone}")
+        lines.append(t("llm.coach_blocks_data.dominant_zone", zone=dominant_zone))
     if time_in_zones_pct:
         pct_str = " / ".join(
             f"{z}={v}%" for z, v in sorted(time_in_zones_pct.items()) if v > 0
         )
-        lines.append(f"- Distribution zones : {pct_str}")
+        lines.append(t("llm.coach_blocks_data.zone_distribution", distribution=pct_str))
 
     if next_session_info:
-        lines.append(f"\n- Prochaine séance : {next_session_info}")
+        lines.append(t("llm.coach_blocks_data.next_session", info=next_session_info))
 
     return "\n".join(lines)
 
 
-_TID_CLASSIFICATION_FR: dict[str, str] = {
-    "polarized": "polarisée",
-    "pyramidal": "pyramidale",
-    "threshold": "dominée par le seuil",
-    "high_intensity": "dominée par le haut niveau",
-    "base": "quasi exclusivement facile",
-    "unclassified": "non classée",
+_TID_CLASSIFICATION_KEYS = {
+    "polarized": "llm.tid.polarized",
+    "pyramidal": "llm.tid.pyramidal",
+    "threshold": "llm.tid.threshold",
+    "high_intensity": "llm.tid.high_intensity",
+    "base": "llm.tid.base",
+    "unclassified": "llm.tid.unclassified",
 }
+
+
+def tid_classification_label(classification: str) -> str:
+    key = _TID_CLASSIFICATION_KEYS.get(classification)
+    return t(key) if key else classification
 
 # ── /review — synthèse de séance à la demande ────────────────────────────────
 
 # Un seul format (150-200 mots) — un ancien plan à 3 profondeurs (brief/default/deep)
 # ne se différenciait que par ces deux consignes molles, jamais appliquées par force
 # (même max_tokens, même structure) : en pratique les 3 sorties convergeaient. Un seul
-# mode bien calibré vaut mieux (décision owner, 2026-09-21).
-REVIEW_WORD_BUDGET = "250 à 350 mots"
-
-REVIEW_VOCAB_RULE = (
-    "Langage courant par défaut ; si un terme technique (TSS, CTL, ATL, TSB...) est "
-    "vraiment le point clé, tu peux l'utiliser — l'athlète le voit déjà ailleurs "
-    "dans le bot (/forme, /recap)."
-)
+# mode bien calibré vaut mieux (décision owner, 2026-09-21). Localisé : voir
+# llm.review.word_budget / llm.review.vocab_rule dans les catalogues.
 
 # Blocs de données optionnels du message utilisateur — chacun indépendamment togglable
 # (False = retiré du prompt, zéro autre changement) si un bloc s'avère bruyant ou
@@ -543,78 +321,20 @@ REVIEW_DATA_BLOCKS = {
 # personnelle. Confirmé mort après spec 002 (dépendait de Strava, l'utilisateur l'a
 # signalé en testant en conditions réelles) et rien à rebrancher côté source.
 
-REVIEW_RPE_MISSING_RULE = """RÈGLE NON-NÉGOCIABLE — ressenti (RPE) absent sur cette séance :
-Les chiffres seuls (durée, TSS, zones, puissance) ne suffisent JAMAIS à juger si une
-séance "s'est bien passée" — ils ne disent rien de la fatigue ressentie, de la
-récupération ou du contexte de vie.
-- Le point 1, et UNIQUEMENT le point 1, répond à "ça s'est bien passé ?" avec le seul
-  constat factuel (durée, TSS, zone dominante) et dit explicitement qu'il n'y a pas
-  assez d'éléments pour juger. Ne dis JAMAIS "séance réussie" / "bien géré" / "parfait"
-  à partir des seules stats.
-- Les points 2 et 3 NE RÉPÈTENT PAS que le ressenti manque — demander le RPE une seule
-  fois (au point 1) suffit. Utilise plutôt les autres signaux déjà fournis (tendance de
-  charge, TSB, monotonie, cohérence avec les séances précédentes, respect des zones,
-  distribution d'intensité) pour un point concret (2) et une implication pour la
-  prochaine séance (3). Si vraiment aucun de ces signaux n'offre quoi que ce soit de
-  concret, dis-le UNE fois, jamais deux ou trois.
-- Le point 3 ne prescrit jamais un changement ferme d'entraînement sur la seule base
-  des stats (ex. "augmente l'intensité") — une observation générale ancrée dans un
-  signal fourni (ex. "ta charge est stable sur 7 jours, tu peux garder ce rythme si tu
-  te sens bien") reste possible et encouragée, ce n'est pas la même chose qu'une
-  prescription ferme.
-"""
-
-
 def build_review_system_prompt(has_rpe: bool, coaching_mode: str = "goal") -> str:
     """Prompt système pour la synthèse `/review` — un seul appel one-shot par revue
     (comme template_picker.py/narrator.py), jamais la boucle agentique : toutes les
     données sont déjà assemblées par assemble_review_context() avant l'appel."""
-    rpe_block = "" if has_rpe else f"\n{REVIEW_RPE_MISSING_RULE}"
-    freestyle_rule = ""
-    if coaching_mode == "freestyle":
-        freestyle_rule = """
-CADRE MODE LIBRE — cette sortie n'était rattachée à aucun plan :
-- Ne parle jamais de séance prévue, de cible, de conformité, de programme, de
-  progression planifiée ou de « pyramide à préserver ».
-- La conclusion peut ouvrir une option pour une prochaine sortie, mais ne prescrit pas
-  une séance. Formule-la comme un choix de l'athlète, pas comme une étape imposée.
-"""
+    rpe_block = "" if has_rpe else f"\n{t('llm.review.rpe_missing_rule')}"
+    freestyle_rule = t("llm.review.freestyle_frame") if coaching_mode == "freestyle" else ""
 
-    return f"""Tu es Banister, coach cyclisme. Tu reçois les données pré-calculées d'une
-séance déjà réalisée et loggée, que l'athlète relit après coup via /review.
-
-Règles absolues :
-- Ne modifie/recalcule JAMAIS un chiffre — les valeurs fournies sont correctes.
-- N'invente jamais un chiffre qui n'est pas dans les données fournies.
-- {REVIEW_VOCAB_RULE}
-- Maximum {REVIEW_WORD_BUDGET}. Pas de tableau ni de liste à puces.
-- Tutoiement, direct, pas de formules de politesse en ouverture.
-- **gras** autorisé avec parcimonie pour un chiffre clé — rien d'autre comme mise en forme.
-- Interprète les métriques : ne les récite jamais. Pour chaque chiffre retenu, explique
-  ce qu'il montre dans cette sortie et pourquoi cela compte.
-- Distingue fait, interprétation et hypothèse. Une influence possible de la chaleur,
-  du terrain ou de l'hydratation reste une hypothèse, jamais un diagnostic.
-- Ne compare une métrique à l'historique personnel que si une comparaison est fournie.
-  La tendance de charge et la distribution d'intensité sur 7 jours sont des contextes
-  récents, pas des références à une sortie identique.
-- Un TSB positif décrit de la fraîcheur relative face à la charge récente ; il ne prouve
-  ni un pic de forme ni une performance à venir. Lis-le avec CTL, ATL et la tendance de
-  charge lorsqu'ils sont fournis.
-{freestyle_rule}
-
-Rédige cinq courts paragraphes, avec ces intertitres exacts en gras :
-**Lecture de l'effort** : durée, charge, zone, IF et type observé ; explique l'intensité
-réelle, sans la confondre avec une cible absente.
-**Pacing et réponse physiologique** : NP/puissance moyenne, VI, dérive cardiaque et
-contexte extérieur quand ils existent ; explique la régularité et la réponse cardio.
-**Ressenti et cohérence** : confronte le RPE aux données disponibles ; signale un accord
-ou une incohérence utile, sans inventer de problème.
-**Forme et charge** : CTL/ATL/TSB, tendance, monotonie, TID, phase ou récupération
-seulement s'ils sont fournis ; explique précisément leur portée.
-**Bilan** : une synthèse nette, le principal signal favorable, le seul point à surveiller
-et une implication proportionnée. Ne remplis pas avec « séance nickel », « rien à
-signaler », « charge équilibrée » ou « continue comme ça » sans preuve dans les données.
-{rpe_block}"""
+    return t(
+        "llm.review.system_prompt",
+        vocab_rule=t("llm.review.vocab_rule"),
+        word_budget=t("llm.review.word_budget"),
+        freestyle_rule=freestyle_rule,
+        rpe_block=rpe_block,
+    )
 
 
 def build_review_user_message(ctx, dfa=None) -> str:
@@ -624,128 +344,136 @@ def build_review_user_message(ctx, dfa=None) -> str:
     l'appelant si l'activité a un enregistrement AlphaHRV — None sinon (aucun
     enregistrement, ou pas d'`source_activity_id` pour logguer manuel)."""
     log = ctx.log
-    lines = ["DONNÉES SÉANCE :"]
+    lines = [t("llm.review_data.header")]
     if ctx.coaching_mode == "freestyle":
-        lines.append("- Cadre : sortie en mode libre, sans séance planifiée ni cible à évaluer")
+        lines.append(t("llm.review_data.freestyle_frame"))
     else:
-        lines.append("- Cadre : sortie rattachée à un plan")
-    lines.append(f"- Date : {log.logged_date:%d/%m/%Y}")
+        lines.append(t("llm.review_data.plan_frame"))
+    lines.append(t("llm.review_data.date", date=f"{log.logged_date:%d/%m/%Y}"))
     if log.session_type_real:
-        lines.append(f"- Type réalisé : {log.session_type_real}")
+        lines.append(t("llm.review_data.type_real", type=log.session_type_real))
     if log.duration_minutes_actual is not None:
-        lines.append(f"- Durée : {log.duration_minutes_actual} min")
+        lines.append(t("llm.review_data.duration", minutes=log.duration_minutes_actual))
     if log.tss_actual is not None:
-        tss_line = f"- TSS : {log.tss_actual:.0f}"
+        tss_line = t("llm.review_data.tss", tss=f"{log.tss_actual:.0f}")
         if ctx.session_spec is not None:
-            tss_line += f" (prévu : {ctx.session_spec.tss_target:.0f})"
+            tss_line += t(
+                "llm.review_data.tss_planned_suffix", planned=f"{ctx.session_spec.tss_target:.0f}"
+            )
         lines.append(tss_line)
     if ctx.session_spec is not None:
-        lines.append(f"- Type prévu : {ctx.session_spec.workout_type}")
+        lines.append(t("llm.review_data.type_planned", type=ctx.session_spec.workout_type))
     if log.dominant_zone:
-        lines.append(f"- Zone dominante : {log.dominant_zone}")
+        lines.append(t("llm.review_data.dominant_zone", zone=log.dominant_zone))
     if log.avg_power is not None:
-        lines.append(f"- Puissance moyenne : {log.avg_power} W")
+        lines.append(t("llm.review_data.avg_power", watts=log.avg_power))
     if log.avg_heart_rate is not None:
-        lines.append(f"- FC moyenne : {log.avg_heart_rate} bpm")
+        lines.append(t("llm.review_data.avg_hr", bpm=log.avg_heart_rate))
 
     if REVIEW_DATA_BLOCKS["raw_power"]:
         if log.normalized_power:
-            lines.append(f"- Puissance normalisée (NP) : {log.normalized_power} W")
+            lines.append(t("llm.review_data.normalized_power", watts=log.normalized_power))
         if log.intensity_factor is not None:
-            lines.append(f"- Intensity Factor (IF) : {log.intensity_factor:.2f}")
+            lines.append(t("llm.review_data.intensity_factor", value=f"{log.intensity_factor:.2f}"))
         # VI ignoré si durée < 30 min — pas représentatif sur courtes sorties (même règle
         # que activity_analysis.py).
         if log.variability_index is not None and (log.duration_minutes_actual or 0) >= 30:
-            lines.append(f"- Variability Index (VI) : {log.variability_index:.2f}")
+            lines.append(
+                t("llm.review_data.variability_index", value=f"{log.variability_index:.2f}")
+            )
 
     if log.efficiency_factor is not None:
-        lines.append(f"- Efficiency factor : {log.efficiency_factor:.2f}")
+        lines.append(t("llm.review_data.efficiency_factor", value=f"{log.efficiency_factor:.2f}"))
     if log.hrr is not None:
-        lines.append(f"- HRRc (récupération FC 60s) : {log.hrr:.0f}")
+        lines.append(t("llm.review_data.hrr", value=f"{log.hrr:.0f}"))
 
     if REVIEW_DATA_BLOCKS["quality_signals"]:
         if log.respect_zones_score is not None:
-            lines.append(f"- Respect de la zone cible : {log.respect_zones_score:.0f}/100")
+            lines.append(t("llm.review_data.zone_adherence", score=f"{log.respect_zones_score:.0f}"))
         if log.cardiac_drift_index is not None:
-            lines.append(f"- Dérive cardiaque : {log.cardiac_drift_index * 100:+.1f}%")
-        if log.intervals_consistency_index is not None:
             lines.append(
-                f"- Consistance des intervalles : {round(log.intervals_consistency_index * 100)}%"
+                t("llm.review_data.cardiac_drift", pct=f"{log.cardiac_drift_index * 100:+.1f}")
             )
+        if log.intervals_consistency_index is not None:
+            lines.append(t(
+                "llm.review_data.intervals_consistency",
+                pct=round(log.intervals_consistency_index * 100),
+            ))
 
     if REVIEW_DATA_BLOCKS["environmental"]:
         if log.elevation_gain_m:
-            lines.append(f"- Dénivelé : {log.elevation_gain_m:.0f} m")
+            lines.append(t("llm.review_data.elevation", meters=f"{log.elevation_gain_m:.0f}"))
         if log.average_temp_c is not None:
-            lines.append(f"- Température moyenne : {log.average_temp_c:.0f}°C")
+            lines.append(t("llm.review_data.avg_temp", temp=f"{log.average_temp_c:.0f}"))
         if log.kilojoules:
-            lines.append(f"- Énergie dépensée : {log.kilojoules:.0f} kJ")
+            lines.append(t("llm.review_data.energy", kj=f"{log.kilojoules:.0f}"))
 
     if dfa is not None and dfa.quality.sufficient:
-        dfa_line = f"- DFA α1 moyen : {dfa.avg:.2f}"
+        dfa_line = t("llm.review_data.dfa_avg", value=f"{dfa.avg:.2f}")
         if dfa.lt1_crossing is not None and dfa.lt1_crossing.avg_hr is not None:
-            dfa_line += f" (franchissement LT1 ~{dfa.lt1_crossing.avg_hr} bpm"
+            dfa_line += t("llm.review_data.dfa_lt1", bpm=dfa.lt1_crossing.avg_hr)
             if dfa.lt2_crossing is not None and dfa.lt2_crossing.avg_hr is not None:
-                dfa_line += f", LT2 ~{dfa.lt2_crossing.avg_hr} bpm"
+                dfa_line += t("llm.review_data.dfa_lt2", bpm=dfa.lt2_crossing.avg_hr)
             dfa_line += ")"
         lines.append(dfa_line)
 
     if log.rpe is not None:
         from app.engine.rpe import rpe_label
 
-        lines.append(f"- Ressenti athlète : {rpe_label(log.rpe)}")
+        lines.append(t("llm.review_data.rpe", label=rpe_label(log.rpe)))
     else:
-        lines.append("- Ressenti athlète : non renseigné")
+        lines.append(t("llm.review_data.rpe_missing"))
 
     if ctx.fitness_at_session is not None:
         f = ctx.fitness_at_session
-        lines.append(
-            f"- Charge et fraîcheur au moment de la séance : "
-            f"TSB {f.tsb:+.0f}, CTL {f.ctl:.0f}, ATL {f.atl:.0f}"
-        )
+        lines.append(t(
+            "llm.review_data.fitness_at_session",
+            tsb=f"{f.tsb:+.0f}", ctl=f"{f.ctl:.0f}", atl=f"{f.atl:.0f}",
+        ))
 
     if REVIEW_DATA_BLOCKS["form_context"]:
         if ctx.recovery_index is not None:
-            lines.append(f"- Indice de récupération ce jour-là : {ctx.recovery_index:.2f}")
+            lines.append(t("llm.review_data.recovery_index", value=f"{ctx.recovery_index:.2f}"))
         if ctx.detected_phase is not None:
-            # Même vocabulaire FR que le chat (app/llm/tools.py) — voir narrator.PHASE_FR.
-            from app.llm.narrator import PHASE_FR
+            # Même vocabulaire que le chat (app/llm/tools.py) — voir narrator.phase_label().
+            from app.llm.narrator import phase_label as _phase_label
 
-            phase_label = PHASE_FR.get(
-                ctx.detected_phase.detected_phase, ctx.detected_phase.detected_phase
-            )
+            phase_lbl = _phase_label(ctx.detected_phase.detected_phase)
             agree_note = ""
             if ctx.detected_phase.streams_agree is False:
-                secondary = ctx.detected_phase.secondary_phase
-                secondary_label = PHASE_FR.get(secondary, secondary)
-                agree_note = f" (plan déclare : {secondary_label})"
-            lines.append(f"- Phase détectée (comportement récent) : {phase_label}{agree_note}")
+                secondary_label = _phase_label(ctx.detected_phase.secondary_phase)
+                agree_note = t("llm.review_data.phase_agree_note", phase=secondary_label)
+            lines.append(t(
+                "llm.review_data.detected_phase", phase=phase_lbl, agree_note=agree_note
+            ))
 
     if REVIEW_DATA_BLOCKS["nutrition_context"]:
         if ctx.kcal_consumed is not None:
-            lines.append(
-                f"- Calories mangées ce jour-là (source intervals.icu) : {ctx.kcal_consumed} kcal"
-            )
+            lines.append(t("llm.review_data.kcal", kcal=ctx.kcal_consumed))
         if ctx.hydration_volume_l is not None:
             lines.append(
-                f"- Eau bue ce jour-là (source intervals.icu) : {ctx.hydration_volume_l:.1f} L"
+                t("llm.review_data.hydration", liters=f"{ctx.hydration_volume_l:.1f}")
             )
 
     snap = ctx.weekly_snapshot
     if snap.monotony_index is not None:
-        lines.append(f"- Monotonie de la semaine : {snap.monotony_index}")
+        lines.append(t("llm.review_data.monotony", value=snap.monotony_index))
     if snap.load_trend_pct is not None:
-        trend_dir = "en hausse" if snap.load_trend_pct > 0 else "en baisse"
-        lines.append(
-            f"- Tendance de charge 7j vs habitude : {snap.load_trend_pct:+.0f}% ({trend_dir})"
+        trend_dir = (
+            t("llm.review_data.trend_up") if snap.load_trend_pct > 0
+            else t("llm.review_data.trend_down")
         )
+        lines.append(t(
+            "llm.review_data.load_trend",
+            pct=f"{snap.load_trend_pct:+.0f}", direction=trend_dir,
+        ))
 
     if ctx.tid is not None:
-        tid_label = _TID_CLASSIFICATION_FR.get(ctx.tid.classification, ctx.tid.classification)
-        lines.append(
-            f"- Distribution d'intensité 7j : {tid_label} "
-            f"(Z1-2 {ctx.tid.zone1_pct:.0f}% / Z3-4 {ctx.tid.zone2_pct:.0f}% / "
-            f"Z5-7 {ctx.tid.zone3_pct:.0f}%)"
-        )
+        tid_label = tid_classification_label(ctx.tid.classification)
+        lines.append(t(
+            "llm.review_data.tid",
+            label=tid_label,
+            z1=f"{ctx.tid.zone1_pct:.0f}", z2=f"{ctx.tid.zone2_pct:.0f}", z3=f"{ctx.tid.zone3_pct:.0f}",
+        ))
 
     return "\n".join(lines)

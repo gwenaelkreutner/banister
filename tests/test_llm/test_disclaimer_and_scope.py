@@ -4,13 +4,13 @@ from __future__ import annotations
 import inspect
 
 from app.bot.routers import setup as setup_router
-from app.llm.prompts import DISCLAIMER_TEXT, SCOPE_OF_ADVICE_RULES, build_ux_system_prompt
+from app.llm.prompts import build_ux_system_prompt, disclaimer_text, scope_of_advice_rules
 
 # ── FR-028 / SC-009: the disclaimer is shown before the first coaching interaction ──
 
 
 def test_disclaimer_states_what_the_product_is_not():
-    low = DISCLAIMER_TEXT.lower()
+    low = disclaimer_text().lower()
     assert "médecin" in low
     assert "certifié" in low or "entraîneur" in low
     assert "suggestion" in low  # sessions are suggestions
@@ -18,12 +18,12 @@ def test_disclaimer_states_what_the_product_is_not():
 
 
 def test_finalize_setup_emits_the_disclaimer():
-    """A grep, not a vibe — _finalize_setup must send DISCLAIMER_TEXT (SC-009). There is
+    """A grep, not a vibe — _finalize_setup must send disclaimer_text() (SC-009). There is
     no first-run flow yet (spec 007); the end of /setup is where a first use passes
     today (research R7)."""
     src = inspect.getsource(setup_router._finalize_setup)
-    assert "DISCLAIMER_TEXT" in src
-    assert "message.answer(DISCLAIMER_TEXT" in src.replace(" ", "")
+    assert "disclaimer_text" in src
+    assert "message.answer(disclaimer_text()" in src.replace(" ", "")
 
 
 def test_readme_carries_the_disclaimer():
@@ -39,7 +39,7 @@ def test_readme_carries_the_disclaimer():
 
 
 def test_scope_rules_cover_referral_and_no_diagnosis():
-    low = SCOPE_OF_ADVICE_RULES.lower()
+    low = scope_of_advice_rules().lower()
     assert "médecin" in low
     assert "consulter" in low or "avis médical" in low   # FR-029: refer, don't coach through
     assert "diagnostic" in low                            # FR-030: no diagnosis

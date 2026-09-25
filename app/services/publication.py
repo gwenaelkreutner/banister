@@ -19,6 +19,7 @@ from datetime import date, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.localization import t, tp
 from app.db.models.publication import PublicationApproval
 from app.db.models.training_plan import TrainingPlan
 from app.db.models.user import User
@@ -38,13 +39,19 @@ from app.providers.intervals.workout_dsl import (
     render_dsl,
 )
 
-_WEEKDAY_FR = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"]
+_WEEKDAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
-_DEVICE_CAVEAT = (
-    "⚠️ Pour que ces séances arrivent sur ta montre, le transfert vers ton appareil "
-    "doit être activé dans TES réglages intervals.icu — je ne peux pas le faire à ta "
-    "place. (Réglages → « Sync your calendar to your device » / ton app Garmin/Wahoo)"
-)
+
+def _short_date(value: date) -> str:
+    return t(
+        "publication.short_date",
+        day=f"{value.day:02d}",
+        month=f"{value.month:02d}",
+    )
+
+
+def _weekday(value: date) -> str:
+    return t(f"publication.weekday_{_WEEKDAY_KEYS[value.weekday()]}")
 
 
 # The canonical per-session content hash lives in the pure format module so provider
@@ -120,26 +127,39 @@ def build_approval_request_text(
     weeks_span = (horizon_end - horizon_start).days // 7 + 1
 
     lines = [
-        "📤 <b>Publier vers ton calendrier intervals.icu</b>",
+        t("publication.preview_title"),
         "",
-        f"Période : {_WEEKDAY_FR[horizon_start.weekday()]} {horizon_start.strftime('%d/%m')} "
-        f"→ {_WEEKDAY_FR[horizon_end.weekday()]} {horizon_end.strftime('%d/%m')} "
-        f"({weeks_span} semaine{'s' if weeks_span > 1 else ''})",
+        t(
+            "publication.preview_period",
+            start_weekday=_weekday(horizon_start),
+            start_date=_short_date(horizon_start),
+            end_weekday=_weekday(horizon_end),
+            end_date=_short_date(horizon_end),
+            weeks=weeks_span,
+            week_unit=t(
+                "publication.weeks_plural" if weeks_span > 1 else "publication.week_singular"
+            ),
+        ),
         "",
     ]
     for planned in sessions:
         spec = planned.spec
         name = spec.description_fr or spec.workout_type
-        flag = "" if spec.steps is not None else "  ⚠️ sans structure, ne sera pas publiée"
+        flag = "" if spec.steps is not None else t("publication.unstructured_flag")
         lines.append(
-            f"  {_WEEKDAY_FR[planned.session_date.weekday()]} "
-            f"{planned.session_date.strftime('%d/%m')}  {name}  "
-            f"— {spec.duration_minutes} min{flag}"
+            t(
+                "publication.preview_session",
+                weekday=_weekday(planned.session_date),
+                date=_short_date(planned.session_date),
+                name=name,
+                minutes=spec.duration_minutes,
+                flag=flag,
+            )
         )
     publishable = sum(1 for p in sessions if p.spec.steps is not None)
-    lines += ["", f"{publishable} séance{'s' if publishable > 1 else ''} au total."]
+    lines += ["", tp("publication.preview_total", publishable)]
     if is_first_publication:
-        lines += ["", _DEVICE_CAVEAT]
+        lines += ["", t("publication.device_caveat")]
     return "\n".join(lines), publishable
 
 
@@ -259,7 +279,7 @@ def check_divergence(schema: TrainingPlanSchema, entries) -> list[Divergence]:
             schema, e.week_number, e.day_of_week
         )
         if cur_date is None:
-            out.append(Divergence(e.session_date, "(séance retirée du plan)", "removed"))
+            out.append(Divergence(e.session_date, t("publication.removed_session_name"), "removed"))
         elif cur_hash != e.content_hash:
             out.append(Divergence(cur_date, name, "changed"))
     return out
@@ -282,14 +302,21 @@ def describe_divergence_for_coach(schema: TrainingPlanSchema, entries) -> str | 
     divs = check_divergence(schema, entries)
     if not divs:
         return None
-    lines = ["⚠️ Le calendrier intervals.icu publié n'est plus aligné sur le plan :"]
+    lines = [t("publication.divergence_heading")]
     for d in divs:
-        verb = "a changé" if d.kind == "changed" else "n'est plus dans le plan"
-        lines.append(f"  • {d.session_date:%d/%m} {d.name} — {verb}")
-    lines.append(
-        "Dis à l'athlète de relancer /publish pour re-synchroniser. Ne parle pas du "
-        "calendrier comme s'il était à jour."
-    )
+        verb = t(
+            "publication.divergence_changed" if d.kind == "changed"
+            else "publication.divergence_removed"
+        )
+        lines.append(
+            t(
+                "publication.divergence_item",
+                date=_short_date(d.session_date),
+                name=d.name,
+                status=verb,
+            )
+        )
+    lines.append(t("publication.divergence_instruction"))
     return "\n".join(lines)
 
 
@@ -347,15 +374,14 @@ async def execute_publication(
     lines: list[str] = []
     for o in outcomes:
         counts[o.status] += 1
-        label = (
-            f"{_WEEKDAY_FR[o.session_date.weekday()]} "
-            f"{o.session_date.strftime('%d/%m')}  {o.name}"
-        )
+        label = f"{_weekday(o.session_date)} {_short_date(o.session_date)}  {o.name}"
         if o.status in ("created", "updated", "unchanged"):
             mark = {"created": "✅", "updated": "✅", "unchanged": "✓"}[o.status]
-            suffix = {"created": "", "updated": " (mise à jour)", "unchanged": " (déjà à jour)"}[
-                o.status
-            ]
+            suffix = {
+                "created": "",
+                "updated": t("publication.status_updated_suffix"),
+                "unchanged": t("publication.status_unchanged_suffix"),
+            }[o.status]
             lines.append(f"  {mark} {label}{suffix}")
             existing = entries_by_ext.get(o.external_id)
             if existing is None:
@@ -397,41 +423,38 @@ async def execute_publication(
             continue
         if not (approval.horizon_start <= entry.session_date <= approval.horizon_end):
             continue
-        wlabel = f"{_WEEKDAY_FR[entry.session_date.weekday()]} {entry.session_date:%d/%m}"
+        wlabel = f"{_weekday(entry.session_date)} {_short_date(entry.session_date)}"
         try:
             await withdraw_event(client, entry.intervals_event_id)
         except Exception as exc:  # noqa: BLE001
-            lines.append(f"  ⚠️ {wlabel} — retrait échoué : {exc}")
+            lines.append(t("publication.withdraw_failed_line", label=wlabel, error=exc))
             continue
         await publication_repo.mark_withdrawn(session, entry.id)
         counts["withdrawn"] += 1
-        lines.append(f"  🗑 {wlabel} — retirée (absente du plan)")
+        lines.append(t("publication.withdrawn_line", label=wlabel))
 
     written = counts["created"] + counts["updated"]
-    header_bits = [f"{written} publiée{'s' if written != 1 else ''}"]
+    header_bits = [tp("publication.header_published", written)]
     if counts["unchanged"]:
-        header_bits.append(f"{counts['unchanged']} déjà à jour")
+        header_bits.append(t("publication.header_unchanged", count=counts["unchanged"]))
     if counts["withdrawn"]:
         n = counts["withdrawn"]
-        header_bits.append(f"{n} retirée{'s' if n != 1 else ''}")
+        header_bits.append(tp("publication.header_withdrawn", n))
     if counts["conflict"]:
         n = counts["conflict"]
-        header_bits.append(f"{n} touchée{'s' if n != 1 else ''} par toi (non modifiée)")
+        header_bits.append(tp("publication.header_conflict", n))
     if counts["refused"]:
-        header_bits.append(f"{counts['refused']} refusée{'s' if counts['refused'] != 1 else ''}")
+        n = counts["refused"]
+        header_bits.append(tp("publication.header_refused", n))
     if counts["failed"]:
-        header_bits.append(f"{counts['failed']} échec{'s' if counts['failed'] != 1 else ''}")
+        n = counts["failed"]
+        header_bits.append(tp("publication.header_failed", n))
     ok = not (counts["refused"] or counts["failed"] or counts["conflict"])
     header = ("✅ " if ok else "⚠️ ") + ", ".join(header_bits)
 
     body = [header, "", *lines]
     if counts["conflict"]:
-        body += [
-            "",
-            "✋ Les séances marquées ci-dessus, tu les as modifiées ou supprimées "
-            "toi-même dans intervals.icu — je n'y touche pas. Si tu veux que je "
-            "reprenne la main sur l'une d'elles, dis-le moi en chat.",
-        ]
+        body += ["", t("publication.conflict_note")]
 
     return PublicationReport(
         text="\n".join(body),
@@ -530,7 +553,8 @@ async def publish_freestyle_session(
         except Exception:  # noqa: BLE001
             pass
         return FreestylePublishOutcome(
-            status="refused", detail=f"structure refusée par le calendrier : {push_errors}"
+            status="refused",
+            detail=t("publication.freestyle_structure_refused", errors=push_errors),
         )
 
     return FreestylePublishOutcome(

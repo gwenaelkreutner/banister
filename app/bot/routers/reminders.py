@@ -7,13 +7,13 @@ Menu inline état-dépendant :
 """
 
 import logging
-from datetime import date
 
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.localization import t
 from app.db.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,9 @@ _TIME_SLOTS: list[tuple[int, int]] = [
 
 
 def _time_label(h: int, m: int) -> str:
-    return f"{h}h{m:02d}" if m else f"{h}h"
+    if m:
+        return t("reminders.time_label_hour_minute", hour=h, minute=f"{m:02d}")
+    return t("reminders.time_label_hour", hour=h)
 
 
 def _build_keyboard(user: User) -> InlineKeyboardMarkup:
@@ -39,7 +41,7 @@ def _build_keyboard(user: User) -> InlineKeyboardMarkup:
 
     if user.reminders_enabled:
         rows.append([
-            InlineKeyboardButton(text="❌ Désactiver les rappels", callback_data="rem:toggle")
+            InlineKeyboardButton(text=t("reminders.disable_button"), callback_data="rem:toggle")
         ])
         # Grille d'heures sur 2 colonnes
         hour_buttons = []
@@ -54,7 +56,7 @@ def _build_keyboard(user: User) -> InlineKeyboardMarkup:
             rows.append(hour_buttons[i:i + 2])
     else:
         rows.append([
-            InlineKeyboardButton(text="✅ Activer les rappels", callback_data="rem:toggle")
+            InlineKeyboardButton(text=t("reminders.enable_button"), callback_data="rem:toggle")
         ])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -62,19 +64,19 @@ def _build_keyboard(user: User) -> InlineKeyboardMarkup:
 
 def _build_text(user: User) -> str:
     if user.reminders_enabled:
-        status = "✅ Activé"
+        status = t("reminders.status_enabled")
         label = _time_label(user.reminder_hour, user.reminder_minute)
-        heure = f"\nHeure  : <b>{label}</b> (heure de Paris)"
+        heure = t("reminders.time_line", time=label)
     else:
-        status = "❌ Désactivé"
+        status = t("reminders.status_disabled")
         heure = ""
-    return f"🔔 <b>Rappels de séance</b>\n\nStatut : {status}{heure}"
+    return t("reminders.menu", status=status, time_line=heure)
 
 
 @router.message(Command("reminders"))
 async def cmd_reminders(message: Message, user: User):
     if not user.onboarding_completed:
-        await message.answer("Complète d'abord ton onboarding avec /start.")
+        await message.answer(t("reminders.onboarding_required"))
         return
 
     await message.answer(
@@ -90,7 +92,9 @@ async def cb_toggle(callback: CallbackQuery, session: AsyncSession, user: User):
     await session.flush()
 
     await callback.answer(
-        "Rappels activés ✅" if user.reminders_enabled else "Rappels désactivés ❌"
+        t("reminders.enabled_confirmation")
+        if user.reminders_enabled
+        else t("reminders.disabled_confirmation")
     )
     await callback.message.edit_text(
         _build_text(user),
@@ -110,7 +114,7 @@ async def cb_set_time(callback: CallbackQuery, session: AsyncSession, user: User
     user.reminder_last_sent_at = None
     await session.flush()
 
-    await callback.answer(f"Rappel réglé à {_time_label(h, m)} ✓")
+    await callback.answer(t("reminders.time_confirmation", time=_time_label(h, m)))
     await callback.message.edit_text(
         _build_text(user),
         reply_markup=_build_keyboard(user),

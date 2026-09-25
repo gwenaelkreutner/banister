@@ -5,6 +5,7 @@ import httpx
 from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
 from opentelemetry import trace
 
+from app.core.localization import with_language_rule
 from app.llm.providers.base import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class OpenRouterProvider(LLMProvider):
         user_message: str,
         max_tokens: int = 600,
     ) -> str:
+        system_prompt = with_language_rule(system_prompt)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",

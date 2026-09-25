@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.keyboards.review import recent_sessions_keyboard
 from app.bot.text_format import to_telegram_html
 from app.config import settings
+from app.core.localization import t
 from app.db import repositories as repo
 from app.db.models.session_log import SessionLog
 from app.db.models.user import User
@@ -84,18 +85,18 @@ async def _fetch_dfa(log: SessionLog):
 @router.message(Command("review"))
 async def cmd_review(message: Message, session: AsyncSession, user: User) -> None:
     if user is None or not user.onboarding_completed:
-        await message.answer("Fais d'abord /setup.")
+        await message.answer(t("review.setup_first"))
         return
 
     logs = await repo.session_log_repo.get_recent_for_user(
         session, user.id, limit=_RECENT_LIMIT
     )
     if not logs:
-        await message.answer("Aucune séance loggée pour l'instant.")
+        await message.answer(t("review.no_sessions"))
         return
 
     await message.answer(
-        "Quelle séance veux-tu relire ?",
+        t("review.choose_session"),
         reply_markup=recent_sessions_keyboard(logs),
     )
 
@@ -119,9 +120,9 @@ async def cb_review_pick(callback: CallbackQuery, session: AsyncSession, user: U
     _, _, log_id_hex = callback.data.split(":")
     log = await repo.session_log_repo.get_by_id(session, uuid.UUID(hex=log_id_hex))
     if log is None or log.user_id != user.id:
-        await callback.answer("Cette séance n'est plus disponible.", show_alert=True)
+        await callback.answer(t("review.session_unavailable"), show_alert=True)
         return
 
-    await callback.answer("Synthèse en cours…")
-    await callback.message.edit_text("⏳ Je prépare la synthèse…")
+    await callback.answer(t("review.in_progress_callback"))
+    await callback.message.edit_text(t("review.preparing"))
     await _run_review(callback.message, session, user, log)

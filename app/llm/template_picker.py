@@ -16,25 +16,21 @@ from __future__ import annotations
 import logging
 
 from app.config import settings
+from app.core.localization import t
 from app.engine.session_library import SessionTemplate
 
 logger = logging.getLogger(__name__)
 
 NO_PICK = "NONE"
 
-_SYSTEM_PROMPT = (
-    "Tu aides un coach cycliste à choisir UNE séance dans une liste fermée.\n"
-    "On te donne la préférence exprimée par l'athlète et la liste des séances candidates "
-    "(id, objectif, contenu, pour qui).\n"
-    "Réponds UNIQUEMENT par l'id exact de la séance qui correspond le mieux à la "
-    f"préférence, ou par {NO_PICK} si aucune ne correspond clairement.\n"
-    "Aucun autre texte, aucune ponctuation, aucune explication."
-)
+
+def _system_prompt() -> str:
+    return t("llm.template_picker.system_prompt", no_pick=NO_PICK)
 
 
 def _format_candidates(candidates: list[SessionTemplate]) -> str:
     return "\n".join(
-        f"- {t.id} : {t.purpose} — {t.intent} — {t.suits}" for t in candidates
+        f"- {c.id} : {c.purpose} — {c.intent} — {c.suits}" for c in candidates
     )
 
 
@@ -50,10 +46,11 @@ async def pick_template(
     if len(candidates) == 1:
         return candidates[0].id
 
-    valid_ids = {t.id for t in candidates}
-    user_message = (
-        f"Préférence de l'athlète : {style_preference.strip()}\n\n"
-        f"Séances candidates :\n{_format_candidates(candidates)}"
+    valid_ids = {c.id for c in candidates}
+    user_message = t(
+        "llm.template_picker.user_message",
+        preference=style_preference.strip(),
+        candidates=_format_candidates(candidates),
     )
 
     try:
@@ -61,7 +58,7 @@ async def pick_template(
         # Output is one id, but reasoning models may spend hidden tokens first — a tight
         # cap yields null content (see CLAUDE.md, LLM_MAX_TOKENS), so reuse the shared budget.
         raw = await get_provider().generate(
-            system_prompt=_SYSTEM_PROMPT,
+            system_prompt=_system_prompt(),
             user_message=user_message,
             max_tokens=settings.llm_max_tokens,
         )

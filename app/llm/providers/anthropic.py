@@ -4,6 +4,7 @@ from functools import partial
 
 import anthropic
 
+from app.core.localization import with_language_rule
 from app.llm.providers.base import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ class AnthropicProvider(LLMProvider):
         user_message: str,
         max_tokens: int = 600,
     ) -> str:
+        system_prompt = with_language_rule(system_prompt)
         logger.info("[LLM →] Anthropic | model=%s | sys=%d chars | user=%d chars",
                     self.model, len(system_prompt), len(user_message))
         logger.debug("[LLM PROMPT]\n--- SYSTEM ---\n%s\n--- USER ---\n%s",

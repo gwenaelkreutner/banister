@@ -12,66 +12,15 @@ it demonstrably follows a `language` parameter when given one.
 """
 from __future__ import annotations
 
-from app.engine.schemas import RepeatGroup, Step, derive_zone_code
-
-_DEFAULT_LANGUAGE = "fr"
-
-_ZONE_NAMES: dict[str, dict[str, str]] = {
-    "fr": {
-        "Z1": "Récupération active",
-        "Z2": "Endurance",
-        "Z3": "Tempo",
-        "Z4": "Seuil lactique",
-        "Z5": "VO2 Max",
-        "Z6": "Anaérobie",
-    },
-    "en": {
-        "Z1": "Active recovery",
-        "Z2": "Endurance",
-        "Z3": "Tempo",
-        "Z4": "Lactate threshold",
-        "Z5": "VO2 max",
-        "Z6": "Anaerobic",
-    },
-}
-
-_WORKOUT_TYPE_LABELS: dict[str, dict[str, str]] = {
-    "fr": {
-        "long_ride": "Sortie longue",
-        "endurance": "Endurance",
-        "recovery": "Récupération active",
-        "intervals": "Intervalles",
-    },
-    "en": {
-        "long_ride": "Long ride",
-        "endurance": "Endurance",
-        "recovery": "Active recovery",
-        "intervals": "Intervals",
-    },
-}
-
-# Preserved from plan_builder.py's old _session_description() (spec 004 T049) —
-# real coaching content (HR lags true effort on short, sharp efforts), not
-# boilerplate. A renderer rule now, keyed by language, rather than a single
-# hardcoded French sentence appended unconditionally.
-_HR_RPE_CAVEAT: dict[str, str] = {
-    "fr": (
-        "(Pilotage au RPE 9/10 — le cardio monte trop lentement sur ces "
-        "intervalles courts ; suivre la sensation d'effort, pas la FC)"
-    ),
-    "en": (
-        "(Pace by RPE 9/10 — heart rate climbs too slowly for these short "
-        "intervals; follow perceived effort, not HR)"
-    ),
-}
-
+from app.core.localization import t
+from app.engine.schemas import RepeatGroup, SessionSpec, Step, derive_zone_code
 
 def render_description(
     workout_type: str,
     steps: list[Step | RepeatGroup],
     *,
     coaching_mode: str = "hr",
-    language: str = _DEFAULT_LANGUAGE,
+    language: str = "fr",
     detail: str = "",
 ) -> str:
     """Produces a session description from its actual steps (FR-028).
@@ -88,12 +37,10 @@ def render_description(
     appended as-is in whatever language the caller already localized it. Full
     localization of that free text belongs to spec 007 (see module docstring);
     this function's own output never is fixed to one language."""
-    labels = _WORKOUT_TYPE_LABELS.get(language, _WORKOUT_TYPE_LABELS[_DEFAULT_LANGUAGE])
-    label = labels.get(workout_type, workout_type)
+    label = t(f"session.workout.{workout_type}", language=language)
 
     zone_code = derive_zone_code(steps)
-    zone_names = _ZONE_NAMES.get(language, _ZONE_NAMES[_DEFAULT_LANGUAGE])
-    zone_name = zone_names.get(zone_code, zone_code)
+    zone_name = t(f"session.zone.{zone_code}", language=language)
 
     if workout_type == "intervals":
         group = next((item for item in steps if isinstance(item, RepeatGroup)), None)
@@ -114,7 +61,43 @@ def render_description(
     desc = f"{base} — {detail}" if (detail and workout_type != "recovery") else base
 
     if zone_code in ("Z5", "Z6") and coaching_mode == "hr":
-        caveat = _HR_RPE_CAVEAT.get(language, _HR_RPE_CAVEAT[_DEFAULT_LANGUAGE])
+        caveat = t("session.hr_rpe_caveat", language=language)
         desc += f" {caveat}"
 
     return desc
+
+
+def render_session_description(
+    session: SessionSpec,
+    *,
+    coaching_mode: str = "hr",
+    language: str = "fr",
+) -> str:
+    """Display a stored session without changing its persisted French summary.
+
+    Legacy sessions have no steps from which to recover their precise meaning.
+    Race-week sessions carry event instructions beyond their workout structure;
+    retain these instructions when switching languages.
+    """
+    if session.steps is None:
+        return session.description_fr
+
+    description = session.description_fr
+    if language == "fr":
+        return description
+
+    if description.startswith("JOUR DE COURSE"):
+        return t("session.race_day", language=language, duration=session.duration_minutes)
+
+    rendered = render_description(
+        session.workout_type,
+        session.steps,
+        coaching_mode=coaching_mode,
+        language=language,
+    )
+    if description.startswith("Activation pre-course"):
+        return t("session.pre_race_activation", language=language, description=rendered)
+    if description.startswith("Endurance Z2 — 120min en zone 2"):
+        return t("session.pre_race_endurance", language=language, description=rendered,
+                 duration=session.duration_minutes)
+    return rendered

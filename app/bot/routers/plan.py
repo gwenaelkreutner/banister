@@ -7,32 +7,20 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.plan import overview_keyboard, week_navigation_keyboard
-from app.bot.states import PlanStates
 from app.bot.text_format import to_telegram_html
+from app.config import settings
+from app.core.localization import t
 from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.schemas import TrainingPlanSchema, WeekPlan
+from app.engine.session_render import render_session_description
 
 router = Router()
 
-DAY_NAMES_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-DAY_NAMES_SHORT = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
-WORKOUT_FR = {
-    "long_ride": "Sortie longue",
-    "intervals":  "Intervalles",
-    "endurance":  "Endurance",
-    "recovery":   "Récupération",
-}
-PHASE_FR = {
-    "base":  "Base aérobie",
-    "build": "Construction",
-    "peak":  "Pic de forme",
-    "taper": "Affûtage",
-}
 PHASE_EMOJI = {
-    "base":  "🔵",
+    "base": "🔵",
     "build": "🟠",
-    "peak":  "🔴",
+    "peak": "🔴",
     "taper": "🟣",
 }
 
@@ -50,12 +38,16 @@ def _format_duration_fr(minutes: int) -> str:
 @router.message(Command("plan"))
 async def cmd_plan(message: Message, state: FSMContext, session: AsyncSession, user: User):
     if not user.onboarding_completed:
-        await message.answer("Tu n'as pas encore de plan. Tape /start pour commencer !")
+        await message.answer(
+            t("plan.no_plan_yet")
+        )
         return
 
     db_plan = await repo.plan_repo.get_active_plan(session, user.id)
     if not db_plan:
-        await message.answer("Aucun plan actif trouvé. Tape /start pour en créer un.")
+        await message.answer(
+            t("plan.no_active_plan_start")
+        )
         return
 
     plan = TrainingPlanSchema.model_validate(db_plan.plan_technical)
@@ -67,7 +59,9 @@ async def cmd_plan(message: Message, state: FSMContext, session: AsyncSession, u
 async def cmd_week(message: Message, state: FSMContext, session: AsyncSession, user: User):
     db_plan = await repo.plan_repo.get_active_plan(session, user.id)
     if not db_plan:
-        await message.answer("Aucun plan actif. Tape /start pour en créer un.")
+        await message.answer(
+            t("plan.no_active_plan_week")
+        )
         return
 
     plan = TrainingPlanSchema.model_validate(db_plan.plan_technical)
@@ -79,11 +73,15 @@ async def cmd_week(message: Message, state: FSMContext, session: AsyncSession, u
         try:
             week_num = int(parts[1])
         except ValueError:
-            await message.answer("Le numéro de semaine doit être un entier. Ex : /week 3")
+            await message.answer(
+                t("plan.invalid_week_number")
+            )
             return
 
     if not (1 <= week_num <= plan.weeks_count):
-        await message.answer(f"Semaine invalide. Ton plan fait {plan.weeks_count} semaines (1–{plan.weeks_count}).")
+        await message.answer(
+            t("plan.week_out_of_range", count=plan.weeks_count)
+        )
         return
 
     await _send_week(message, plan, week_num, edit=False)
@@ -91,6 +89,7 @@ async def cmd_week(message: Message, state: FSMContext, session: AsyncSession, u
     week = next((w for w in plan.weeks if w.week_number == week_num), None)
     if week:
         from app.llm.narrator import generate_week_narrative
+
         narrative = await generate_week_narrative(week, plan.weeks_count)
         await message.answer(narrative)
 
@@ -100,7 +99,7 @@ async def cb_week(callback: CallbackQuery, session: AsyncSession, user: User):
     week_num = int(callback.data.split(":")[-1])
     db_plan = await repo.plan_repo.get_active_plan(session, user.id)
     if not db_plan:
-        await callback.answer("Aucun plan actif.", show_alert=True)
+        await callback.answer(t("plan.no_active_plan"), show_alert=True)
         return
 
     plan = TrainingPlanSchema.model_validate(db_plan.plan_technical)
@@ -112,7 +111,7 @@ async def cb_week(callback: CallbackQuery, session: AsyncSession, user: User):
 async def cb_current_week(callback: CallbackQuery, session: AsyncSession, user: User):
     db_plan = await repo.plan_repo.get_active_plan(session, user.id)
     if not db_plan:
-        await callback.answer("Aucun plan actif.", show_alert=True)
+        await callback.answer(t("plan.no_active_plan"), show_alert=True)
         return
 
     plan = TrainingPlanSchema.model_validate(db_plan.plan_technical)
@@ -125,7 +124,7 @@ async def cb_current_week(callback: CallbackQuery, session: AsyncSession, user: 
 async def cb_overview(callback: CallbackQuery, session: AsyncSession, user: User):
     db_plan = await repo.plan_repo.get_active_plan(session, user.id)
     if not db_plan:
-        await callback.answer("Aucun plan actif.", show_alert=True)
+        await callback.answer(t("plan.no_active_plan"), show_alert=True)
         return
 
     plan = TrainingPlanSchema.model_validate(db_plan.plan_technical)
@@ -139,17 +138,18 @@ async def cb_overview(callback: CallbackQuery, session: AsyncSession, user: User
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+
 async def _send_week(message, plan: TrainingPlanSchema, week_num: int, edit: bool = False):
     week = next((w for w in plan.weeks if w.week_number == week_num), None)
     if not week:
-        text = f"Semaine {week_num} non trouvée dans ton plan."
+        text = t("plan.week_not_found", week=week_num)
         if edit:
             await message.edit_text(text)
         else:
             await message.answer(text)
         return
 
-    text = _format_week(week, plan.weeks_count)
+    text = _format_week(week, plan.weeks_count, plan.coaching_mode)
     keyboard = week_navigation_keyboard(week_num, plan.weeks_count)
 
     if edit:
@@ -158,24 +158,29 @@ async def _send_week(message, plan: TrainingPlanSchema, week_num: int, edit: boo
         await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
-def _format_week(week: WeekPlan, weeks_count: int) -> str:
-    phase = PHASE_FR.get(week.phase, week.phase)
+def _format_week(week: WeekPlan, weeks_count: int, coaching_mode: str = "hr") -> str:
+    language = settings.app_language
+    phase = t(f"plan.phase.{week.phase}")
     phase_emoji = PHASE_EMOJI.get(week.phase, "📌")
-    recovery_tag = "  ·  🟢 <b>Récup</b>" if week.is_recovery_week else ""
+    recovery_tag = t("plan.recovery_tag") if week.is_recovery_week else ""
     date_str = f"  ·  {week.start_date.strftime('%d/%m')}" if week.start_date else ""
 
     lines = [
-        f"📅 <b>Semaine {week.week_number}/{weeks_count}</b>{date_str}",
-        f"{phase_emoji} <b>{to_telegram_html(phase)}</b>{recovery_tag}  ·  TSS cible : <b>{week.total_tss_target:.0f}</b>",
+        t("plan.week_heading", week=week.week_number, count=weeks_count, date=date_str),
+        (f"{phase_emoji} <b>{to_telegram_html(phase)}</b>{recovery_tag}  ·  "
+         f"{t('plan.target_tss')} <b>{week.total_tss_target:.0f}</b>"),
         "",
     ]
 
     for s in week.sessions:
-        day = DAY_NAMES_SHORT[s.day_of_week]
-        workout = WORKOUT_FR.get(s.workout_type, s.workout_type)
-        desc = to_telegram_html(s.description_fr or "")
+        day = t(f"day.short.{s.day_of_week}")
+        workout = t(f"plan.workout.{s.workout_type}")
+        desc = to_telegram_html(
+            render_session_description(s, coaching_mode=coaching_mode, language=language)
+        )
         lines.append(
-            f"<b>{day}</b>  ·  {workout} <b>{s.zone_code}</b>  ·  ⏱️ {_format_duration_fr(s.duration_minutes)}  ·  ~{s.tss_target:.0f} TSS"
+            f"<b>{day}</b>  ·  {workout} <b>{s.zone_code}</b>  ·  "
+            f"⏱️ {_format_duration_fr(s.duration_minutes)}  ·  ~{s.tss_target:.0f} TSS"
         )
         if desc:
             lines.append(f"<i>{desc}</i>")
@@ -185,33 +190,42 @@ def _format_week(week: WeekPlan, weeks_count: int) -> str:
 
 
 def _build_overview(plan: TrainingPlanSchema, llm_intro: str) -> str:
-    lines = [f"📊 <b>Plan {plan.weeks_count} semaines</b>\n"]
+    lines = [
+        t("plan.overview_heading", count=plan.weeks_count)
+    ]
 
     if llm_intro:
         lines.append(to_telegram_html(llm_intro))
         lines.append("")
 
-    lines.append("<b>Phases</b>")
+    lines.append(t("plan.phases_heading"))
     seen = set()
     for w in plan.weeks:
         if w.phase in seen:
             continue
         seen.add(w.phase)
         phase_weeks = [x for x in plan.weeks if x.phase == w.phase]
-        phase_fr = PHASE_FR.get(w.phase, w.phase)
+        phase_label = t(f"plan.phase.{w.phase}")
         phase_emoji = PHASE_EMOJI.get(w.phase, "📌")
         avg_tss = sum(x.total_tss_target for x in phase_weeks) / len(phase_weeks)
         start_week = phase_weeks[0].week_number
         end_week = phase_weeks[-1].week_number
-        week_range = f"Sem. {start_week}" if start_week == end_week else f"Sem. {start_week}–{end_week}"
-        lines.append(f"{phase_emoji} <b>{to_telegram_html(phase_fr)}</b>  ·  {week_range}  ·  ~{avg_tss:.0f} TSS/sem")
+        week_range = (
+            t("plan.week_range_single", start=start_week)
+            if start_week == end_week
+            else t("plan.week_range", start=start_week, end=end_week)
+        )
+        lines.append(
+            f"{phase_emoji} <b>{to_telegram_html(phase_label)}</b>  ·  {week_range}  ·  "
+            f"~{avg_tss:.0f} {t('plan.tss_per_week')}"
+        )
 
     lines += [
         "",
-        f"📈 Progression : <b>{plan.initial_weekly_tss:.0f}</b> → <b>{plan.peak_weekly_tss:.0f}</b> TSS/semaine",
-        f"{'⚡ Mode : Puissance' if plan.coaching_mode == 'power' else '❤️ Mode : Fréquence cardiaque'}",
+        t("plan.progression", initial=plan.initial_weekly_tss, peak=plan.peak_weekly_tss),
+        t("plan.mode_power" if plan.coaching_mode == "power" else "plan.mode_hr"),
         "",
-        "ℹ️ <i>TSS = score de charge hebdomadaire (plus c'est haut, plus c'est exigeant).</i>",
+        t("plan.tss_explanation"),
     ]
     return "\n".join(lines)
 

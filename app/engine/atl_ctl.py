@@ -22,9 +22,11 @@ Fonctions principales :
     project_fitness_from_plan(plan, ...)    → list[FitnessProjectionPoint] (CTL théorique)
 """
 
-from datetime import date, timedelta
 import math
 from dataclasses import dataclass
+from datetime import date, timedelta
+
+from app.core.localization import t
 
 
 @dataclass
@@ -214,7 +216,7 @@ def project_fitness_from_plan(
     return result
 
 
-def tsb_label(tsb: float) -> str:
+def tsb_label(tsb: float, *, language: str | None = None) -> str:
     """
     Libellé court et descriptif du TSB pour les surfaces qui n'ont pas le contexte
     complet. Le TSB mesure la fraîcheur relative à la charge récente : il ne prédit pas
@@ -226,13 +228,15 @@ def tsb_label(tsb: float) -> str:
     Manager" (consultées le 2026-09-23).
     """
     if tsb < -30:
-        return "🔴 Fatigue très élevée"
-    if tsb < 0:
-        return "🟡 Fatigue d'entraînement"
-    if tsb <= 5:
-        return "🟢 Équilibre charge/fatigue"
-    if tsb <= 15:
-        return "✨ Fraîcheur élevée"
-    if tsb <= 20:
-        return "🔵 Fraîcheur très élevée"
-    return "⚪ Charge récente très basse"
+        key = "engine.tsb_label.critical_fatigue"
+    elif tsb < 0:
+        key = "engine.tsb_label.training_fatigue"
+    elif tsb <= 5:
+        key = "engine.tsb_label.balance"
+    elif tsb <= 15:
+        key = "engine.tsb_label.high_freshness"
+    elif tsb <= 20:
+        key = "engine.tsb_label.very_high_freshness"
+    else:
+        key = "engine.tsb_label.very_low_recent_load"
+    return t(key, language=language)

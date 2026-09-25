@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.text_format import to_telegram_html
 from app.config import settings
+from app.core.localization import t
 from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.adherence_kpi import compute_weekly_kpi_block
@@ -35,13 +36,30 @@ from app.services.fitness import get_current_fitness
 logger = logging.getLogger(__name__)
 router = Router()
 
-_DOW_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-_TYPE_FR = {
-    "long_ride": "Sortie longue",
-    "intervals": "Intervalles",
-    "endurance": "Endurance",
-    "recovery": "Récupération",
+_DOW_KEYS = [
+    "session_log.dow_monday",
+    "session_log.dow_tuesday",
+    "session_log.dow_wednesday",
+    "session_log.dow_thursday",
+    "session_log.dow_friday",
+    "session_log.dow_saturday",
+    "session_log.dow_sunday",
+]
+_TYPE_KEYS = {
+    "long_ride": "session_log.type_long_ride",
+    "intervals": "session_log.type_intervals",
+    "endurance": "session_log.type_endurance",
+    "recovery": "session_log.type_recovery",
 }
+
+
+def _dow_label(dow: int) -> str:
+    return t(_DOW_KEYS[dow])
+
+
+def _type_label(workout_type: str) -> str:
+    key = _TYPE_KEYS.get(workout_type)
+    return t(key) if key else workout_type
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -91,11 +109,13 @@ def _get_next_session_info(plan, week_num: int, current_dow: int) -> str | None:
         )
         if upcoming:
             s = upcoming[0]
-            dow_label = _DOW_FR[s.day_of_week]
-            type_label = _TYPE_FR.get(s.workout_type, s.workout_type)
-            return (
-                f"{dow_label} — {type_label} {s.zone_code}, "
-                f"{s.duration_minutes} min ({s.tss_target:.0f} TSS)"
+            return t(
+                "session_log.next_session_line",
+                dow_label=_dow_label(s.day_of_week),
+                type_label=_type_label(s.workout_type),
+                zone=s.zone_code,
+                minutes=s.duration_minutes,
+                tss=f"{s.tss_target:.0f}",
             )
 
     # Semaine suivante : première session
@@ -104,11 +124,13 @@ def _get_next_session_info(plan, week_num: int, current_dow: int) -> str | None:
         upcoming = sorted(next_week.sessions, key=lambda s: s.day_of_week)
         if upcoming:
             s = upcoming[0]
-            dow_label = _DOW_FR[s.day_of_week]
-            type_label = _TYPE_FR.get(s.workout_type, s.workout_type)
-            return (
-                f"{dow_label} (sem. suivante) — {type_label} {s.zone_code}, "
-                f"{s.duration_minutes} min ({s.tss_target:.0f} TSS)"
+            return t(
+                "session_log.next_session_line_next_week",
+                dow_label=_dow_label(s.day_of_week),
+                type_label=_type_label(s.workout_type),
+                zone=s.zone_code,
+                minutes=s.duration_minutes,
+                tss=f"{s.tss_target:.0f}",
             )
 
     return None
@@ -184,11 +206,11 @@ def _build_coach_message(
     session_interp = blocks.get("session_interpretation", "")
     advice = blocks.get("next_advice", "")
     if form:
-        parts.append(f"📉 État de forme\n{to_telegram_html(form)}")
+        parts.append(f"{t('session_log.form_header')}\n{to_telegram_html(form)}")
     if session_interp:
-        gain = f"  <b>+{pts_weekly} pts</b> ✨" if pts_weekly is not None else ""
-        parts.append(f"🎯 Ta séance\n{to_telegram_html(session_interp)}{gain}")
-    next_label = f"📅 Prochaine étape{' — ' + next_day if next_day else ''}"
+        gain = t("session_log.pts_gain", pts=pts_weekly) if pts_weekly is not None else ""
+        parts.append(f"{t('session_log.session_header')}\n{to_telegram_html(session_interp)}{gain}")
+    next_label = f"{t('session_log.next_step_label')}{' — ' + next_day if next_day else ''}"
     if advice:
         parts.append(f"{next_label}\n{to_telegram_html(advice)}")
     text = "\n\n".join(parts)
@@ -228,7 +250,7 @@ async def _reveal_activity_analysis(message, *, kpi_block: str | None = None, **
         next_day = _extract_next_day(kwargs.get("next_session_info"))
         pts_weekly = kwargs.get("pts_weekly")
         # Nettoyer le message C (retire "Ton coach analyse...")
-        await message.edit_text("✅ Ressenti noté.", parse_mode="HTML")
+        await message.edit_text(t("session_log.rpe_noted"), parse_mode="HTML")
         # Envoyer le Message D
         await message.bot.send_message(
             message.chat.id,
@@ -238,7 +260,7 @@ async def _reveal_activity_analysis(message, *, kpi_block: str | None = None, **
     except Exception as exc:
         logger.exception("[_reveal_activity_analysis] Erreur : %s", exc)
         try:
-            await message.edit_text("✅ Ressenti noté.", parse_mode="HTML")
+            await message.edit_text(t("session_log.rpe_noted"), parse_mode="HTML")
         except Exception:
             pass
 
@@ -299,8 +321,7 @@ async def _sync_rpe_to_intervals(activity_id: str, rpe: float) -> bool:
 
 @router.callback_query(F.data.startswith("log:rpe:"))
 async def cb_rpe(callback: CallbackQuery, session: AsyncSession, user: User):
-    # Format : log:rpe:{log_id}:{valeur 1-10 | "skip"} — le clavier envoie une valeur
-    # représentative sur l'échelle standard (app/engine/rpe.py), plus un token emoji.
+    # Format : log:rpe:{log_id}:{valeur 1-10 | "skip"}.
     parts = callback.data.split(":")
     log_id_str = parts[2]
     rpe_token = parts[3]
@@ -308,19 +329,30 @@ async def cb_rpe(callback: CallbackQuery, session: AsyncSession, user: User):
     log = await repo.session_log_repo.get_by_id(session, uuid.UUID(log_id_str))
 
     if log is None or log.user_id != user.id:
-        await callback.answer("Log introuvable.", show_alert=True)
+        await callback.answer(t("session_log.log_not_found"), show_alert=True)
         return
 
-    # Calculée une fois — spec 002 T065 (FR-041) : une seconde évaluation identique de
-    # cette condition plus loin aurait laissé une variable dont la disponibilité dépend
-    # de deux endroits restant en phase, un NameError latent si un seul est édité.
-    rpe_effective = float(rpe_token) if rpe_token != "skip" else None
+    if rpe_token == "skip":
+        rpe_effective = None
+    else:
+        try:
+            rpe_value = int(rpe_token)
+        except ValueError:
+            rpe_value = 0
+        if not 1 <= rpe_value <= 10:
+            await callback.answer(t("session_log.rpe_out_of_scale"), show_alert=True)
+            return
+        rpe_effective = float(rpe_value)
     if rpe_effective is not None:
         log.rpe = rpe_effective
 
     # Édition immédiate : supprime le clavier RPE, affiche l'état "chargement"
+    noted_text = (
+        t("session_log.rpe_noted_value", value=rpe_value)
+        if rpe_effective is not None else t("session_log.rpe_skipped")
+    )
     await callback.message.edit_text(
-        "✅ Ressenti noté.\n\n🔍 <i>Ton coach analyse...</i>",
+        f"{noted_text}\n\n{t('session_log.coach_analyzing')}",
         parse_mode="HTML",
     )
     await callback.answer()
@@ -328,10 +360,7 @@ async def cb_rpe(callback: CallbackQuery, session: AsyncSession, user: User):
     if rpe_effective is not None and log.source_activity_id:
         if not await _sync_rpe_to_intervals(log.source_activity_id, rpe_effective):
             try:
-                await callback.message.answer(
-                    "Ton ressenti est enregistré ici, mais son transfert vers "
-                    "Intervals.icu a échoué."
-                )
+                await callback.message.answer(t("session_log.rpe_sync_failed"))
             except Exception:
                 logger.exception("Impossible de signaler l'échec de synchronisation du RPE")
 

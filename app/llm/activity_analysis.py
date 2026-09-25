@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from app.core.localization import t
 from app.engine.rpe import RPE_EASY_MAX, RPE_HARD_MIN, rpe_label
 
 if TYPE_CHECKING:
@@ -38,7 +39,10 @@ def _compute_match_score(
         flag = "📊"
 
     sign = "+" if pct_diff >= 0 else ""
-    return (flag, f"TSS réalisé {actual:.0f} vs prévu {planned:.0f} ({sign}{pct_diff:.0f}%)")
+    return (flag, t(
+        "llm.match_score.text", actual=f"{actual:.0f}", planned=f"{planned:.0f}",
+        sign=sign, pct=f"{pct_diff:.0f}",
+    ))
 
 
 def _detect_rpe_mismatch(
@@ -50,12 +54,12 @@ def _detect_rpe_mismatch(
 ) -> str | None:
     """Détecte les incohérences entre RPE et TSS. Retourne un message d'alerte ou None."""
     if rpe is None:
-        return "Pas de ressenti noté — pense à le renseigner post-séance 📝"
+        return t("llm.rpe_mismatch.no_rpe")
 
     if actual_tss is not None and planned_tss is not None and planned_tss > 0:
         ratio = actual_tss / planned_tss
         if rpe >= RPE_HARD_MIN and ratio < 0.85:
-            return "Séance ressentie dure mais TSS inférieur au prévu — vérifie ton FTP ⚡"
+            return t("llm.rpe_mismatch.hard_but_low_tss")
         if rpe <= RPE_EASY_MAX and ratio > 1.15:
             # Pas d'alerte si le TSS élevé s'explique par une durée plus longue
             if (
@@ -66,7 +70,7 @@ def _detect_rpe_mismatch(
                 duration_ratio = actual_duration_minutes / planned_duration_minutes
                 if ratio / duration_ratio <= 1.15:
                     return None
-            return "Séance ressentie facile malgré un TSS élevé — bonne forme ou FTP à revoir ?"
+            return t("llm.rpe_mismatch.easy_but_high_tss")
 
     return None
 
@@ -74,12 +78,12 @@ def _detect_rpe_mismatch(
 def _tsb_tone(tsb: float | None) -> str:
     """Directive tonalité alignée sur les seuils de tsb_label()."""
     if tsb is None:
-        return "coaching équilibré"
+        return t("llm.tsb_tone.balanced")
     if tsb < -30:
-        return "ton protecteur — récupération prioritaire, valide l'effort sans pousser"
+        return t("llm.tsb_tone.protective")
     if tsb >= 5:
-        return "ton motivant — souligne la progression, encourage la continuité"
-    return "coaching équilibré et pédagogique"
+        return t("llm.tsb_tone.motivating")
+    return t("llm.tsb_tone.balanced_pedagogical")
 
 
 async def generate_activity_analysis(
@@ -115,7 +119,7 @@ async def generate_activity_analysis(
     average_temp_c: float | None = None,
     is_group_ride: bool = False,
     # Charge hebdomadaire
-    weekly_snapshot: "WeeklySnapshot | None" = None,
+    weekly_snapshot: WeeklySnapshot | None = None,
     sessions_planned_week: int | None = None,
     sessions_done_week: int | None = None,  # séances réalisées semaine calendaire (lundi→auj) — prioritaire sur sessions_done_7d
     next_session_info: str | None = None,   # prochaine séance planifiée (ex: "Jeudi — Intervalles Z4, 75 min")
@@ -143,90 +147,98 @@ async def generate_activity_analysis(
         else _detect_rpe_mismatch(rpe, actual_tss, planned_tss, duration_minutes, planned_duration_minutes)
     )
 
-    lines = ["ANALYSE ACTIVITÉ :"]
+    lines = [t("llm.activity_analysis.header")]
 
     # ── Contexte Variable Reward (injecté en tête si fourni) ──────────────────
     if highlight_category:
-        lines.append(
-            f"\nMÉTRIQUE EN VEDETTE : {highlight_category}"
-            "\n(L'athlète vient de voir cette métrique mise en avant dans le message précédent."
-            " Construis ton analyse principalement autour d'elle.)"
-        )
+        lines.append(t("llm.activity_analysis.highlight_metric", category=highlight_category))
     if personal_record:
-        lines.append(
-            f"\nRECORD PERSONNEL DÉTECTÉ : {personal_record.get('label_fr', '')}"
-            f" ({personal_record.get('value', '')} vs précédent {personal_record.get('previous_best', '')}"
-            f" sur {personal_record.get('sessions_compared', '')} séances)"
-            "\n(Mentionne ce record — c'est un moment mémorable pour l'athlète.)"
-        )
+        lines.append(t(
+            "llm.activity_analysis.personal_record",
+            label=personal_record.get("label_fr", ""),
+            value=personal_record.get("value", ""),
+            previous_best=personal_record.get("previous_best", ""),
+            sessions_compared=personal_record.get("sessions_compared", ""),
+        ))
 
     # ── Bloc 1 : Séance ──────────────────────────────────────────────────────
-    lines.append("\n[SÉANCE]")
+    lines.append(t("llm.activity_analysis.session_header"))
     if session_type_real:
         type_label = session_type_real.replace("_", " ").capitalize()
         if planned_workout_type:
             planned_label = planned_workout_type.replace("_", " ").capitalize()
-            lines.append(f"- Type prévu : {planned_label} / Réalisé : {type_label}")
+            lines.append(t(
+                "llm.activity_analysis.type_planned_actual", planned=planned_label, actual=type_label
+            ))
         else:
-            lines.append(f"- Type séance détecté : {type_label}")
+            lines.append(t("llm.activity_analysis.type_detected", type=type_label))
     elif planned_workout_type:
-        lines.append(f"- Type prévu : {planned_workout_type.replace('_', ' ').capitalize()}")
+        lines.append(t(
+            "llm.activity_analysis.type_planned_only",
+            type=planned_workout_type.replace("_", " ").capitalize(),
+        ))
 
     if duration_minutes:
         if planned_duration_minutes:
-            lines.append(f"- Durée : {duration_minutes} min (prévu : {planned_duration_minutes} min)")
+            lines.append(t(
+                "llm.activity_analysis.duration_with_planned",
+                actual=duration_minutes, planned=planned_duration_minutes,
+            ))
         else:
-            lines.append(f"- Durée : {duration_minutes} min")
+            lines.append(t("llm.activity_analysis.duration", minutes=duration_minutes))
     if actual_tss is not None:
-        lines.append(f"- TSS réalisé : {actual_tss:.0f}")
+        lines.append(t("llm.activity_analysis.tss_actual", tss=f"{actual_tss:.0f}"))
 
     if match_text:
-        lines.append(f"- Comparaison plan : {match_flag} {match_text}")
+        lines.append(t("llm.activity_analysis.plan_comparison", flag=match_flag, text=match_text))
     elif planned_tss is None:
-        lines.append("- Comparaison plan : pas de séance prévue pour cette sortie")
+        lines.append(t("llm.activity_analysis.no_planned_session"))
 
     if rpe is not None:
-        lines.append(f"- RPE : {rpe_label(rpe)}")
+        lines.append(t("llm.activity_analysis.rpe_line", label=rpe_label(rpe)))
         if fatigue_anomaly:
-            lines.append(
-                f"- RPE cardiaque estimé : {fatigue_anomaly['rpe_cardiac_estimate']}/10"
-                f" (écart : +{fatigue_anomaly['rpe_delta']})"
-            )
+            lines.append(t(
+                "llm.activity_analysis.rpe_cardiac_estimate",
+                value=fatigue_anomaly["rpe_cardiac_estimate"], delta=fatigue_anomaly["rpe_delta"],
+            ))
     else:
-        lines.append("- RPE : non renseigné")
+        lines.append(t("llm.activity_analysis.rpe_missing"))
 
     if rpe_hint:
-        lines.append(f"- ⚠️ Alerte fatigue : {rpe_hint}")
+        lines.append(t("llm.activity_analysis.fatigue_alert", hint=rpe_hint))
 
     # ── Bloc 2 : Puissance ───────────────────────────────────────────────────
     power_lines: list[str] = []
     if normalized_power:
-        power_lines.append(f"- NP : {normalized_power}W")
+        power_lines.append(t("llm.activity_analysis.np_line", watts=normalized_power))
 
     if intensity_factor is not None:
         if intensity_factor >= 0.95:
-            if_note = "séance quasi-maximale"
+            if_note = t("llm.activity_analysis.if_note_max")
         elif intensity_factor >= 0.85:
-            if_note = "intensité seuil/tempo"
+            if_note = t("llm.activity_analysis.if_note_threshold")
         elif intensity_factor >= 0.75:
-            if_note = "zone sweet spot"
+            if_note = t("llm.activity_analysis.if_note_sweet_spot")
         else:
-            if_note = "endurance / récupération"
-        power_lines.append(f"- IF : {intensity_factor:.2f} ({if_note})")
+            if_note = t("llm.activity_analysis.if_note_endurance")
+        power_lines.append(t("llm.activity_analysis.if_line", value=f"{intensity_factor:.2f}", note=if_note))
 
     # VI ignoré si durée < 30 min (pas représentatif sur courtes sorties)
     if variability_index is not None and (duration_minutes or 0) >= 30:
-        vi_note = "effort régulier" if variability_index < 1.05 else "effort variable/nerveux"
-        power_lines.append(f"- VI : {variability_index:.2f} ({vi_note})")
+        vi_note = (
+            t("llm.activity_analysis.vi_note_steady") if variability_index < 1.05
+            else t("llm.activity_analysis.vi_note_variable")
+        )
+        power_lines.append(t("llm.activity_analysis.vi_line", value=f"{variability_index:.2f}", note=vi_note))
 
     if power_lines:
-        lines.append("\n[PUISSANCE]")
+        lines.append(t("llm.activity_analysis.power_header"))
         lines.extend(power_lines)
 
     # ── Bloc 3 : Qualité ─────────────────────────────────────────────────────
     quality_lines: list[str] = []
     if dominant_zone:
-        quality_lines.append(f"- Zone dominante : {dominant_zone}")
+        quality_lines.append(t("llm.activity_analysis.dominant_zone", zone=dominant_zone))
 
     if time_in_zones_s:
         zone_detail = " / ".join(
@@ -234,88 +246,99 @@ async def generate_activity_analysis(
             for z, s in sorted(time_in_zones_s.items())
             if s > 0
         )
-        quality_lines.append(f"- Distribution zones : {zone_detail}")
+        quality_lines.append(t("llm.activity_analysis.zone_distribution", detail=zone_detail))
 
     if respect_zones_score is not None:
-        rz_label = "✅ respecté" if respect_zones_score >= 80 else "⚠️ à améliorer"
-        quality_lines.append(f"- Respect des zones : {respect_zones_score:.0f}/100 {rz_label}")
+        rz_label = (
+            t("llm.activity_analysis.zone_respected") if respect_zones_score >= 80
+            else t("llm.activity_analysis.zone_to_improve")
+        )
+        quality_lines.append(t(
+            "llm.activity_analysis.zone_respect", score=f"{respect_zones_score:.0f}", label=rz_label
+        ))
 
     if cardiac_drift_index is not None:
         drift_pct = cardiac_drift_index * 100
-        drift_note = "OK" if abs(drift_pct) < 10 else "dérive notable → surveiller hydratation/chaleur"
-        quality_lines.append(f"- Drift cardiaque : {drift_pct:+.1f}% ({drift_note})")
+        drift_note = (
+            t("llm.activity_analysis.drift_ok") if abs(drift_pct) < 10
+            else t("llm.activity_analysis.drift_notable")
+        )
+        quality_lines.append(t("llm.activity_analysis.drift", pct=f"{drift_pct:+.1f}", note=drift_note))
 
     if intervals_consistency_index is not None:
         ci_pct = round(intervals_consistency_index * 100)
-        ci_note = "réguliers" if ci_pct >= 80 else "irréguliers"
-        quality_lines.append(f"- Consistance intervalles : {ci_pct}% ({ci_note})")
+        ci_note = (
+            t("llm.activity_analysis.consistency_regular") if ci_pct >= 80
+            else t("llm.activity_analysis.consistency_irregular")
+        )
+        quality_lines.append(t("llm.activity_analysis.consistency", pct=ci_pct, note=ci_note))
 
     if quality_lines:
-        lines.append("\n[QUALITÉ]")
+        lines.append(t("llm.activity_analysis.quality_header"))
         lines.extend(quality_lines)
 
     # ── Bloc 4 : Contexte extérieur ──────────────────────────────────────────
     context_lines: list[str] = []
     if elevation_gain_m:
-        context_lines.append(f"- Dénivelé : {elevation_gain_m:.0f}m")
+        context_lines.append(t("llm.activity_analysis.elevation", meters=f"{elevation_gain_m:.0f}"))
     if average_temp_c is not None:
-        context_lines.append(f"- Température : {average_temp_c:.0f}°C")
+        context_lines.append(t("llm.activity_analysis.temperature", temp=f"{average_temp_c:.0f}"))
     if is_group_ride:
-        context_lines.append("- Sortie en groupe (aspiration possible)")
+        context_lines.append(t("llm.activity_analysis.group_ride"))
 
     if context_lines:
-        lines.append("\n[CONTEXTE]")
+        lines.append(t("llm.activity_analysis.context_header"))
         lines.extend(context_lines)
 
     # ── Bloc 5 : Forme & charge hebdomadaire ─────────────────────────────────
     pmc_lines: list[str] = []
     if ctl is not None and atl is not None and tsb is not None:
-        pmc_lines.append(f"- CTL {ctl:.0f} · ATL {atl:.0f} · TSB {tsb:+.0f}")
-        pmc_lines.append(f"- Directive tonalité : {_tsb_tone(tsb)}")
+        pmc_lines.append(t(
+            "llm.activity_analysis.pmc_metrics", ctl=f"{ctl:.0f}", atl=f"{atl:.0f}", tsb=f"{tsb:+.0f}"
+        ))
+        pmc_lines.append(t("llm.activity_analysis.tone_directive", tone=_tsb_tone(tsb)))
 
     if weekly_snapshot is not None:
         snap = weekly_snapshot
         if snap.tss_6w_avg > 0:
-            pmc_lines.append(f"- Charge 7j : {snap.tss_7d:.0f} TSS (tendance : {snap.load_trend_pct:+.0f}% vs moy 6 sem {snap.tss_6w_avg:.0f})")
+            pmc_lines.append(t(
+                "llm.activity_analysis.load_7d_with_trend",
+                tss=f"{snap.tss_7d:.0f}", trend=f"{snap.load_trend_pct:+.0f}", avg6w=f"{snap.tss_6w_avg:.0f}",
+            ))
         else:
-            pmc_lines.append(f"- Charge 7j : {snap.tss_7d:.0f} TSS (historique < 6 sem)")
+            pmc_lines.append(t("llm.activity_analysis.load_7d_no_history", tss=f"{snap.tss_7d:.0f}"))
         done_count = sessions_done_week if sessions_done_week is not None else snap.sessions_done_7d
         if sessions_planned_week is not None:
             remaining = max(0, sessions_planned_week - done_count)
-            pmc_lines.append(f"- Séances cette semaine : {done_count}/{sessions_planned_week} réalisées, {remaining} restante(s)")
+            pmc_lines.append(t(
+                "llm.activity_analysis.sessions_week_with_target",
+                done=done_count, planned=sessions_planned_week, remaining=remaining,
+            ))
         else:
-            pmc_lines.append(f"- Séances réalisées cette semaine : {done_count}")
+            pmc_lines.append(t("llm.activity_analysis.sessions_week_no_target", done=done_count))
         if next_session_info:
-            pmc_lines.append(f"- Prochaine séance : {next_session_info}")
+            pmc_lines.append(t("llm.activity_analysis.next_session", info=next_session_info))
         if snap.monotony_index is not None:
             from app.engine.guardrail_thresholds import MONOTONY_HIGH
 
             mono_note = (
-                "charge monotone → varier les intensités"
-                if snap.monotony_index > MONOTONY_HIGH
-                else "bonne variété des charges"
+                t("llm.activity_analysis.monotony_note") if snap.monotony_index > MONOTONY_HIGH
+                else t("llm.activity_analysis.variety_note")
             )
-            pmc_lines.append(
-                f"- Monotonie (Foster) : {snap.monotony_index:.1f} "
-                f"({mono_note} ; >{MONOTONY_HIGH:.1f} = danger)"
-            )
+            pmc_lines.append(t(
+                "llm.activity_analysis.monotony_line",
+                value=f"{snap.monotony_index:.1f}", note=mono_note, threshold=f"{MONOTONY_HIGH:.1f}",
+            ))
 
     if pmc_lines:
-        lines.append("\n[FORME & CHARGE]")
+        lines.append(t("llm.activity_analysis.form_header"))
         lines.extend(pmc_lines)
 
     # ── Instruction de structure ──────────────────────────────────────────────
     # En mode narratif, la structure est définie dans le system prompt (build_narrative_system_prompt).
     # En mode classique, on conserve la structure explicite ci-dessous.
     if not storytelling_mode:
-        lines.append(
-            "\nStructure de ta réponse :"
-            "\n1. 1 phrase résumé de la séance (type + intensité perçue)."
-            "\n2. 1 phrase sur le point technique le plus pertinent"
-            " (IF/VI pour une séance power, drift ou consistance pour intervalles, zones pour endurance)."
-            "\n3. 1 phrase lecture de forme : TSB + tendance de charge si disponibles."
-            "\n4. 1 reco concrète et actionnable (optionnel, uniquement si pertinente)."
-        )
+        lines.append(t("llm.activity_analysis.response_structure"))
 
     user_message = "\n".join(lines)
 
@@ -339,16 +362,16 @@ async def generate_activity_analysis(
         )
         parts = []
         if personal_record:
-            parts.append(f"🏆 {personal_record.get('label_fr', '')}.")
+            parts.append(t("llm.activity_analysis.fallback_pr", label=personal_record.get("label_fr", "")))
         if match_text:
-            parts.append(f"{match_flag} {match_text}.")
+            parts.append(t("llm.activity_analysis.fallback_match", flag=match_flag, text=match_text))
         if rpe_hint:
             parts.append(rpe_hint)
         elif rpe is not None:
-            parts.append(f"Ressenti : {rpe_label(rpe)}.")
+            parts.append(t("llm.activity_analysis.fallback_rpe", label=rpe_label(rpe)))
         if tsb is not None:
-            parts.append(f"TSB actuel : {tsb:+.0f}.")
-        return " ".join(parts) if parts else "Séance enregistrée ✅"
+            parts.append(t("llm.activity_analysis.fallback_tsb", tsb=f"{tsb:+.0f}"))
+        return " ".join(parts) if parts else t("llm.activity_analysis.fallback_default")
 
 
 async def generate_coach_blocks(
@@ -377,25 +400,24 @@ async def generate_coach_blocks(
     """
     import json as _json
     import logging as _logging
+
+    from app.core.localization import t
     from app.llm.factory import get_provider
-    from app.llm.prompts import COACH_BLOCKS_SYSTEM_PROMPT, build_coach_blocks_user_message
+    from app.llm.prompts import build_coach_blocks_user_message, coach_blocks_system_prompt
 
     _log = _logging.getLogger(__name__)
 
     def _fallback() -> dict[str, str]:
         if coaching_mode == "freestyle":
             return {
-                "form_interpretation": tsb_label_str or "Données de forme calculées.",
-                "session_interpretation": "Sortie libre enregistrée avec ton ressenti.",
-                "next_advice": (
-                    "Si tu veux, je peux te proposer une prochaine sortie selon ton envie "
-                    "et ton temps disponible."
-                ),
+                "form_interpretation": tsb_label_str or t("llm.coach_blocks.fallback_form"),
+                "session_interpretation": t("llm.coach_blocks.fallback_session_freestyle"),
+                "next_advice": t("llm.coach_blocks.fallback_advice_freestyle"),
             }
         return {
-            "form_interpretation": tsb_label_str or "Données de forme calculées.",
-            "session_interpretation": "Séance enregistrée et comptabilisée dans ton plan.",
-            "next_advice": next_session_info or "Consulte ton plan pour la prochaine séance.",
+            "form_interpretation": tsb_label_str or t("llm.coach_blocks.fallback_form"),
+            "session_interpretation": t("llm.coach_blocks.fallback_session_goal"),
+            "next_advice": next_session_info or t("llm.coach_blocks.fallback_advice_goal"),
         }
 
     user_message = build_coach_blocks_user_message(
@@ -419,7 +441,7 @@ async def generate_coach_blocks(
     try:
         provider = get_provider()
         raw = await provider.generate(
-            system_prompt=COACH_BLOCKS_SYSTEM_PROMPT,
+            system_prompt=coach_blocks_system_prompt(),
             user_message=user_message,
             max_tokens=3000,
         )

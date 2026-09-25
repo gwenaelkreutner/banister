@@ -26,9 +26,9 @@ class ReadValue:
     """One attribute read from the source."""
 
     value: float | int | str | None
-    origin: str                 # human-readable, shown to the athlete (FR-005)
+    origin: str                 # stable source code, rendered by the caller
     as_of: date | None = None    # when the source dates it, if it does
-    note: str | None = None      # e.g. "profil, pas ta FC repos mesurée récente"
+    note: str | None = None      # stable note code, rendered by the caller
 
     @property
     def present(self) -> bool:
@@ -80,8 +80,8 @@ def _age_from_dob(dob_raw: str | None) -> tuple[int | None, date | None]:
 def map_athlete_profile(athlete: dict) -> ReadProfile:
     """Pure mapping — the testable half. `athlete` is the `GET /athlete/{id}` payload."""
     sport = _cycling_sport_settings(athlete) or {}
-    _src = "lu depuis intervals.icu"
-    _src_sport = "lu depuis intervals.icu · Réglages sport"
+    _src = "source"
+    _src_sport = "sport_settings"
 
     ftp_raw = sport.get("ftp")
     ftp = ReadValue(ftp_raw, _src_sport) if ftp_raw else ReadValue(None, _src_sport)
@@ -91,13 +91,13 @@ def map_athlete_profile(athlete: dict) -> ReadProfile:
     resting_hr = ReadValue(
         athlete.get("icu_resting_hr"),
         _src,
-        note="valeur de profil — pas ta FC de repos mesurée récente",
+        note="resting_hr_profile",
     )
     weight = ReadValue(athlete.get("icu_weight"), _src)
     sex = ReadValue(athlete.get("sex"), _src)
 
     age_val, dob = _age_from_dob(athlete.get("icu_date_of_birth"))
-    age = ReadValue(age_val, "d'après ta date de naissance intervals.icu")
+    age = ReadValue(age_val, "birth_date")
     dob_rv = ReadValue(dob.isoformat() if dob else None, _src)
     locale = ReadValue(athlete.get("locale"), _src)
 

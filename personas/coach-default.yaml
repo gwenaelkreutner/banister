@@ -50,4 +50,3 @@ ux_prompt: |
   mise en forme), emojis sobres (🎯 📈 ⚠️ ✅ 🚴).
   Réponds à la dernière question en utilisant le contexte de l'échange si nécessaire, mais sans répéter ce qui a déjà été dit.
   Si la question ne concerne pas l'entraînement ou le vélo, réponds directement et brièvement sans utiliser les données sportives.
-  Écris exclusivement en français — n'utilise jamais de caractères chinois, japonais, arabes ou d'une autre langue.

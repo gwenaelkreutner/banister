@@ -14,15 +14,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.states import ResetStates
+from app.core.localization import t
 from app.db import repositories as repo
 from app.db.models.chat_message import ChatMessage
 from app.db.models.session_log import SessionLog
 from app.db.models.weekly_adherence import WeeklyAdherence
 
 router = Router(name="reset")
-
-_CONFIRM_WORD = "SUPPRIMER"
-
 
 async def _counts(session: AsyncSession, user_id) -> dict[str, int]:
     async def n(model) -> int:
@@ -44,31 +42,30 @@ async def _counts(session: AsyncSession, user_id) -> dict[str, int]:
 @router.message(Command("reset"))
 async def cmd_reset(message: Message, state: FSMContext, session: AsyncSession, user) -> None:
     if user is None:
-        await message.answer("Rien à réinitialiser — fais /setup.")
+        await message.answer(t("reset.no_account"))
         return
 
     c = await _counts(session, user.id)
     if not any((c["sessions"], c["messages"], c["adherence"], c["has_plan"], c["has_profile"])):
-        await message.answer("Tu n'as pas encore de données à effacer.")
+        await message.answer(t("reset.no_data"))
         return
 
-    lines = ["⚠️ <b>Recommencer de zéro</b>. Voici ce qui sera SUPPRIMÉ définitivement :", ""]
+    lines = [t("reset.warning"), ""]
     if c["sessions"]:
-        lines.append(f"  • {c['sessions']} séances enregistrées")
+        lines.append(t("reset.session_count", count=c["sessions"]))
     if c["messages"]:
-        lines.append(f"  • {c['messages']} messages de conversation")
+        lines.append(t("reset.message_count", count=c["messages"]))
     if c["adherence"]:
-        lines.append(f"  • ton historique d'adhérence ({c['adherence']} semaines)")
+        lines.append(t("reset.adherence_count", count=c["adherence"]))
     if c["has_plan"]:
-        lines.append("  • ton plan actif")
+        lines.append(t("reset.active_plan"))
     if c["has_profile"]:
-        lines.append("  • ton profil")
+        lines.append(t("reset.profile"))
     lines += [
         "",
-        "Ce qui n'est <b>PAS</b> touché : ton compte intervals.icu, tes activités là-bas, "
-        "ta voix de coach.",
+        t("reset.retained_data"),
         "",
-        f"Pour confirmer, écris exactement : <code>{_CONFIRM_WORD}</code>",
+        t("reset.confirm_instruction", word=t("reset.confirm_word")),
     ]
     await state.clear()
     await state.set_state(ResetStates.CONFIRM)
@@ -77,9 +74,9 @@ async def cmd_reset(message: Message, state: FSMContext, session: AsyncSession, 
 
 @router.message(ResetStates.CONFIRM, F.text)
 async def reset_confirm(message: Message, state: FSMContext, session: AsyncSession, user) -> None:
-    if message.text.strip() != _CONFIRM_WORD:
+    if message.text.strip() != t("reset.confirm_word"):
         await state.clear()
-        await message.answer("Rien n'a été supprimé.")
+        await message.answer(t("reset.cancelled"))
         return
 
     counts = await repo.user_repo.purge_athlete_data(session, user.id)
@@ -87,8 +84,5 @@ async def reset_confirm(message: Message, state: FSMContext, session: AsyncSessi
     await session.flush()
     await state.clear()
 
-    total = sum(v for k, v in counts.items())
-    await message.answer(
-        f"✅ C'est fait — {total} enregistrements supprimés. Ton compte intervals.icu "
-        "est intact. Lance /setup quand tu veux repartir.",
-    )
+    total = sum(counts.values())
+    await message.answer(t("reset.completed", count=total))

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.text_format import to_telegram_html
 from app.config import settings
+from app.core.localization import t
 from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.atl_ctl import compute_fitness_from_any, estimate_initial_ctl, tsb_label
@@ -60,10 +61,10 @@ def _item_icon(it):
     return "🏋️" if sport == "VirtualRide" else "🚴"  # Activity
 
 
-@router.message(Command("forme"))
+@router.message(Command("forme", "fitness"))
 async def cmd_forme(message: Message, session: AsyncSession, user: User):
     if not user.onboarding_completed:
-        await message.answer("Complète d'abord ton onboarding avec /start.")
+        await message.answer(t("forme.onboarding_first"))
         return
 
     # Frontière = date de début du plan actif
@@ -80,10 +81,7 @@ async def cmd_forme(message: Message, session: AsyncSession, user: User):
     all_items = pre_plan_acts + logs
 
     if not all_items:
-        await message.answer(
-            "📊 Pas encore de données.\n\n"
-            "Fais une sortie et connecte intervals.icu pour voir ta forme évoluer !"
-        )
+        await message.answer(t("forme.no_data"))
         return
 
     # Consommée depuis la source (spec 002 FR-016, app/services/fitness.py) — recalcul
@@ -93,14 +91,14 @@ async def cmd_forme(message: Message, session: AsyncSession, user: User):
     if current is not None:
         metrics = current.metrics
         staleness_note = (
-            f"<i>(au {current.as_of.strftime('%d/%m')}, pas encore mis à jour aujourd'hui)</i>\n\n"
+            t("forme.stale_note", date=current.as_of.strftime("%d/%m"))
             if current.is_stale else ""
         )
     else:
         initial_ctl = await _estimate_ctl_seed(all_items, session, user.id)
         seed_date = (date.today() - timedelta(days=49)) if initial_ctl > 0 else None
         metrics = compute_fitness_from_any(all_items, initial_ctl=initial_ctl, seed_date=seed_date)
-        staleness_note = "<i>(estimation locale — en attente de la première synchronisation)</i>\n\n"
+        staleness_note = t("forme.local_estimate_note")
     label = tsb_label(metrics.tsb)
 
     # Tableau des 7 derniers items
@@ -115,13 +113,13 @@ async def cmd_forme(message: Message, session: AsyncSession, user: User):
     history_text = "\n".join(history_lines)
 
     metrics_text = (
-        f"📊 <b>Ta forme</b>\n\n"
+        f"{t('forme.title')}\n\n"
         f"{staleness_note}"
-        f"CTL (fitness) : <b>{metrics.ctl:.0f}</b>\n"
-        f"ATL (fatigue) : <b>{metrics.atl:.0f}</b>\n"
-        f"TSB (forme)   : <b>{metrics.tsb:+.0f}</b>  {label}\n\n"
-        f"<b>7 dernières séances :</b>\n{history_text}\n\n"
-        f"💬 <i>Analyse en cours...</i>"
+        f"{t('forme.ctl_label')} : <b>{metrics.ctl:.0f}</b>\n"
+        f"{t('forme.atl_label')} : <b>{metrics.atl:.0f}</b>\n"
+        f"{t('forme.tsb_label')}   : <b>{metrics.tsb:+.0f}</b>  {label}\n\n"
+        f"{t('forme.recent_sessions_header')}\n{history_text}\n\n"
+        f"{t('forme.analysis_in_progress')}"
     )
     await message.answer(metrics_text, parse_mode="HTML")
 
@@ -159,18 +157,14 @@ async def _generate_fitness_interpretation(
 
         # Contexte source des données — adapté selon la situation
         if done_count == 0 and pre_plan_count > 0:
-            context_line = (
-                f"- L'athlète vient de démarrer son plan structuré. "
-                f"Les données proviennent de son historique intervals.icu ({pre_plan_count} sorties pré-plan)."
-            )
+            context_line = t("forme.llm_context_plan_start", count=pre_plan_count)
         elif done_count > 0:
-            context_line = (
-                f"- Assiduité plan : {done_count} séances validées"
-                + (f", {skipped_count} sautées" if skipped_count else "")
-                + "."
-            )
+            context_line = t("forme.llm_context_adherence", done=done_count)
+            if skipped_count:
+                context_line += t("forme.llm_context_adherence_skipped", count=skipped_count)
+            context_line += "."
         else:
-            context_line = "- Pas encore de données de plan."
+            context_line = t("forme.llm_context_no_data")
 
         # Séances récentes (date + TSS) — exactement ce qui est affiché à l'athlète
         recent_lines = []
@@ -178,20 +172,20 @@ async def _generate_fitness_interpretation(
             d = getattr(it, "logged_date", None) or getattr(it, "activity_date", None)
             tss = getattr(it, "tss_actual", None) or getattr(it, "tss", None)
             if d and tss:
-                recent_lines.append(f"  {d.strftime('%d/%m')} : TSS {tss:.0f}")
-        recent_text = "\n".join(recent_lines) if recent_lines else "  (aucune)"
+                recent_lines.append(
+                    t("forme.llm_recent_line", date=d.strftime("%d/%m"), tss=f"{tss:.0f}")
+                )
+        recent_text = "\n".join(recent_lines) if recent_lines else t("forme.llm_recent_none")
 
         from app.llm.prompts import build_ux_system_prompt
 
-        prompt = (
-            f"RÉSUMÉ FORME — données athlète :\n"
-            f"- CTL : {metrics.ctl:.0f} | ATL : {metrics.atl:.0f} | TSB : {metrics.tsb:+.0f}\n"
-            f"{context_line}\n"
-            f"- 7 dernières séances (date : TSS) :\n{recent_text}\n\n"
-            f"ZONES TSB :\n"
-            f"< -30 : fatigue critique | -30 à 0 : charge normale | 0 à +5 : équilibre | "
-            f"+5 à +15 : forme de pointe | +15 à +20 : très frais | > +20 : désentraînement\n\n"
-            f"Réponds en 3 phrases : diagnostic actuel / lecture historique / conseil tactique."
+        prompt = t(
+            "forme.llm_prompt",
+            ctl=f"{metrics.ctl:.0f}",
+            atl=f"{metrics.atl:.0f}",
+            tsb=f"{metrics.tsb:+.0f}",
+            context_line=context_line,
+            recent_text=recent_text,
         )
 
         return await provider.generate(
@@ -208,34 +202,16 @@ async def _generate_fitness_interpretation(
 def _fallback_interpretation(metrics) -> str:
     tsb = metrics.tsb
     if tsb < -30:
-        return (
-            "🔴 Tu accumules une fatigue critique. "
-            "Réduis l'intensité impérativement et priorise le sommeil cette semaine."
-        )
+        return t("forme.fallback_critical")
     if tsb < 0:
-        return (
-            "🟡 Tu es en phase de charge — c'est normal et voulu. "
-            "Le moteur tourne, la progression arrive."
-        )
+        return t("forme.fallback_load")
     if tsb <= 5:
-        return (
-            "🟢 Tu es équilibré entre charge et récupération. "
-            "Maintiens le cap, le stimulus est bon."
-        )
+        return t("forme.fallback_balanced")
     if tsb <= 15:
-        return (
-            "✨ Batteries au max — tu es en forme de pointe. "
-            "Moment idéal pour attaquer les séances clés ou une compétition."
-        )
+        return t("forme.fallback_peak")
     if tsb <= 20:
-        return (
-            "🔵 Tu es très frais. "
-            "Si un objectif approche, parfait. Sinon, relance progressivement la charge."
-        )
-    return (
-        "⚪ Tu es trop frais — risque de désentraînement si ça dure. "
-        "Reprends la charge sans attendre."
-    )
+        return t("forme.fallback_fresh")
+    return t("forme.fallback_overreached")
 
 
 async def _fetch_power_profile(profile: AthleteProfileSchema | None) -> str | None:
@@ -312,11 +288,19 @@ def _format_power_profile(
                 sign = "+" if anchor.pct_change >= 0 else ""
                 parts.append(f"{label} {sign}{anchor.pct_change:.0f}%")
         if parts:
-            bias = "sprint" if delta.rotation_index > 0 else "endurance"
+            bias = (
+                t("forme.power_profile_bias_sprint") if delta.rotation_index > 0
+                else t("forme.power_profile_bias_endurance")
+            )
             blocks.append(
-                "⚡ <b>Profil de puissance (28j vs 28j précédents)</b>\n"
+                t("forme.power_profile_header") + "\n"
                 + " | ".join(parts)
-                + f"\n→ biais {bias} (rotation {delta.rotation_index:+.1f})"
+                + "\n"
+                + t(
+                    "forme.power_profile_rotation",
+                    bias=bias,
+                    rotation=f"{delta.rotation_index:+.1f}",
+                )
             )
 
     if sustainability.note is None:
@@ -325,12 +309,12 @@ def _format_power_profile(
             anchor = sustainability.anchors.get(key)
             if anchor and anchor.actual_watts is not None:
                 div = (
-                    f" ({anchor.model_divergence_pct:+.0f}% vs modèle CP)"
+                    t("forme.sustainability_divergence", pct=f"{anchor.model_divergence_pct:+.0f}")
                     if anchor.model_divergence_pct is not None else ""
                 )
                 sus_parts.append(f"{label} : {anchor.actual_watts:.0f}W{div}")
         if sus_parts:
-            blocks.append("📈 <b>Soutenabilité (42j)</b>\n" + " | ".join(sus_parts))
+            blocks.append(t("forme.sustainability_header") + "\n" + " | ".join(sus_parts))
 
     return "\n\n".join(blocks) if blocks else None
 

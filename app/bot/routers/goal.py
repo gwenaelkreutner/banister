@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.states import GoalStates, PlanStates
 from app.config import settings
+from app.core.localization import t
 from app.db import repositories as repo
 from app.engine.plan_builder import generate_plan
 from app.engine.schemas import TrainingPlanSchema
@@ -38,26 +39,32 @@ def _client() -> IntervalsClient:
 
 def _confirm_regen_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Confirmer", callback_data="goal:confirm:apply"),
-        InlineKeyboardButton(text="❌ Annuler", callback_data="goal:confirm:cancel"),
+        InlineKeyboardButton(text=t("goal.confirm_button"), callback_data="goal:confirm:apply"),
+        InlineKeyboardButton(text=t("goal.cancel_button"), callback_data="goal:confirm:cancel"),
     ]])
 
 
 def _confirm_freestyle_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="Passer en mode libre", callback_data="goal:freestyle:apply"),
-        InlineKeyboardButton(text="Annuler", callback_data="goal:freestyle:cancel"),
+        InlineKeyboardButton(
+            text=t("goal.enter_freestyle_button"), callback_data="goal:freestyle:apply"
+        ),
+        InlineKeyboardButton(
+            text=t("goal.cancel_freestyle_button"), callback_data="goal:freestyle:cancel"
+        ),
     ]])
 
 
 def _goal_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎯 Événement cible", callback_data="goal:type:event")],
-        [InlineKeyboardButton(text="💚 Forme générale", callback_data="goal:type:fitness")],
-        [InlineKeyboardButton(text="⚡ Performance", callback_data="goal:type:performance")],
-        [InlineKeyboardButton(text="🔹 Autre", callback_data="goal:type:other")],
+        [InlineKeyboardButton(text=t("goal.type_event"), callback_data="goal:type:event")],
+        [InlineKeyboardButton(text=t("goal.type_fitness"), callback_data="goal:type:fitness")],
         [InlineKeyboardButton(
-            text="🚴 Pas d'objectif / mode libre", callback_data="goal:type:freestyle"
+            text=t("goal.type_performance"), callback_data="goal:type:performance"
+        )],
+        [InlineKeyboardButton(text=t("goal.type_other"), callback_data="goal:type:other")],
+        [InlineKeyboardButton(
+            text=t("goal.type_freestyle"), callback_data="goal:type:freestyle"
         )],
     ])
 
@@ -67,21 +74,18 @@ async def cmd_goal(message: Message, state: FSMContext, session: AsyncSession, u
     """spec 009 : plus de blocage sans plan actif — c'est aussi le point d'entrée pour
     passer du mode libre au mode objectif (research.md Decision 2)."""
     if user is None or not user.onboarding_completed:
-        await message.answer("Fais d'abord /setup.")
+        await message.answer(t("goal.setup_first"))
         return
     profile_row = await repo.profile_repo.get_by_user_id(session, user.id)
     if profile_row is None:
-        await message.answer("Profil introuvable — relance /setup.")
+        await message.answer(t("goal.profile_missing"))
         return
 
     try:
         fresh = await read_athlete_profile(_client())
     except Exception:
         logger.exception("read_athlete_profile failed during /goal")
-        await message.answer(
-            "Impossible de relire ton profil intervals.icu. Rien n'a changé : "
-            "réessaie /goal plus tard."
-        )
+        await message.answer(t("goal.profile_read_failed"))
         return
 
     plan = await repo.plan_repo.get_active_plan(session, user.id)
@@ -99,8 +103,7 @@ async def cmd_goal(message: Message, state: FSMContext, session: AsyncSession, u
     )
     await state.set_state(GoalStates.GOAL)
     await message.answer(
-        "On change d'objectif. Je garde tout le reste — tes séances faites, ton "
-        "historique, notre conversation.\n\nNouvel objectif ?",
+        t("goal.choose_goal"),
         reply_markup=_goal_kb(),
     )
 
@@ -121,9 +124,7 @@ async def goal_type(
         )
         await state.set_state(GoalStates.CONFIRM_FREESTYLE)
         await callback.message.edit_text(
-            "Passer en mode libre va arrêter ton plan actuel et retirer "
-            f"{len(entries)} séance(s) future(s) publiée(s) de ton calendrier. "
-            "Ton historique et tes réglages sont conservés.",
+            t("goal.freestyle_preview", count=len(entries)),
             reply_markup=_confirm_freestyle_kb(),
         )
         await callback.answer()
@@ -132,7 +133,7 @@ async def goal_type(
     await state.update_data(goal=goal)
     await state.set_state(GoalStates.DATE)
     await callback.message.edit_text(
-        "📅 Date de l'objectif ? Format <code>AAAA-MM-JJ</code>, ou <code>aucune</code>.",
+        t("goal.date_prompt"),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -149,7 +150,7 @@ async def confirm_freestyle_mode(
 async def cancel_freestyle_mode(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(PlanStates.ACTIVE)
-    await callback.message.edit_text("Mode objectif conservé : ton plan actuel ne change pas.")
+    await callback.message.edit_text(t("goal.freestyle_cancelled"))
     await callback.answer()
 
 
@@ -162,7 +163,7 @@ async def _enter_freestyle_mode(
     plan = await repo.plan_repo.get_active_plan(session, user.id)
     if plan is None:
         await state.clear()
-        await callback.message.edit_text("Déjà en mode libre.")
+        await callback.message.edit_text(t("goal.already_freestyle"))
         await callback.answer()
         return
 
@@ -176,24 +177,20 @@ async def _enter_freestyle_mode(
         logger.warning("calendar withdrawal failed before entering freestyle mode")
         await state.clear()
         await state.set_state(PlanStates.ACTIVE)
-        await callback.message.edit_text(
-            "Le calendrier est indisponible : ton plan reste actif et rien n'a été désactivé. "
-            "Réessaie /goal dans un moment."
-        )
+        await callback.message.edit_text(t("goal.calendar_unavailable"))
         await callback.answer()
         return
     if failed:
         await state.clear()
         await state.set_state(PlanStates.ACTIVE)
         await callback.message.edit_text(
-            f"{withdrawn} séance(s) ont été retirées, mais {failed} échec(s) restent. "
-            "Ton plan reste actif : relance /unpublish ou /goal pour reprendre."
+            t("goal.withdraw_failed", withdrawn=withdrawn, failed=failed)
         )
         await callback.answer()
         return
 
     confirmed_calendar_note = (
-        f"\n{withdrawn} séance(s) retirée(s) de ton calendrier intervals.icu."
+        t("goal.withdrawn_note", count=withdrawn)
         if withdrawn else ""
     )
     await repo.plan_repo.deactivate_all_for_user(session, user.id)
@@ -206,19 +203,12 @@ async def _enter_freestyle_mode(
         entry_date=date.today(),
         category="freestyle_toggle",
         source="deterministic",
-        text="Passage en mode libre — objectif désactivé.",
+        text=t("goal.journal_enter_freestyle"),
     )
 
     calendar_note = confirmed_calendar_note
     logs = await repo.session_log_repo.get_all_for_user(session, user.id)
-    summary = (
-        "🚴 <b>Mode libre activé</b>\n\n"
-        "Je ne suis plus de plan — demande-moi une séance quand tu veux, je m'adapte à "
-        "ta forme du moment."
-        f"{calendar_note}"
-        f"\n\nCe qui est gardé : {len(logs)} séances loggées, ton historique, tes "
-        "réglages — rien n'a bougé."
-    )
+    summary = t("goal.freestyle_activated", calendar_note=calendar_note, logs=len(logs))
     await state.clear()
     await callback.message.edit_text(summary, parse_mode="HTML")
     await callback.answer()
@@ -230,38 +220,33 @@ async def goal_date(message: Message, state: FSMContext, session: AsyncSession, 
 
     target_date, problem = parse_goal_date(message.text)
     if problem == "format":
-        await message.answer("⚠️ Format <code>AAAA-MM-JJ</code> ou <code>aucune</code>.",
+        await message.answer(t("goal.date_invalid_format"),
                              parse_mode="HTML")
         return
     if problem == "past":
-        await message.answer("⚠️ La date doit être dans le futur.")
+        await message.answer(t("goal.date_in_past"))
         return
     data = await state.get_data()
     if problem == "too_soon" and data.get("_date_confirmed") != target_date.isoformat():
         await state.update_data(_date_confirmed=target_date.isoformat())
-        await message.answer(
-            f"⚠️ {(target_date - date.today()).days} jours, c'est court. "
-            "Renvoie la même date pour confirmer, ou une plus lointaine."
-        )
+        await message.answer(t("goal.date_too_soon", days=(target_date - date.today()).days))
         return
     if problem == "too_far":
-        await message.answer(
-            "ℹ️ Si loin, le plan est surtout spéculatif — je le fais quand même."
-        )
+        await message.answer(t("goal.date_too_far"))
 
     # spec 007 US3 (revu) : un plan actif existe → on montre un résumé et on attend
     # confirmation avant d'écraser quoi que ce soit. Venue du mode libre (aucun plan
     # actif) → comportement inchangé, exécution immédiate (rien à perdre).
     old_plan = await repo.plan_repo.get_active_plan(session, user.id)
     if old_plan is None:
-        await message.answer("⏳ Je régénère ton plan depuis ta forme actuelle…")
+        await message.answer(t("goal.regenerating"))
         await _regenerate(
             message, state, session, user, data["goal"], target_date,
             data.get("_fresh_source_profile"),
         )
         return
 
-    await message.answer("⏳ Je prépare le nouveau plan pour confirmation…")
+    await message.answer(t("goal.preparing_preview"))
     new_plan, profile = await _build_new_plan(
         session, user, data["goal"], target_date, data.get("_fresh_source_profile")
     )
@@ -274,12 +259,11 @@ async def goal_date(message: Message, state: FSMContext, session: AsyncSession, 
         _pending_profile=profile.model_dump(mode="json"),
     )
     await state.set_state(GoalStates.CONFIRM_REGEN)
-    date_str = f" le {target_date:%d/%m/%Y}" if target_date else ""
+    date_str = t("goal.preview_date", date=target_date.strftime("%d/%m/%Y")) if target_date else ""
     await message.answer(_plan_change_preview(old_schema, new_plan), parse_mode="HTML")
     await message.answer(
-        "🔎 <b>Nouveau plan proposé</b>\n\n"
-        f"{new_plan.weeks_count} semaines (actuellement {old_schema.weeks_count}) — "
-        f"objectif {data['goal']}{date_str}.\n\nConfirmer le changement ?",
+        t("goal.new_plan_preview", weeks=new_plan.weeks_count,
+          current_weeks=old_schema.weeks_count, goal=data["goal"], date_str=date_str),
         reply_markup=_confirm_regen_kb(),
         parse_mode="HTML",
     )
@@ -300,8 +284,8 @@ async def goal_confirm_apply(
         if data.get("_pending_target_date") else None
     )
 
-    await callback.answer("Application en cours…")
-    await callback.message.edit_text("⏳ J'applique le nouveau plan…")
+    await callback.answer(t("goal.applying_callback"))
+    await callback.message.edit_text(t("goal.applying"))
     await _apply_new_plan(
         callback.message, state, session, user, data["_pending_goal"], target_date,
         new_plan, profile, old_plan,
@@ -314,7 +298,7 @@ async def goal_confirm_cancel(
 ) -> None:
     await state.clear()
     await state.set_state(PlanStates.ACTIVE)
-    await callback.message.edit_text("Objectif inchangé — ton plan actuel reste actif.")
+    await callback.message.edit_text(t("goal.regen_cancelled"))
     await callback.answer()
 
 
@@ -326,12 +310,9 @@ def _plan_change_preview(old: TrainingPlanSchema, new: TrainingPlanSchema) -> st
     new_tss = new_first.total_tss_target if new_first else 0
     old_sessions = len(old_first.sessions) if old_first else 0
     new_sessions = len(new_first.sessions) if new_first else 0
-    return (
-        "<b>Aperçu du changement</b>\n"
-        f"Semaine 1 : {old_sessions} séance(s), {old_tss:.0f} TSS "
-        f"-> {new_sessions} seance(s), {new_tss:.0f} TSS\n"
-        f"Charge au pic : {old.peak_weekly_tss:.0f} -> {new.peak_weekly_tss:.0f} TSS/semaine"
-    )
+    return t("goal.plan_change_preview", old_sessions=old_sessions, old_tss=old_tss,
+             new_sessions=new_sessions, new_tss=new_tss,
+             old_peak=old.peak_weekly_tss, new_peak=new.peak_weekly_tss)
 
 
 async def _build_new_plan(
@@ -429,7 +410,10 @@ async def _apply_new_plan(
     # pas les deux.
     from app.db.repositories import journal_repo
 
-    date_str = f" (cible {target_date:%d/%m/%Y})" if target_date else ""
+    date_str = (
+        t("goal.journal_target_date", date=target_date.strftime("%d/%m/%Y"))
+        if target_date else ""
+    )
     if old_schema is None:
         await journal_repo.create(
             session,
@@ -437,10 +421,8 @@ async def _apply_new_plan(
             entry_date=date.today(),
             category="freestyle_toggle",
             source="deterministic",
-            text=(
-                f"Sortie du mode libre — objectif {goal}{date_str}, "
-                f"plan {new_plan.weeks_count} semaines."
-            ),
+            text=t("goal.journal_leave_freestyle", goal=goal, date_str=date_str,
+                   weeks=new_plan.weeks_count),
         )
     else:
         await journal_repo.create(
@@ -449,10 +431,8 @@ async def _apply_new_plan(
             entry_date=date.today(),
             category="goal_change",
             source="deterministic",
-            text=(
-                f"Objectif changé vers {goal}{date_str} — plan "
-                f"{old_schema.weeks_count}→{new_plan.weeks_count} semaines."
-            ),
+            text=t("goal.journal_goal_changed", goal=goal, date_str=date_str,
+                   old_weeks=old_schema.weeks_count, new_weeks=new_plan.weeks_count),
         )
 
     # Calendrier publié sous l'ancien plan → périmé (FR-014, réutilise spec 005). Rien à
@@ -464,11 +444,7 @@ async def _apply_new_plan(
                 session, user.id, old_plan.id
             )
             if entries:
-                stale_note = (
-                    f"\n⚠️ {len(entries)} séances publiées dans ton calendrier sous "
-                    "l'ancien plan ne correspondent plus — relance /publish pour "
-                    "re-synchroniser."
-                )
+                stale_note = t("goal.stale_calendar_note", count=len(entries))
         except Exception:
             logger.warning("check calendrier périmé impossible après /goal")
 
@@ -484,9 +460,7 @@ async def _apply_new_plan(
                 session, _client(), user
             )
             if withdrawn:
-                freestyle_withdrawn_note = (
-                    f"\n📅 {withdrawn} séance(s) mode libre retirée(s) de ton calendrier."
-                )
+                freestyle_withdrawn_note = t("goal.freestyle_withdrawn_note", count=withdrawn)
         except Exception:
             logger.warning("retrait des publications mode libre impossible après /goal")
 
@@ -494,20 +468,17 @@ async def _apply_new_plan(
     # avait un ancien plan à comparer (spec 009 : entrée depuis mode libre = rien à diffé).
     logs = await repo.session_log_repo.get_all_for_user(session, user.id)
     change_note = (
-        f"\n\nCe qui change : périodisation refaite "
-        f"({old_schema.weeks_count} → {new_plan.weeks_count} semaines), "
-        f"départ depuis CTL {new_plan.initial_weekly_tss / 7:.0f}."
+        t("goal.change_note", old_weeks=old_schema.weeks_count,
+          new_weeks=new_plan.weeks_count, ctl=new_plan.initial_weekly_tss / 7)
         if old_schema is not None else ""
     )
-    summary = (
-        f"✅ <b>Nouveau plan</b> — {new_plan.weeks_count} semaines"
-        + (f" vers {goal} le {target_date:%d/%m/%Y}" if target_date else f" ({goal})")
-        + change_note
-        + f"\nCe qui est gardé : {len(logs)} séances loggées, ton historique d'adhérence, "
-        f"tes réglages — rien n'a bougé."
-        f"{stale_note}"
-        f"{freestyle_withdrawn_note}"
+    goal_part = (
+        t("goal.summary_dated_goal", goal=goal, date=target_date.strftime("%d/%m/%Y"))
+        if target_date else t("goal.summary_undated_goal", goal=goal)
     )
+    summary = t("goal.summary", weeks=new_plan.weeks_count, goal_part=goal_part,
+                change_note=change_note, logs=len(logs), stale_note=stale_note,
+                freestyle_withdrawn_note=freestyle_withdrawn_note)
     await state.clear()
     await state.set_state(PlanStates.ACTIVE)
     await message.answer(summary, parse_mode="HTML")

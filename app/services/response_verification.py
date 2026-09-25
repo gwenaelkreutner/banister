@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from app.core.localization import Language, t
 from app.engine.guardrail_thresholds import VERIFY_TOLERANCE_PCT
 
 # ── What "retrieved" means ───────────────────────────────────────────────────
@@ -81,7 +82,10 @@ _ANCHORS: list[tuple[str, str]] = [
     (r"fc\s+de\s+repos", "rhr"),
     (r"fr[ée]quence\s+cardiaque\s+de\s+repos", "rhr"),
     (r"fc\s+repos", "rhr"),
+    (r"resting\s+heart\s+rate", "rhr"),
+    (r"resting\s+hr", "rhr"),
     (r"variabilit[ée]\s+cardiaque", "hrv"),
+    (r"heart\s+rate\s+variability", "hrv"),
     (r"\bvfc\b", "hrv"),
     (r"\bhrv\b", "hrv"),
     (r"\bctl\b", "ctl"),
@@ -91,12 +95,17 @@ _ANCHORS: list[tuple[str, str]] = [
     (r"\bftp\b", "ftp"),
     (r"rapport\s+aigu[\s/-]*chronique", "acwr"),
     (r"ratio\s+aigu[\s/-]*chronique", "acwr"),
+    (r"acute[\s/-]*chronic\s+(?:workload\s+)?ratio", "acwr"),
     (r"\bacwr\b", "acwr"),
     (r"monotonie", "monotony"),
+    (r"(?:training\s+)?monotony", "monotony"),
     (r"rampe?\s+de\s+charge", "ramp_rate"),
+    (r"load\s+ramp", "ramp_rate"),
     (r"ramp\s*rate", "ramp_rate"),
     (r"indice de r[ée]cup[ée]ration", "recovery_index"),
+    (r"recovery\s+index", "recovery_index"),
     (r"indice de polarisation", "polarization_index"),
+    (r"polarization\s+index", "polarization_index"),
 ]
 
 # A number token: optional sign, digits, optional decimal (French comma or dot).
@@ -107,7 +116,7 @@ _DATE_TOKEN = re.compile(r"\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?)\
 # zones, cadence, percentages (a "-20%" is a relative statement, not an absolute value
 # the registry could hold).
 _NON_CLAIM_AFTER = re.compile(
-    rf"(?:{_NUMBER})\s*(?:%|h\d*|h\b|min\b|minutes?\b|rpm\b|s\b|sec\b|semaines?\b|jours?\b)",
+    rf"(?:{_NUMBER})\s*(?:%|h\d*|h\b|mins?\b|minutes?\b|hours?\b|rpm\b|s\b|sec\b|seconds?\b|semaines?\b|weeks?\b|jours?\b|days?\b)",
     re.IGNORECASE,
 )
 _ZONE = re.compile(r"\bZ[1-7]\b", re.IGNORECASE)
@@ -156,7 +165,7 @@ def _extract_claims(text: str) -> list[Claim]:
         for clause in _CLAUSE_SPLIT.split(sentence):
             low = clause.lower()
             anchors_here = [
-                (canon, m.start())
+                (canon, m.end())
                 for pat, canon in _ANCHORS
                 for m in re.finditer(pat, low)
             ]
@@ -211,20 +220,12 @@ def verify_response(text: str, registry: MetricRegistry) -> VerificationResult:
     return result
 
 
-_WITHHELD = (
-    "(je préfère ne pas avancer de chiffre sur {metric} ici — je n'en suis pas certain)"
-)
-
-_METRIC_FR = {
-    "ctl": "ta forme de fond", "atl": "ta fatigue", "tsb": "ta fraîcheur",
-    "tss": "la charge", "ftp": "ta FTP", "acwr": "ton rapport de charge",
-    "monotony": "la monotonie", "hrv": "ta VFC", "rhr": "ta FC de repos",
-    "ramp_rate": "ta progression de forme", "recovery_index": "ton indice de récupération",
-    "polarization_index": "ton indice de polarisation",
-}
-
-
-def apply_result(text: str, result: VerificationResult) -> str:
+def apply_result(
+    text: str,
+    result: VerificationResult,
+    *,
+    language: Language | None = None,
+) -> str:
     """Replace every sentence carrying a failed claim with an honest omission (FR-019,
     research R6). Never rewrites around a corrected number, never drops the whole
     response. A passing response is returned unchanged."""
@@ -233,14 +234,20 @@ def apply_result(text: str, result: VerificationResult) -> str:
     bad_sentences = {c.sentence for c in result.failures}
     metric_by_sentence: dict[str, str] = {}
     for c in result.failures:
-        metric_by_sentence.setdefault(c.sentence, _METRIC_FR.get(c.metric, c.metric))
+        metric_by_sentence.setdefault(
+            c.sentence,
+            t(f"metric.{c.metric}", language=language),
+        )
 
     out: list[str] = []
     for sentence in _SENTENCE_SPLIT.split(text):
         stripped = sentence.strip()
         match = next((b for b in bad_sentences if b and b in stripped), None)
         if match is not None:
-            out.append(_WITHHELD.format(metric=metric_by_sentence[match]))
+            out.append(
+                t("verification.uncertain_metric", language=language,
+                  metric=metric_by_sentence[match])
+            )
         elif stripped:
             out.append(stripped)
     return " ".join(out)

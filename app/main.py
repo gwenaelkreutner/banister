@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from app.bot.setup import create_bot, create_dispatcher, register_bot_commands
 from app.bot.text_format import to_telegram_html
 from app.config import settings
+from app.core.localization import t
 from app.db.client import get_session
 from app.db.lifecycle import (
     acquire_instance_lock,
@@ -236,18 +237,22 @@ async def _run_weekly_recap_broadcast(bot):
             await asyncio.sleep(0.8)
             await bot.send_message(
                 user.telegram_id,
-                f"🧠 <b>Analyse coach</b>\n\n{to_telegram_html(recap.coach_section)}",
+                t("recap.coach_analysis", analysis=to_telegram_html(recap.coach_section)),
                 parse_mode="HTML",
             )
             await asyncio.sleep(0.8)
             nextweek_footer = (
-                f"\n\n📅 <i>Tape /week {recap.next_week_number} pour voir le détail complet</i>"
+                t("recap.next_week_footer", week=recap.next_week_number)
                 if recap.next_week_number
                 else ""
             )
             await bot.send_message(
                 user.telegram_id,
-                f"🎯 <b>Semaine prochaine</b>\n\n{to_telegram_html(recap.next_week_section)}{nextweek_footer}",
+                t(
+                    "recap.next_week",
+                    section=to_telegram_html(recap.next_week_section),
+                    footer=nextweek_footer,
+                ),
                 parse_mode="HTML",
             )
             await asyncio.sleep(0.1)  # rate limit entre utilisateurs
@@ -255,25 +260,20 @@ async def _run_weekly_recap_broadcast(bot):
             logger.exception(f"Erreur bilan hebdo user {user.telegram_id}")
 
 
-_WORKOUT_FR = {
-    "long_ride": "Sortie longue",
-    "intervals": "Intervalles",
-    "endurance": "Endurance",
-    "recovery": "Récupération",
-}
-
-
 def _format_reminder(session_spec, week_num: int, weeks_count: int) -> str:
-    type_fr = _WORKOUT_FR.get(session_spec.workout_type, session_spec.workout_type)
+    from app.bot.routers.session_log import _type_label
+
     zone = session_spec.zone_code
     duration = session_spec.duration_minutes
     target = session_spec.target_time_in_zone_minutes or session_spec.duration_minutes
-    return (
-        f"🚴 <b>Séance du jour</b> — Semaine {week_num}/{weeks_count}\n\n"
-        f"<b>{type_fr}</b> {zone} — {duration} min\n"
-        f"Objectif : {target} min en {zone}\n\n"
-        f"📅 /plan pour voir le programme complet\n"
-        f"💬 Une question sur ta séance ? Pose-la ici !"
+    return t(
+        "main.session_reminder",
+        week=week_num,
+        weeks_count=weeks_count,
+        type=_type_label(session_spec.workout_type),
+        zone=zone,
+        duration=duration,
+        target=target,
     )
 
 
@@ -342,12 +342,7 @@ async def _run_session_reminders(bot):
 
 
 def _format_nutrition_reminder() -> str:
-    return (
-        "🍽️ <b>Rien loggé aujourd'hui</b>\n\n"
-        "Tu n'as pas encore décrit ce que tu as mangé aujourd'hui.\n"
-        "Dis-moi simplement ce que tu as pris (un repas ou un résumé de la journée) "
-        "et je t'estime les calories."
-    )
+    return t("main.nutrition_reminder")
 
 
 async def _nutrition_reminder_scheduler(bot):

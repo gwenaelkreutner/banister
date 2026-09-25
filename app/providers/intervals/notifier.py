@@ -2,24 +2,27 @@
 webhook (spec 002 T045-T049, FR-030..FR-034, Plan Phase E — the cutover).
 
 Reuses the RPE capture/reveal machinery in app/bot/routers/session_log.py
-(`cb_rpe`, keyboard `rpe_emoji_keyboard`) — that handler works entirely on `SessionLog`
+(`cb_rpe`, keyboard `rpe_scale_keyboard`) — that handler works entirely on `SessionLog`
 rows, so it needed no logic changes to serve this path.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-import random
-import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.localization import t
 from app.db.models.user import User
 from app.db.repositories import sync_state_repo
+from app.providers.analysis.highlight import (
+    build_message_a,
+    build_message_b,
+    build_message_c_session_card,
+)
 from app.providers.intervals.client import IntervalsClient
 from app.providers.intervals.mapper import map_activity_to_analyzed_session
 from app.services.activity_feedback import ActivityFeedbackContext, assemble_activity_feedback
-from app.providers.analysis.highlight import build_message_a, build_message_b, build_message_c_session_card
 
 logger = logging.getLogger(__name__)
 
@@ -29,46 +32,6 @@ def _parse_activity_date(payload: dict):
 
     start = payload.get("start_date_local") or payload["start_date"]
     return datetime.fromisoformat(start.replace("Z", "+00:00")).date()
-
-
-def _build_rpe_prompt(session_type_real: str | None, tsb: float) -> str:
-    """Same prompt pool the (now-removed) inbound webhook path used."""
-    if tsb <= -25:
-        return "Comment tu te sens physiquement là ?"
-    if tsb >= 10:
-        return "Tu as senti la forme aujourd'hui ?"
-
-    pools: dict[str, list[str]] = {
-        "intervals": [
-            "Tes jambes ont tenu la cadence ?",
-            "Fatigue musculaire ou cardio en fin de séance ?",
-            "Le dernier intervalle, tu l'as senti comment ?",
-        ],
-        "long_ride": [
-            "Jambes encore fraîches à l'arrivée, ou en mode survie ? 😅",
-            "Comment tu te sens là, maintenant ?",
-        ],
-        "recovery": [
-            "Vraiment récupération, ou ça tirait un peu ?",
-            "Tu as pu rester facile du début à la fin ?",
-        ],
-        "endurance": [
-            "Ça coulait tout seul ou il fallait pousser ?",
-            "Comment c'était ?",
-        ],
-        "race": [
-            "Tout ce que tu avais, tu l'as mis là-dedans ?",
-            "Comment tu te sens après l'effort ?",
-        ],
-        "tempo": [
-            "Les jambes ont répondu jusqu'au bout ?",
-            "Tu as maintenu l'intensité voulue ?",
-        ],
-    }
-    pool = pools.get(
-        session_type_real or "", ["Comment c'était ?", "Ton ressenti ?", "Physiquement, ça allait ?"]
-    )
-    return random.choice(pool)
 
 
 async def process_detected_activity(
@@ -90,7 +53,8 @@ async def process_detected_activity(
     """
     activity_id = str(activity_summary["id"])
     payload = (
-        await client.get_activity(activity_id, with_intervals=True) if announce else activity_summary
+        await client.get_activity(activity_id, with_intervals=True)
+        if announce else activity_summary
     )
 
     initial_analyzed = map_activity_to_analyzed_session(payload)
@@ -121,9 +85,6 @@ async def send_staged_notification(bot, telegram_id: int, context: ActivityFeedb
     not mark the activity reported unless this is True (FR-012).
     """
     assert context.log is not None and context.highlight is not None
-    fm = context.fitness_metrics
-    tsb = fm.tsb if fm else 0.0
-
     try:
         await bot.send_chat_action(telegram_id, "typing")
         await asyncio.sleep(1.2)
@@ -146,15 +107,14 @@ async def send_staged_notification(bot, telegram_id: int, context: ActivityFeedb
         await bot.send_chat_action(telegram_id, "typing")
         await asyncio.sleep(1.0)
 
-        from app.bot.keyboards.session_log import rpe_emoji_keyboard
+        from app.bot.keyboards.session_log import rpe_scale_keyboard
 
         match_score = context.match_result.score if context.match_result else None
         candidate = context.match_result.candidate if context.match_result else None
-        rpe_prompt = _build_rpe_prompt(context.analyzed.session_type_real, tsb)
         card = build_message_c_session_card(
             analyzed=context.analyzed,
             session_spec=candidate.session_spec if candidate else None,
-            rpe_prompt=rpe_prompt,
+            rpe_prompt=t("notifier.rpe_prompt"),
             match_level=match_score.match_level if match_score else "exact",
             confidence_score=match_score.confidence_score if match_score else None,
             day_shift=candidate.day_shift if candidate else 0,
@@ -163,7 +123,7 @@ async def send_staged_notification(bot, telegram_id: int, context: ActivityFeedb
             telegram_id,
             card,
             parse_mode="HTML",
-            reply_markup=rpe_emoji_keyboard(str(context.log.id)),
+            reply_markup=rpe_scale_keyboard(str(context.log.id)),
         )
         return True
     except Exception:
@@ -228,7 +188,7 @@ async def notify_detected_activity(
             delivered = await send_staged_notification(bot, user.telegram_id, context)
         elif context.outcome == "bonus":
             delivered = await _notify_simple(
-                bot, user.telegram_id, "🔄 <b>Sortie bonus enregistrée</b>", context
+                bot, user.telegram_id, t("notifier.bonus_title"), context
             )
         elif context.outcome == "freestyle":
             # spec 009 US3 — no plan exists to match or miss against, but the athlete
@@ -239,7 +199,7 @@ async def notify_detected_activity(
             delivered = await send_staged_notification(bot, user.telegram_id, context)
         else:  # "unplanned"
             delivered = await _notify_simple(
-                bot, user.telegram_id, "🚴 <b>Activité hors plan détectée</b>", context
+                bot, user.telegram_id, t("notifier.unplanned_title"), context
             )
 
     await session.commit()

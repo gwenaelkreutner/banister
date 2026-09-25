@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.states import PlanStates, SetupStates
 from app.bot.text_format import to_telegram_html
 from app.config import settings
+from app.core.localization import t, tp
 from app.db import repositories as repo
 from app.db.repositories import activity_repo
 from app.engine.atl_ctl import compute_fitness_from_any, estimate_initial_ctl
@@ -43,7 +44,6 @@ from app.engine.schemas import (
     PhysioProfile,
 )
 from app.engine.tss import tss_from_weekly_hours
-from app.llm.tools import DAY_NAMES_FR
 from app.providers.intervals.athlete_profile import ReadProfile, read_athlete_profile, stamp
 from app.providers.intervals.client import IntervalsClient
 from app.services.fitness import get_current_fitness
@@ -56,9 +56,9 @@ _DEFAULT_AVAILABLE_DAYS = ["tuesday", "thursday", "saturday", "sunday"]
 _MIN_AVAILABLE_DAYS = 2
 
 _MISSING_PROFILE_FIELDS = {
-    "age": ("read_age", "Age", "ans", 35.0, 12.0, 100.0),
-    "max_hr": ("read_max_hr", "FC max", "bpm", 185.0, 100.0, 240.0),
-    "resting_hr": ("read_resting_hr", "FC repos", "bpm", 60.0, 30.0, 120.0),
+    "age": ("read_age", "setup.field.age", "setup.unit.years", 35.0, 12.0, 100.0),
+    "max_hr": ("read_max_hr", "setup.field.max_hr", "bpm", 185.0, 100.0, 240.0),
+    "resting_hr": ("read_resting_hr", "setup.field.resting_hr", "bpm", 60.0, 30.0, 120.0),
 }
 
 logger = logging.getLogger(__name__)
@@ -81,41 +81,41 @@ def _kb(buttons: list[tuple[str, str]]) -> InlineKeyboardMarkup:
 
 def confirm_keyboard() -> InlineKeyboardMarkup:
     return _kb([
-        ("✅ Tout est bon", "setup:confirm:ok"),
-        ("✏️ Corriger une valeur", "setup:confirm:edit"),
+        (t("setup.confirm_all_good"), "setup:confirm:ok"),
+        (t("setup.correct_value_button"), "setup:confirm:edit"),
     ])
 
 
 def correct_keyboard() -> InlineKeyboardMarkup:
     return _kb([
         ("FTP", "setup:correct:ftp"),
-        ("FC max", "setup:correct:max_hr"),
-        ("FC repos", "setup:correct:resting_hr"),
-        ("Poids", "setup:correct:weight"),
-        ("↩️ Revenir", "setup:correct:back"),
+        (t("setup.field.max_hr"), "setup:correct:max_hr"),
+        (t("setup.field.resting_hr"), "setup:correct:resting_hr"),
+        (t("setup.field.weight"), "setup:correct:weight"),
+        (t("setup.back"), "setup:correct:back"),
     ])
 
 
 def constraints_keyboard() -> InlineKeyboardMarkup:
     return _kb([
-        ("Aucune contrainte santé", "setup:constraints:none"),
-        ("J'en ai une — je la décris", "setup:constraints:describe"),
+        (t("setup.no_health_constraint"), "setup:constraints:none"),
+        (t("setup.describe_health_constraint"), "setup:constraints:describe"),
     ])
 
 
 def replace_plan_keyboard() -> InlineKeyboardMarkup:
     return _kb([
-        ("Confirmer le remplacement", "setup:replace:apply"),
-        ("Annuler", "setup:replace:cancel"),
+        (t("setup.confirm_replace"), "setup:replace:apply"),
+        (t("setup.cancel"), "setup:replace:cancel"),
     ])
 
 
 def goal_keyboard() -> InlineKeyboardMarkup:
     return _kb([
-        ("🎯 Événement cible", "setup:goal:event"),
-        ("💚 Forme générale", "setup:goal:fitness"),
-        ("⚡ Performance", "setup:goal:performance"),
-        ("🚴 Pas d'objectif / mode libre", "setup:goal:freestyle"),
+        (t("setup.goal.event"), "setup:goal:event"),
+        (t("setup.goal.fitness"), "setup:goal:fitness"),
+        (t("setup.goal.performance"), "setup:goal:performance"),
+        (t("setup.goal.freestyle"), "setup:goal:freestyle"),
     ])
 
 
@@ -139,27 +139,20 @@ def available_days_keyboard(selected: list[str]) -> InlineKeyboardMarkup:
     à part si l'athlète essaie de valider en dessous."""
     day_buttons = [
         InlineKeyboardButton(
-            text=f"{'✅ ' if en in selected else ''}{fr}",
+            text=f"{'✅ ' if en in selected else ''}{t(f'day.full.{en}')}",
             callback_data=f"setup:day:{en}",
         )
-        for en, fr in zip(DAY_NAMES, DAY_NAMES_FR)
+        for en in DAY_NAMES
     ]
     rows = [day_buttons[i:i + 2] for i in range(0, len(day_buttons), 2)]
     rows.append([
         InlineKeyboardButton(
-            text=f"➡️ Valider ({len(selected)} jour{'s' if len(selected) > 1 else ''})",
+            text=tp("setup.days_confirm_button", len(selected)),
             callback_data="setup:days:confirm",
         )
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
-_AVAILABLE_DAYS_TEXT = (
-    "\U0001f4c6 Sur quels jours peux-tu t'entraîner ? Coche/décoche, puis valide "
-    "(2 minimum).\n\n"
-    "Point de départ suggéré ci-dessous — change-le si ça ne colle pas à ton emploi "
-    "du temps."
-)
 
 
 # ── Entry point : read the source, then confirm ───────────────────────────────
@@ -210,26 +203,25 @@ def _read_profile_to_fsm(rp: ReadProfile) -> dict:
 def _render_confirm_screen(rp: ReadProfile) -> str:
     def row(label: str, rv, unit: str) -> str:
         if not rv.present:
-            return f"  {label:<16} - absent dans intervals.icu"
-        note = f"\n  {'':<16}⚠️ {rv.note}" if rv.note else ""
-        return f"  {label:<16} <b>{rv.value}</b> {unit}   · {rv.origin}{note}"
+            return t("setup.source_absent", label=f"{label:<16}")
+        note = f"\n  {'':<16}⚠️ {t(f'setup.note.{rv.note}')}" if rv.note else ""
+        return f"  {label:<16} <b>{rv.value}</b> {unit}   · {t(f'setup.origin.{rv.origin}')}{note}"
 
-    mode = "puissance" if rp.coaching_mode == "power" else "fréquence cardiaque"
-    age_bit = f"· {rp.age.value} ans" if rp.age.present else ""
+    mode = t("setup.mode_power" if rp.coaching_mode == "power" else "setup.mode_hr")
+    age_bit = t("setup.age_bit", age=rp.age.value) if rp.age.present else ""
     lines = [
-        "\U0001f4cb <b>Voici ce que je sais déjà de toi</b> (lu depuis intervals.icu) :",
+        t("setup.confirm_heading"),
         "",
         row("FTP", rp.ftp, "W"),
         row("LTHR", rp.lthr, "bpm"),
-        row("FC max", rp.max_hr, "bpm"),
-        row("FC repos", rp.resting_hr, "bpm"),
-        row("Poids", rp.weight_kg, "kg"),
-        row("Sexe / âge", rp.sex, age_bit),
+        row(t("setup.field.max_hr"), rp.max_hr, "bpm"),
+        row(t("setup.field.resting_hr"), rp.resting_hr, "bpm"),
+        row(t("setup.field.weight"), rp.weight_kg, "kg"),
+        row(t("setup.field.sex_age"), rp.sex, age_bit),
         "",
-        f"Pilotage : <b>{mode}</b>.",
+        t("setup.coaching_mode", mode=mode),
         "",
-        "C'est bon ? Sinon corrige — mais ces valeurs vivent dans ton compte "
-        "intervals.icu, je lis depuis là.",
+        t("setup.confirm_footer"),
     ]
     return "\n".join(lines)
 
@@ -237,14 +229,13 @@ def _render_confirm_screen(rp: ReadProfile) -> str:
 @router.message(Command("setup"))
 async def cmd_setup(message: Message, state: FSMContext, session: AsyncSession, user) -> None:
     await state.clear()
-    await message.answer("⏳ Je lis ton profil intervals.icu…")
+    await message.answer(t("setup.reading_profile"))
     try:
         rp = await read_athlete_profile(_intervals_client())
     except Exception:
         logger.exception("read_athlete_profile failed during /setup")
         await message.answer(
-            "⚠️ Je n'arrive pas à lire ton profil intervals.icu pour l'instant. "
-            "Vérifie ta clé API et réessaie /setup dans un moment."
+            t("setup.profile_read_error")
         )
         return
 
@@ -264,8 +255,7 @@ async def confirm_ok(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await state.set_state(SetupStates.GOAL)
     await callback.message.edit_text(
-        "\U0001f44d Parfait. Maintenant ce que je ne peux pas deviner.\n\n"
-        "Quel est ton objectif ?",
+        t("setup.ask_goal_after_profile"),
         reply_markup=goal_keyboard(),
         parse_mode="HTML",
     )
@@ -276,14 +266,14 @@ async def _ask_next_missing_value(message: Message, state: FSMContext) -> bool:
     """Ask only for source values the plan cannot safely invent without consent."""
     data = await state.get_data()
     supplied = dict(data.get("supplied_profile_values") or {})
-    for field, (source_key, label, unit, estimate, _low, _high) in _MISSING_PROFILE_FIELDS.items():
+    for field, (source_key, label_key, unit_key, estimate, _low, _high) in _MISSING_PROFILE_FIELDS.items():
         if data.get(source_key) is None and field not in supplied:
             await state.update_data(_missing_field=field)
             await state.set_state(SetupStates.MISSING_VALUE)
             await message.edit_text(
-                f"{label} est absent dans intervals.icu. Envoie un nombre en {unit}, "
-                f"ou écris <code>je ne sais pas</code> pour utiliser provisoirement "
-                f"une estimation prudente ({estimate:g} {unit}).",
+                t("setup.ask_missing_value", label=t(label_key),
+                  unit=t(unit_key) if unit_key.startswith("setup.") else unit_key,
+                  estimate=estimate),
                 parse_mode="HTML",
             )
             return True
@@ -295,21 +285,23 @@ async def missing_profile_value(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     field = data.get("_missing_field")
     if field not in _MISSING_PROFILE_FIELDS:
-        await message.answer("Relance /setup pour reprendre la configuration.")
+        await message.answer(t("setup.restart_setup"))
         return
-    _source_key, label, unit, estimate, low, high = _MISSING_PROFILE_FIELDS[field]
+    _source_key, label_key, unit_key, estimate, low, high = _MISSING_PROFILE_FIELDS[field]
+    label = t(label_key)
+    unit = t(unit_key) if unit_key.startswith("setup.") else unit_key
     raw = message.text.strip().lower()
-    if raw in {"je ne sais pas", "ignore", "inconnu", "?"}:
+    if raw in {"je ne sais pas", "i don't know", "dont know", "ignore", "inconnu", "?"}:
         value, origin = estimate, "estimated"
     else:
         try:
             value = float(raw.replace(",", "."))
         except ValueError:
-            await message.answer(f"Envoie un nombre pour {label}, ou écris je ne sais pas.")
+            await message.answer(t("setup.invalid_missing_value", label=label))
             return
         if not low <= value <= high:
             await message.answer(
-                f"Pour {label}, choisis une valeur entre {low:g} et {high:g} {unit}."
+                t("setup.missing_value_range", label=label, low=low, high=high, unit=unit)
             )
             return
         origin = "declared"
@@ -320,14 +312,14 @@ async def missing_profile_value(message: Message, state: FSMContext) -> None:
     if await _ask_next_missing_value(message, state):
         return
     await state.set_state(SetupStates.GOAL)
-    await message.answer("Parfait. Quel est ton objectif ?", reply_markup=goal_keyboard())
+    await message.answer(t("setup.ask_goal"), reply_markup=goal_keyboard())
 
 
 @router.callback_query(SetupStates.CONFIRM_PROFILE, F.data == "setup:confirm:edit")
 async def confirm_edit(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(SetupStates.CORRECT_VALUE)
     await callback.message.edit_text(
-        "Quelle valeur veux-tu corriger ?", reply_markup=correct_keyboard()
+        t("setup.which_value_to_correct"), reply_markup=correct_keyboard()
     )
     await callback.answer()
 
@@ -337,8 +329,8 @@ async def confirm_edit(callback: CallbackQuery, state: FSMContext) -> None:
 # the source's current one (FR-007 default), note the caveat for the recap.
 
 _CORRECT_LABELS = {
-    "ftp": ("FTP", "W"), "max_hr": ("FC max", "bpm"),
-    "resting_hr": ("FC repos", "bpm"), "weight": ("Poids", "kg"),
+    "ftp": ("FTP", "W"), "max_hr": ("setup.field.max_hr", "bpm"),
+    "resting_hr": ("setup.field.resting_hr", "bpm"), "weight": ("setup.field.weight", "kg"),
 }
 _CORRECT_SRC_KEY = {
     "ftp": "read_ftp", "max_hr": "read_max_hr",
@@ -349,7 +341,7 @@ _CORRECT_SRC_KEY = {
 @router.callback_query(SetupStates.CORRECT_VALUE, F.data == "setup:correct:back")
 async def correct_back(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(SetupStates.CONFIRM_PROFILE)
-    await callback.message.edit_text("Reprenons. C'est bon ?", reply_markup=confirm_keyboard())
+    await callback.message.edit_text(t("setup.resume_confirm"), reply_markup=confirm_keyboard())
     await callback.answer()
 
 
@@ -359,10 +351,11 @@ async def correct_pick(callback: CallbackQuery, state: FSMContext) -> None:
     if field not in _CORRECT_LABELS:
         await callback.answer()
         return
-    label, unit = _CORRECT_LABELS[field]
+    label_key, unit = _CORRECT_LABELS[field]
+    label = t(label_key) if label_key.startswith("setup.") else label_key
     await state.update_data(_correcting=field)
     await callback.message.edit_text(
-        f"Nouvelle valeur pour <b>{label}</b> (en {unit}) ? Envoie juste le nombre.",
+        t("setup.new_value_prompt", label=label, unit=unit),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -373,13 +366,14 @@ async def correct_value(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     field = data.get("_correcting")
     if not field:
-        await message.answer("Choisis d'abord une valeur à corriger.")
+        await message.answer(t("setup.choose_value_first"))
         return
-    label, unit = _CORRECT_LABELS[field]
+    label_key, unit = _CORRECT_LABELS[field]
+    label = t(label_key) if label_key.startswith("setup.") else label_key
     try:
         new_val = float(message.text.strip().replace(",", "."))
     except ValueError:
-        await message.answer(f"⚠️ Envoie un nombre pour {label}.")
+        await message.answer(t("setup.correct_value_number", label=label))
         return
 
     current = data.get(_CORRECT_SRC_KEY[field])
@@ -388,11 +382,8 @@ async def correct_value(message: Message, state: FSMContext) -> None:
     await state.update_data(corrections_deferred=deferred, _correcting=None)
     await state.set_state(SetupStates.CONFIRM_PROFILE)
     await message.answer(
-        f"Noté : tu veux {label} à {new_val:g} {unit} (actuellement {current} {unit} "
-        f"selon intervals.icu).\n\n"
-        f"Cette valeur vit dans ton compte intervals.icu — change-la là "
-        f"(Réglages → Sport → {label}), je relirai. En attendant je construis ton "
-        f"plan sur {current} {unit}.",
+        t("setup.correct_value_deferred", label=label, wanted=new_val, current=current,
+          unit=unit),
         reply_markup=confirm_keyboard(),
     )
 
@@ -412,16 +403,14 @@ async def setup_goal(
             await state.clear()
             await state.set_state(PlanStates.ACTIVE)
             await callback.message.edit_text(
-                "Pour passer d'un plan au mode libre, utilise /goal : il te demandera "
-                "confirmation et retirera proprement les seances publiees."
+                t("setup.freestyle_use_goal")
             )
             await callback.answer()
             return
         await state.update_data(goal="fitness", target_date=None, setup_mode="freestyle")
         await state.set_state(SetupStates.VOLUME)
         await callback.message.edit_text(
-            "En mode libre, je garderai cette configuration pour adapter les seances "
-            "que tu demanderas. Combien d'heures par semaine veux-tu pouvoir t'entrainer ?",
+            t("setup.freestyle_ask_volume"),
             reply_markup=volume_keyboard(),
         )
         await callback.answer()
@@ -429,9 +418,7 @@ async def setup_goal(
     await state.update_data(goal=goal)
     await state.set_state(SetupStates.DATE)
     await callback.message.edit_text(
-        "\U0001f4c5 As-tu un événement cible ?\n\n"
-        "Réponds avec la date au format <code>AAAA-MM-JJ</code> "
-        "ou tape <code>aucune</code> si tu n'as pas d'échéance.",
+        t("setup.ask_target_date"),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -444,13 +431,13 @@ async def setup_date(message: Message, state: FSMContext) -> None:
     target_date, problem = parse_goal_date(message.text)
     if problem == "format":
         await message.answer(
-            "⚠️ Format non reconnu. Utilise <code>AAAA-MM-JJ</code> ou tape <code>aucune</code>.",
+            t("setup.invalid_date_format"),
             parse_mode="HTML",
         )
         return
     if problem == "past":
         await message.answer(
-            "⚠️ La date doit être dans le futur. Réessaie ou tape <code>aucune</code>.",
+            t("setup.past_date"),
             parse_mode="HTML",
         )
         return
@@ -460,14 +447,12 @@ async def setup_date(message: Message, state: FSMContext) -> None:
             await state.update_data(_date_confirmed=target_date.isoformat())
             days = (target_date - date.today()).days
             await message.answer(
-                f"⚠️ {days} jours, c'est très court pour un vrai bloc. "
-                "Renvoie la même date pour confirmer, ou choisis-en une plus lointaine."
+                t("setup.date_too_soon", days=days)
             )
             return
     if problem == "too_far":
         await message.answer(
-            "ℹ️ Si loin, le plan est surtout de la spéculation — "
-            "je le construis quand même, mais vise plutôt un point plus proche."
+            t("setup.date_too_far")
         )
 
     await state.update_data(
@@ -475,9 +460,9 @@ async def setup_date(message: Message, state: FSMContext) -> None:
     )
     await state.set_state(SetupStates.VOLUME)
     recent = (await state.get_data()).get("read_recent_hours")
-    hint = f" (tes 6 dernières semaines : ~{recent:.0f} h/sem)" if recent else ""
+    hint = t("setup.recent_volume_hint", hours=recent) if recent else ""
     await message.answer(
-        f"\U0001f550 Combien d'heures par semaine tu <b>veux</b> t'entraîner ?{hint}",
+        t("setup.ask_volume", hint=hint),
         parse_mode="HTML",
         reply_markup=volume_keyboard(),
     )
@@ -492,7 +477,7 @@ async def setup_volume(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(hours_per_week=hours, available_days=selected)
     await state.set_state(SetupStates.AVAILABLE_DAYS)
     await callback.message.edit_text(
-        _AVAILABLE_DAYS_TEXT,
+        t("setup.available_days_prompt"),
         parse_mode="HTML",
         reply_markup=available_days_keyboard(selected),
     )
@@ -522,13 +507,12 @@ async def setup_days_confirm(callback: CallbackQuery, state: FSMContext) -> None
     selected = list((await state.get_data()).get("available_days") or [])
     if len(selected) < _MIN_AVAILABLE_DAYS:
         await callback.answer(
-            f"Choisis au moins {_MIN_AVAILABLE_DAYS} jours.", show_alert=True
+            t("setup.days_minimum", count=_MIN_AVAILABLE_DAYS), show_alert=True
         )
         return
     await state.set_state(SetupStates.CONSTRAINTS)
     await callback.message.edit_text(
-        "\U0001fa7a Dernière question — aucune source ne la connaît : as-tu une "
-        "contrainte santé qui limite ce que tu peux faire en sécurité ?",
+        t("setup.ask_health_constraint"),
         reply_markup=constraints_keyboard(),
     )
     await callback.answer()
@@ -541,7 +525,7 @@ async def constraints_none(
     callback: CallbackQuery, state: FSMContext, session: AsyncSession, user
 ) -> None:
     await state.update_data(health_constraints=False)
-    await callback.message.edit_text("⏳ Je vérifie ta configuration…")
+    await callback.message.edit_text(t("setup.checking_configuration"))
     await callback.answer()
     await _prepare_setup_finalization(callback.message, state, session, user)
 
@@ -549,7 +533,7 @@ async def constraints_none(
 @router.callback_query(SetupStates.CONSTRAINTS, F.data == "setup:constraints:describe")
 async def constraints_describe(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.edit_text(
-        "Décris-la en une phrase (zone du corps, sévérité, ce que tu évites)."
+        t("setup.describe_constraint_prompt")
     )
     await callback.answer()
 
@@ -561,7 +545,7 @@ async def constraints_text(
     await state.update_data(
         health_constraints=True, health_constraints_note=message.text.strip()[:500]
     )
-    await message.answer("⏳ Je vérifie ta configuration…")
+    await message.answer(t("setup.checking_configuration"))
     await _prepare_setup_finalization(message, state, session, user)
 
 
@@ -576,8 +560,7 @@ async def _prepare_setup_finalization(
         if plan is not None:
             await state.set_state(SetupStates.CONFIRM_REPLACE)
             await message.answer(
-                "Tu as déjà un plan actif. Continuer va le remplacer ; ton historique est gardé, "
-                "mais les séances déjà publiées devront être re-synchronisées avec /publish.",
+                t("setup.replace_warning"),
                 reply_markup=replace_plan_keyboard(),
             )
             return
@@ -588,8 +571,8 @@ async def _prepare_setup_finalization(
 async def confirm_replace_plan(
     callback: CallbackQuery, state: FSMContext, session: AsyncSession, user,
 ) -> None:
-    await callback.answer("Génération en cours...")
-    await callback.message.edit_text("Génération de ton nouveau plan en cours...")
+    await callback.answer(t("setup.generating_short"))
+    await callback.message.edit_text(t("setup.generating_plan"))
     await _finalize_setup(callback.message, state, session, user, await state.get_data())
 
 
@@ -597,7 +580,7 @@ async def confirm_replace_plan(
 async def cancel_replace_plan(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(PlanStates.ACTIVE)
-    await callback.message.edit_text("Configuration annulée : ton plan actuel reste actif.")
+    await callback.message.edit_text(t("setup.cancelled_plan_kept"))
     await callback.answer()
 
 
@@ -668,15 +651,13 @@ async def _finalize_setup(
         await state.clear()
         await state.set_state(PlanStates.ACTIVE)
         await message.answer(
-            "🚴 <b>Mode libre activé</b>\n\n"
-            "Ta configuration est enregistrée. Demande-moi une séance quand tu veux : "
-            "je l'adapterai à ta forme du moment.",
+            t("setup.freestyle_activated"),
             parse_mode="HTML",
         )
         if user.disclaimer_acknowledged_at is None:
-            from app.llm.prompts import DISCLAIMER_TEXT
+            from app.llm.prompts import disclaimer_text
 
-            await message.answer(DISCLAIMER_TEXT, parse_mode="HTML")
+            await message.answer(disclaimer_text(), parse_mode="HTML")
             await repo.user_repo.ack_disclaimer(session, user)
         return
 
@@ -702,16 +683,15 @@ async def _finalize_setup(
     summary = _build_plan_summary(plan)
     built_from = _built_from_recap(profile, data, fitness_is_seeded)
     await message.answer(
-        f"🎉 <b>Ton plan est prêt !</b>\n\n{summary}\n\n{built_from}\n\n"
-        "Tape /plan pour voir ta première semaine en détail. 🚴",
+        t("setup.plan_ready", summary=summary, sources=built_from),
         parse_mode="HTML",
     )
 
     # Disclaimer avant la première interaction de coaching — une seule fois (FR-028).
     if user.disclaimer_acknowledged_at is None:
-        from app.llm.prompts import DISCLAIMER_TEXT
+        from app.llm.prompts import disclaimer_text
 
-        await message.answer(DISCLAIMER_TEXT, parse_mode="HTML")
+        await message.answer(disclaimer_text(), parse_mode="HTML")
         await repo.user_repo.ack_disclaimer(session, user)
 
     # LLM narrative in background (non-blocking)
@@ -805,48 +785,39 @@ def _build_profile(data: dict, fitness=None) -> AthleteProfileSchema:
 def _built_from_recap(profile: AthleteProfileSchema, data: dict, seeded: bool) -> str:
     """FR-004 — every input the plan was built from, visible with its origin."""
     e, p, o = profile.equipment, profile.physio, profile.objective
-    src = {"source": "lu depuis intervals.icu", "declared": "que tu as donné",
-           "estimated": "estimé"}
-    lines = ["🧾 <b>Ce sur quoi j'ai construit ton plan</b>"]
+    src = {name: t(f"setup.source.{name}") for name in ("source", "declared", "estimated")}
+    lines = [t("setup.built_from_heading")]
     if e.ftp:
-        lines.append(f"  • FTP {e.ftp} W · {src.get(e.ftp_source, e.ftp_source)}")
-    lines.append(f"  • FC max {p.hr_max} bpm · {src.get(p.hr_max_source, p.hr_max_source)}")
+        lines.append(t("setup.built_from_ftp", value=e.ftp, source=src.get(e.ftp_source, e.ftp_source)))
+    lines.append(t("setup.built_from_max_hr", value=p.hr_max, source=src.get(p.hr_max_source, p.hr_max_source)))
     lines.append(
-        f"  • FC repos {p.hr_rest} bpm · "
-        f"{src.get(p.hr_rest_source, p.hr_rest_source)}"
+        t("setup.built_from_resting_hr", value=p.hr_rest,
+          source=src.get(p.hr_rest_source, p.hr_rest_source))
     )
-    when = f" le {o.target_date:%d/%m/%Y}" if o.target_date else ""
-    lines.append(f"  • Objectif : {o.type}{when}")
+    when = t("setup.target_date", date=o.target_date) if o.target_date else ""
+    lines.append(t("setup.built_from_goal", goal=t(f"setup.goal_name.{o.type}"), when=when))
     hrs = profile.availability.hours_per_week
-    lines.append(f"  • Volume voulu : {hrs:g} h/sem (ton choix)")
+    lines.append(t("setup.built_from_volume", hours=hrs))
     chosen_days = profile.availability.preferred_days
     day_indices = sorted(DAY_NAMES.index(d) for d in chosen_days if d in DAY_NAMES)
-    days_fr = [DAY_NAMES_FR[i] for i in day_indices]
-    if days_fr:
-        lines.append(f"  • Jours disponibles : {', '.join(days_fr)} (ton choix)")
+    days = [t(f"day.full.{DAY_NAMES[i]}") for i in day_indices]
+    if days:
+        lines.append(t("setup.built_from_days", days=", ".join(days)))
     if profile.health_constraints:
-        lines.append("  • Contrainte santé prise en compte")
+        lines.append(t("setup.built_from_constraint"))
     if seeded:
-        lines.append(
-            "  • Forme de départ : <i>estimation prudente</i> — pas assez d'historique "
-            "pour la mesurer, elle se calera sur tes données réelles en quelques semaines"
-        )
+        lines.append(t("setup.built_from_seeded_fitness"))
     for field, info in (data.get("corrections_deferred") or {}).items():
         lines.append(
-            f"  ⚠️ {field} : tu voulais {info['wanted']:g}, je garde {info['current']} "
-            "tant qu'intervals.icu n'est pas à jour"
+            t("setup.built_from_deferred", field=t(f"setup.field.{field}"),
+              wanted=info["wanted"], current=info["current"])
         )
     return "\n".join(lines)
 
 
 def _build_plan_summary(plan) -> str:
-    mode_label = "Puissance (watts)" if plan.coaching_mode == "power" else "Fréquence cardiaque"
-    phase_names = {
-        "base": "Base aérobie",
-        "build": "Construction",
-        "peak": "Pic de forme",
-        "taper": "Affûtage",
-    }
+    mode_label = t("setup.summary_mode_power" if plan.coaching_mode == "power"
+                   else "setup.summary_mode_hr")
     phase_rows: list[str] = []
     seen: set[str] = set()
     for w in plan.weeks:
@@ -858,24 +829,19 @@ def _build_plan_summary(plan) -> str:
         end_week = phase_weeks[-1].week_number
         avg_tss = sum(x.total_tss_target for x in phase_weeks) / len(phase_weeks)
         phase_rows.append(
-            f"{phase_names.get(w.phase, w.phase):<14} | "
+            f"{t(f'plan.phase.{w.phase}'):<14} | "
             f"{start_week:>2}-{end_week:<2} | {avg_tss:>3.0f}"
         )
 
     phases_table = "\n".join([
-        "Phase          | Sem.  | TSS moy",
+        t("setup.summary_table_heading"),
         "---------------|-------|--------",
         *phase_rows,
     ])
 
-    return (
-        f"📊 <b>Résumé du plan</b>\n"
-        f"• Durée : <b>{plan.weeks_count} semaines</b>\n"
-        f"• Charge de départ (TSS) : <b>{plan.initial_weekly_tss:.0f}/semaine</b>\n"
-        f"• Charge au pic (TSS) : <b>{plan.peak_weekly_tss:.0f}/semaine</b>\n"
-        f"• Mode coaching : <b>{mode_label}</b>\n\n"
-        f"📅 <b>Phases</b>\n<pre>{phases_table}</pre>"
-    )
+    return t("setup.plan_summary", weeks=plan.weeks_count,
+             initial=plan.initial_weekly_tss, peak=plan.peak_weekly_tss,
+             mode=mode_label, phases=phases_table)
 
 
 async def _generate_narrative(user_id, plan, profile, *, bot, chat_id) -> None:

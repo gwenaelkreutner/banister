@@ -5,9 +5,11 @@ Définitions des outils LLM (format OpenAI-compatible) pour le chat agentique.
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from app.core.localization import t
 from app.engine.atl_ctl import FitnessMetrics
 from app.engine.freestyle_selector import VALID_WORKOUT_TYPES
-from app.engine.rpe import rpe_label, rpe_emoji as _rpe_emoji_for
+from app.engine.rpe import rpe_emoji as _rpe_emoji_for
+from app.engine.rpe import rpe_label
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
 from app.engine.zones import compute_hr_zones
 from app.llm.prompt_fence import sanitize_untrusted_text, wrap_untrusted_block
@@ -19,20 +21,14 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_fitness_history",
-            "description": (
-                "Récupère l'ÉVOLUTION passée de CTL, ATL et TSB. Utilise seulement si "
-                "la question compare une période, demande une tendance ou explique une évolution. "
-                "Les valeurs actuelles sont déjà dans le contexte."
-            ),
+            "description": t("llm.tools.get_fitness_history.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "days": {"type": "integer", "minimum": 7, "maximum": 365},
                     "granularity": {
                         "type": "string", "enum": ["daily", "weekly"],
-                        "description": (
-                            "weekly pour plus de 30 jours, sauf demande explicite contraire."
-                        ),
+                        "description": t("llm.tools.get_fitness_history.granularity_description"),
                     },
                 },
                 "required": ["days", "granularity"],
@@ -43,10 +39,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_training_trend",
-            "description": (
-                "Récupère charge, durée et nombre de séances par semaine. Utilise pour une "
-                "question de régularité, volume, progression ou adhérence sur une période."
-            ),
+            "description": t("llm.tools.get_training_trend.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -60,15 +53,14 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_session_detail",
-            "description": (
-                "Récupère données détaillées d'une séance passée : puissance, FC, TSS, RPE, "
-                "zones et qualité. Utilise quand la dernière séance du contexte ne suffit pas "
-                "ou quand l'athlète cite une date précise."
-            ),
+            "description": t("llm.tools.get_session_detail.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "date": {"type": "string", "description": "Date AAAA-MM-JJ."},
+                    "date": {
+                        "type": "string",
+                        "description": t("llm.tools.get_session_detail.date_description"),
+                    },
                 },
                 "required": ["date"],
             },
@@ -78,10 +70,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_wellness_history",
-            "description": (
-                "Récupère l'historique de signaux wellness choisis. Utilise pour une question "
-                "sur évolution sommeil, HRV, FC repos, fatigue, stress, motivation ou poids."
-            ),
+            "description": t("llm.tools.get_wellness_history.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -107,22 +96,19 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_upcoming_sessions",
-            "description": (
-                "Récupère une fenêtre du plan. Utilise cet outil quand l'athlète demande "
-                "son programme, sa séance de demain, ce week-end ou une semaine précise."
-            ),
+            "description": t("llm.tools.get_upcoming_sessions.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "days": {
                         "type": "integer",
-                        "description": "Nombre de jours à récupérer (1 à 42).",
+                        "description": t("llm.tools.get_upcoming_sessions.days_description"),
                         "minimum": 1,
                         "maximum": 42,
                     },
                     "start_offset": {
                         "type": "integer",
-                        "description": "0=aujourd'hui, 7=dans une semaine, -7=semaine passée.",
+                        "description": t("llm.tools.get_upcoming_sessions.start_offset_description"),
                         "minimum": -7,
                         "maximum": 56,
                     },
@@ -135,28 +121,23 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "update_injury_status",
-            "description": (
-                "Enregistre une blessure ou douleur signalée par l'athlète. "
-                "Met à jour le profil et adapte automatiquement le plan "
-                "(semaine courante + 2 semaines suivantes avec reprise progressive). "
-                "Utilise cet outil dès que l'athlète mentionne une douleur, gêne ou blessure."
-            ),
+            "description": t("llm.tools.update_injury_status.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "location": {
                         "type": "string",
                         "enum": ["knee", "back", "shoulder", "hip", "ankle", "other"],
-                        "description": "Zone corporelle blessée.",
+                        "description": t("llm.tools.update_injury_status.location_description"),
                     },
                     "severity": {
                         "type": "string",
                         "enum": ["mild", "moderate", "severe"],
-                        "description": "mild=légère, moderate=modérée, severe=sévère.",
+                        "description": t("llm.tools.update_injury_status.severity_description"),
                     },
                     "estimated_recovery_days": {
                         "type": "integer",
-                        "description": "Estimation de jours de récupération (ex: 7, 14, 21).",
+                        "description": t("llm.tools.update_injury_status.recovery_days_description"),
                         "minimum": 1,
                         "maximum": 90,
                     },
@@ -169,28 +150,23 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "propose_plan_modification",
-            "description": (
-                "Propose une modification du plan d'entraînement basée sur la situation de l'athlète. "
-                "La modification n'est PAS appliquée immédiatement — elle sera soumise à la confirmation "
-                "de l'athlète via des boutons. Utilise cet outil quand l'athlète demande à alléger la charge "
-                "sur une semaine entière, ou a un événement qui change son planning sur plusieurs jours."
-            ),
+            "description": t("llm.tools.propose_plan_modification.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "reason": {
                         "type": "string",
                         "enum": ["fatigue", "injury", "event", "preference", "illness"],
-                        "description": "Raison de la modification.",
+                        "description": t("llm.tools.propose_plan_modification.reason_description"),
                     },
                     "modification_type": {
                         "type": "string",
                         "enum": ["reduce_intensity", "reduce_volume", "skip_session", "swap_to_recovery"],
-                        "description": "Type d'ajustement à apporter au plan.",
+                        "description": t("llm.tools.propose_plan_modification.modification_type_description"),
                     },
                     "week_offset": {
                         "type": "integer",
-                        "description": "0 = semaine courante, 1 = semaine prochaine.",
+                        "description": t("llm.tools.propose_plan_modification.week_offset_description"),
                         "minimum": 0,
                         "maximum": 2,
                     },
@@ -203,11 +179,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "propose_session_adjustment",
-            "description": (
-                "Propose un ajustement sur une séance précise d'un seul jour (nécessite confirmation). "
-                "Utilise cet outil pour une contrainte ponctuelle : réunion, météo, fatigue du jour. "
-                "Pour une contrainte qui touche plusieurs jours ou une semaine entière, utilise propose_plan_modification."
-            ),
+            "description": t("llm.tools.propose_session_adjustment.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -217,7 +189,7 @@ TOOL_DEFINITIONS = [
                     },
                     "day_offset": {
                         "type": "integer",
-                        "description": "0=aujourd'hui, 1=demain.",
+                        "description": t("llm.tools.propose_session_adjustment.day_offset_description"),
                         "minimum": 0,
                         "maximum": 6,
                     },
@@ -234,48 +206,31 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "update_coach_memory",
-            "description": (
-                "Mémorise une observation DURABLE sur l'athlète. "
-                "Utilise quand il révèle un pattern de fatigue récurrent, une contrainte physique "
-                "confirmée, une préférence de communication, un événement marquant. "
-                "Maximum 1 appel par conversation. "
-                "NE PAS utiliser pour des états transitoires (fatigue du jour, météo, humeur passagère)."
-            ),
+            "description": t("llm.tools.update_coach_memory.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
                         "enum": ["add_note", "update_athlete_notes"],
-                        "description": (
-                            "add_note : ajoute/remplace une note dans coach_memory. "
-                            "update_athlete_notes : met à jour une clé stable dans athlete_notes."
-                        ),
+                        "description": t("llm.tools.update_coach_memory.action_description"),
                     },
                     "category": {
                         "type": "string",
                         "enum": ["fatigue", "motivation", "physique", "event", "preference"],
-                        "description": "Catégorie de la note — requis pour add_note.",
+                        "description": t("llm.tools.update_coach_memory.category_description"),
                     },
                     "note": {
                         "type": "string",
-                        "description": "Texte libre, max 120 chars — requis pour add_note.",
+                        "description": t("llm.tools.update_coach_memory.note_description"),
                     },
                     "key": {
                         "type": "string",
-                        "description": (
-                            "Clé dans athlete_notes — requis pour update_athlete_notes. "
-                            "Utilise la clé 'disliked_workout_types' quand l'athlète dit détester "
-                            "ou vouloir éviter un type de séance (mode libre en tient compte)."
-                        ),
+                        "description": t("llm.tools.update_coach_memory.key_description"),
                     },
                     "value": {
                         "type": "string",
-                        "description": (
-                            "Valeur à enregistrer — requis pour update_athlete_notes. "
-                            "Pour 'disliked_workout_types' : liste séparée par des virgules parmi "
-                            "long_ride, intervals, endurance, recovery (ex: 'intervals,long_ride')."
-                        ),
+                        "description": t("llm.tools.update_coach_memory.value_description"),
                     },
                 },
                 "required": ["action"],
@@ -286,56 +241,37 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_freestyle_session_suggestion",
-            "description": (
-                "Propose une séance adaptée à la forme actuelle de l'athlète, sans référence à un "
-                "plan (mode libre uniquement — n'existe pas si l'athlète a un objectif actif). "
-                "Utilise cet outil quand l'athlète demande quoi faire aujourd'hui / une séance / "
-                "un conseil d'entraînement alors qu'il n'a pas d'objectif actif."
-            ),
+            "description": t("llm.tools.get_freestyle_session_suggestion.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "requested_workout_type": {
                         "type": "string",
                         "enum": sorted(VALID_WORKOUT_TYPES),
-                        "description": (
-                            "Type de séance demandé EXPLICITEMENT par l'athlète dans ce message "
-                            "(ex: 'je veux faire des intervalles'). Omets ce champ si l'athlète n'a "
-                            "rien demandé de précis — le choix se fera alors selon sa forme du "
-                            "moment. N'invente jamais une correspondance avec un type non listé ici "
-                            "(ex: une demande de 'yoga' ne doit PAS être mappée sur un des 4 types — "
-                            "dis-le à l'athlète à la place)."
+                        "description": t(
+                            "llm.tools.get_freestyle_session_suggestion.requested_workout_type_description"
                         ),
                     },
                     "max_duration_minutes": {
                         "type": "integer",
                         "minimum": 15,
                         "maximum": 300,
-                        "description": (
-                            "Durée maximale disponible mentionnée par l'athlète pour cette séance "
-                            "précise. Omets ce champ si rien n'est mentionné."
+                        "description": t(
+                            "llm.tools.get_freestyle_session_suggestion.max_duration_description"
                         ),
                     },
                     "requested_duration_minutes": {
                         "type": "integer",
                         "minimum": 15,
                         "maximum": 300,
-                        "description": (
-                            "Durée voulue EXPLICITEMENT par l'athlète (ex: 'je veux rouler "
-                            "1h30', 'plutôt 90 min'). C'est une contrainte de proposition : "
-                            "la séance retournée doit avoir cette durée, adaptée en intensité. "
-                            "Ne pas la confondre avec max_duration_minutes ('je n'ai que 90 min'). "
-                            "Omets ce champ si l'athlète indique seulement son temps disponible."
+                        "description": t(
+                            "llm.tools.get_freestyle_session_suggestion.requested_duration_description"
                         ),
                     },
                     "style_preference": {
                         "type": "string",
-                        "description": (
-                            "Préférence de l'athlète sur le CONTENU ou le STYLE de la séance, "
-                            "recopiée telle quelle depuis son message (ex: 'pas de pyramide', "
-                            "'plutôt du steady', 'des efforts courts'). Omets ce champ si "
-                            "l'athlète n'exprime aucune préférence de ce genre — ne résume pas, "
-                            "n'interprète pas, ne mentionne jamais de nom de séance."
+                        "description": t(
+                            "llm.tools.get_freestyle_session_suggestion.style_preference_description"
                         ),
                     },
                 },
@@ -347,49 +283,29 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "log_meal",
-            "description": (
-                "Enregistre ce que l'athlète a mangé — un repas isolé ou un récap de toute la "
-                "journée — avec ton estimation du nombre de calories. Utilise cet outil dès que "
-                "l'athlète décrit un aliment ou un repas qu'il a réellement consommé (pas une "
-                "question hypothétique, pas une demande de conseil nutritionnel). N'invente "
-                "jamais une estimation pour un texte qui ne décrit pas de la nourriture. Précise "
-                "toujours dans ta réponse qu'il s'agit d'une ESTIMATION, jamais d'une mesure "
-                "précise."
-            ),
+            "description": t("llm.tools.log_meal.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "entry_type": {
                         "type": "string",
                         "enum": ["meal", "day_recap"],
-                        "description": (
-                            "meal = un repas ou une collation isolée. day_recap = un résumé de "
-                            "tout ce qui a été mangé dans la journée en un seul message."
-                        ),
+                        "description": t("llm.tools.log_meal.entry_type_description"),
                     },
                     "meal_slot": {
                         "type": "string",
                         "enum": ["breakfast", "lunch", "dinner", "snack", "other"],
-                        "description": (
-                            "Uniquement si entry_type=meal et que le moment du repas est clair. "
-                            "Ne pas fournir si incertain ou si entry_type=day_recap."
-                        ),
+                        "description": t("llm.tools.log_meal.meal_slot_description"),
                     },
                     "estimated_calories": {
                         "type": "integer",
-                        "description": (
-                            "Ton estimation du nombre de calories pour CETTE entrée (ce repas, "
-                            "ou le total de la journée si day_recap)."
-                        ),
+                        "description": t("llm.tools.log_meal.estimated_calories_description"),
                         "minimum": 1,
                         "maximum": 8000,
                     },
                     "days_ago": {
                         "type": "integer",
-                        "description": (
-                            "0 = aujourd'hui (défaut), 1 = hier, 2 = avant-hier. Utilise si "
-                            "l'athlète parle d'un repas passé."
-                        ),
+                        "description": t("llm.tools.log_meal.days_ago_description"),
                         "minimum": 0,
                         "maximum": 2,
                     },
@@ -402,12 +318,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "undo_last_meal_entry",
-            "description": (
-                "Supprime la toute dernière entrée calorique enregistrée AUJOURD'HUI. Utilise "
-                "cet outil uniquement quand l'athlète signale explicitement une erreur de saisie "
-                "récente (mauvais aliment, mauvaise quantité, entrée en double). Ne s'applique "
-                "jamais à un jour autre qu'aujourd'hui."
-            ),
+            "description": t("llm.tools.undo_last_meal_entry.description"),
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -419,19 +330,13 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_calorie_history",
-            "description": (
-                "Récupère le total calorique estimé jour par jour sur une période récente. "
-                "Utilise cet outil quand l'athlète demande son historique, sa consommation d'un "
-                "jour précis, ou une tendance récente."
-            ),
+            "description": t("llm.tools.get_calorie_history.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "days": {
                         "type": "integer",
-                        "description": (
-                            "Nombre de jours à couvrir, en remontant depuis aujourd'hui (1 à 30)."
-                        ),
+                        "description": t("llm.tools.get_calorie_history.days_description"),
                         "minimum": 1,
                         "maximum": 30,
                     },
@@ -444,33 +349,21 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "memory_query",
-            "description": (
-                "Recherche dans l'historique daté du coaching (changements d'objectif, "
-                "blessures passées, bascules mode libre/objectif, observations durables) "
-                "sur une période donnée — ce n'est PAS déjà dans ton contexte (la mémoire "
-                "coach affichée montre seulement les 5 notes les plus récentes). Utilise "
-                "cet outil quand l'athlète référence un fait passé qui n'est ni dans les "
-                "7 dernières séances ni dans la mémoire coach actuelle (ex: 'tu te "
-                "souviens de ma blessure au genou ?', 'c'était quand mon dernier "
-                "changement d'objectif ?')."
-            ),
+            "description": t("llm.tools.memory_query.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "from_date": {
                         "type": "string",
-                        "description": "Date de début (incluse), format AAAA-MM-JJ.",
+                        "description": t("llm.tools.memory_query.from_date_description"),
                     },
                     "to_date": {
                         "type": "string",
-                        "description": "Date de fin (incluse), format AAAA-MM-JJ.",
+                        "description": t("llm.tools.memory_query.to_date_description"),
                     },
                     "keyword": {
                         "type": "string",
-                        "description": (
-                            "Sous-chaîne à rechercher, insensible à la casse. Omets ce "
-                            "champ pour tout retourner sur la période."
-                        ),
+                        "description": t("llm.tools.memory_query.keyword_description"),
                     },
                     "category": {
                         "type": "string",
@@ -478,7 +371,7 @@ TOOL_DEFINITIONS = [
                             "fatigue", "motivation", "physique", "event", "preference",
                             "goal_change", "injury", "freestyle_toggle",
                         ],
-                        "description": "Filtre optionnel sur une catégorie précise.",
+                        "description": t("llm.tools.memory_query.category_description"),
                     },
                 },
                 "required": ["from_date", "to_date"],
@@ -516,61 +409,90 @@ def tools_for_mode(coaching_mode: str) -> list[dict]:
 
 # ── Construction du system prompt ─────────────────────────────────────────────
 
-DAY_NAMES_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-MONTH_NAMES_FR = [
-    "janvier", "février", "mars", "avril", "mai", "juin",
-    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+_DAY_KEYS = [
+    "day.full.monday", "day.full.tuesday", "day.full.wednesday", "day.full.thursday",
+    "day.full.friday", "day.full.saturday", "day.full.sunday",
 ]
-WORKOUT_FR = {
-    "long_ride": "Sortie longue",
-    "intervals": "Intervalles",
-    "endurance": "Endurance",
-    "recovery": "Récupération",
+_MONTH_KEYS = [f"llm.month.{i}" for i in range(12)]
+_WORKOUT_KEYS = {
+    "long_ride": "session.workout.long_ride", "intervals": "session.workout.intervals",
+    "endurance": "session.workout.endurance", "recovery": "session.workout.recovery",
 }
-LEVEL_FR = {
-    "beginner": "Débutant",
-    "intermediate": "Intermédiaire",
-    "advanced": "Avancé",
-    "expert": "Expert",
+_LEVEL_KEYS = {
+    "beginner": "llm.level.beginner", "intermediate": "llm.level.intermediate",
+    "advanced": "llm.level.advanced", "expert": "llm.level.expert",
 }
-GOAL_FR = {
-    "event": "Événement cible",
-    "fitness": "Forme générale / Bien-être",
-    "performance": "Performance",
-    "other": "Objectif personnel",
+_GOAL_KEYS = {
+    "event": "llm.tools_goal.event", "fitness": "llm.tools_goal.fitness",
+    "performance": "llm.tools_goal.performance", "other": "llm.tools_goal.other",
 }
-SEVERITY_FR = {"mild": "légère", "moderate": "modérée", "severe": "sévère"}
-LOCATION_FR = {
-    "knee": "genou", "back": "dos", "shoulder": "épaule",
-    "hip": "hanche", "ankle": "cheville", "other": "autre zone",
+_SEVERITY_KEYS = {
+    "mild": "llm.severity.mild", "moderate": "llm.severity.moderate", "severe": "llm.severity.severe",
 }
+_LOCATION_KEYS = {
+    "knee": "llm.body_location.knee", "back": "llm.body_location.back",
+    "shoulder": "llm.body_location.shoulder", "hip": "llm.body_location.hip",
+    "ankle": "llm.body_location.ankle", "other": "llm.body_location.other",
+}
+
+
+def _day_name(dow: int) -> str:
+    return t(_DAY_KEYS[dow])
+
+
+def _day_short(dow: int) -> str:
+    return _day_name(dow)[:3]
+
+
+def _workout_label(workout_type: str) -> str:
+    key = _WORKOUT_KEYS.get(workout_type)
+    return t(key) if key else workout_type
+
+
+def _level_label(level: str) -> str:
+    key = _LEVEL_KEYS.get(level)
+    return t(key) if key else level
+
+
+def _goal_label(goal: str) -> str:
+    key = _GOAL_KEYS.get(goal)
+    return t(key) if key else goal
+
+
+def _severity_label(severity: str) -> str:
+    key = _SEVERITY_KEYS.get(severity)
+    return t(key) if key else severity
+
+
+def _body_location_label(location: str) -> str:
+    key = _LOCATION_KEYS.get(location)
+    return t(key) if key else location
 
 
 def _temporal_reference_rules(now: datetime) -> list[str]:
     """State one authoritative temporal reference for the whole model turn."""
     current_date = now.date()
     long_date = (
-        f"{DAY_NAMES_FR[current_date.weekday()].lower()} {current_date.day} "
-        f"{MONTH_NAMES_FR[current_date.month - 1]} {current_date.year}"
+        f"{_day_name(current_date.weekday()).lower()} {current_date.day} "
+        f"{t(_MONTH_KEYS[current_date.month - 1])} {current_date.year}"
     )
     return [
-        "REPÈRE TEMPOREL — SOURCE DE VÉRITÉ POUR CE TOUR :",
-        f"Nous sommes le {long_date}, {now.strftime('%H:%M')} à Paris "
-        f"({current_date.isoformat()}).",
-        "Interprète toute date relative de l'athlète (aujourd'hui, hier, demain, "
-        "la semaine dernière, dans N jours) exclusivement par rapport à cette référence, "
-        "jamais par rapport au calendrier du plan ni à une supposition.",
-        "Avant tout appel d'outil contenant une date, vérifie que la date ISO envoyée "
-        "correspond bien à cette interprétation.",
+        t("llm.temporal_reference.header"),
+        t(
+            "llm.temporal_reference.now",
+            long_date=long_date, time=now.strftime("%H:%M"), iso=current_date.isoformat(),
+        ),
+        t("llm.temporal_reference.rule1"),
+        t("llm.temporal_reference.rule2"),
     ]
 
 
 def _format_week_pairs(pairs: list, week_num: int, phase: str, today: date) -> list[str]:
     """Formate les paires plan/réalisé pour le system prompt."""
-    lines = [f"SEMAINE {week_num} — PLAN & RÉALISÉ (phase {phase}) :"]
+    lines = [t("llm.week_pairs.header", week=week_num, phase=phase)]
 
     for pair in pairs:
-        dow_short = DAY_NAMES_FR[pair.day_of_week][:3]
+        dow_short = _day_short(pair.day_of_week)
         date_str = pair.planned_date.strftime("%d/%m")
 
         if pair.session_spec and pair.session_log:
@@ -590,17 +512,20 @@ def _format_week_pairs(pairs: list, week_num: int, phase: str, today: date) -> l
             # Date réelle du log (peut différer de la date planifiée si décalage)
             actual_date = getattr(log, "logged_date", pair.planned_date)
             if actual_date != pair.planned_date:
-                actual_dow = DAY_NAMES_FR[actual_date.weekday()][:3]
+                actual_dow = _day_short(actual_date.weekday())
                 date_label = f"{actual_dow} {actual_date.strftime('%d/%m')} (plan {date_str})"
             else:
                 date_label = f"{dow_short} {date_str}"
 
-            dur_str = f"{dur_pl}→{dur_ac}min" if dur_ac else f"{dur_pl}min prévues"
+            dur_str = (
+                f"{dur_pl}→{dur_ac}min" if dur_ac
+                else t("llm.week_pairs.duration_planned_suffix", minutes=dur_pl)
+            )
             if tss_ac and tss_pl:
                 diff_pct = (tss_ac / tss_pl - 1) * 100
                 tss_str = f"TSS {tss_pl}→{tss_ac:.0f} ({diff_pct:+.0f}%)"
             else:
-                tss_str = f"TSS {tss_pl} prévu"
+                tss_str = t("llm.week_pairs.tss_planned_suffix", tss=tss_pl)
 
             extras = []
             if stype and stype != "unknown":
@@ -611,28 +536,27 @@ def _format_week_pairs(pairs: list, week_num: int, phase: str, today: date) -> l
             if elev and elev > 500:
                 extras.append(f"{elev:.0f}m D+")
             if group:
-                extras.append("groupe")
+                extras.append(t("llm.week_pairs.group_tag"))
             if rpe is not None:
                 extras.append(f"RPE {_rpe_emoji_for(rpe)} {rpe:.0f}/10")
 
-            wtype = WORKOUT_FR.get(spec.workout_type, spec.workout_type)
+            wtype = _workout_label(spec.workout_type)
             extras_str = f" · {' · '.join(extras)}" if extras else ""
             lines.append(f"  ✅ {date_label} · {wtype} {spec.zone_code} · {dur_str} · {tss_str}{extras_str}")
 
         elif pair.session_spec and not pair.session_log:
             # ── Séance planifiée non réalisée ──────────────────────────────
             spec = pair.session_spec
-            wtype = WORKOUT_FR.get(spec.workout_type, spec.workout_type)
-            if pair.planned_date <= today:
-                lines.append(
-                    f"  ❌ {dow_short} {date_str} · {wtype} {spec.zone_code} — "
-                    f"{spec.duration_minutes}min (TSS {round(spec.tss_target)}) — non réalisée"
-                )
-            else:
-                lines.append(
-                    f"  📅 {dow_short} {date_str} · {wtype} {spec.zone_code} — "
-                    f"{spec.duration_minutes}min (TSS {round(spec.tss_target)}) — à venir"
-                )
+            wtype = _workout_label(spec.workout_type)
+            suffix = (
+                t("llm.week_pairs.not_done_suffix") if pair.planned_date <= today
+                else t("llm.week_pairs.upcoming_suffix")
+            )
+            mark = "❌" if pair.planned_date <= today else "📅"
+            lines.append(
+                f"  {mark} {dow_short} {date_str} · {wtype} {spec.zone_code} — "
+                f"{spec.duration_minutes}min (TSS {round(spec.tss_target)}){suffix}"
+            )
 
         elif not pair.session_spec and pair.session_log:
             # ── Activité bonus non planifiée ───────────────────────────────
@@ -645,7 +569,8 @@ def _format_week_pairs(pairs: list, week_num: int, phase: str, today: date) -> l
             tss_str = f"TSS {tss_ac:.0f}" if tss_ac else ""
             type_str = f" · {stype}" if stype and stype != "unknown" else ""
             lines.append(
-                f"  🔄 {dow_short} {date_str} · Activité bonus · {dur_str} · {tss_str}{type_str}"
+                f"  🔄 {dow_short} {date_str} · {t('llm.week_pairs.bonus_activity')} · "
+                f"{dur_str} · {tss_str}{type_str}"
             )
 
     return lines
@@ -675,37 +600,54 @@ def build_system_prompt(
 
     # Profil de base
     now_paris = datetime.now(ZoneInfo("Europe/Paris"))
-    ftp_str = f"{p.equipment.ftp}W" if p.equipment.ftp else "non renseigné"
-    goal_str = GOAL_FR.get(p.objective.type, p.objective.type)
-    target_str = p.objective.target_date.strftime("%d/%m/%Y") if p.objective.target_date else "non fixée"
+    not_provided = t("llm.profile.not_provided")
+    ftp_str = f"{p.equipment.ftp}W" if p.equipment.ftp else not_provided
+    goal_str = _goal_label(p.objective.type)
+    target_str = (
+        p.objective.target_date.strftime("%d/%m/%Y") if p.objective.target_date
+        else t("llm.profile.not_set")
+    )
     days_str = ", ".join(p.availability.preferred_days)
-    weight_str = f"{p.weight_kg:.1f} kg" if p.weight_kg else "non renseigné"
+    weight_str = f"{p.weight_kg:.1f} kg" if p.weight_kg else not_provided
     lthr_est = int(p.physio.hr_rest + 0.88 * (p.physio.hr_max - p.physio.hr_rest))
     hr_zones = compute_hr_zones(p.physio.hr_max, p.physio.hr_rest)
     zones_str = " | ".join(
         f"{code} {z.lower_bpm}–{z.upper_bpm}"
         for code, z in list(hr_zones.items())[:5]  # Z1-Z5
     )
+    coaching_mode_label = (
+        t("llm.profile.coaching_mode_power") if p.coaching_mode == "power"
+        else t("llm.profile.coaching_mode_hr")
+    )
 
     lines = [
-        f"PROFIL ATHLÈTE — {first_name} :",
-        f"- Niveau : {LEVEL_FR.get(p.level, p.level)} | Objectif : {goal_str} (date cible : {target_str})",
-        f"- FTP : {ftp_str} | FC max : {p.physio.hr_max} bpm | FC repos : {p.physio.hr_rest} bpm | LTHR ~{lthr_est} bpm (estimé)",
-        f"- Poids : {weight_str} | Volume : {p.availability.hours_per_week}h/semaine | Jours préférés : {days_str}",
-        f"- Mode coaching : {'puissance' if p.coaching_mode == 'power' else 'fréquence cardiaque'}",
-        f"- Zones FC (bpm) : {zones_str}",
+        t("llm.profile.header", first_name=first_name),
+        t("llm.profile.level_line", level=_level_label(p.level), goal=goal_str, target=target_str),
+        t(
+            "llm.profile.physio_line", ftp=ftp_str, hr_max=p.physio.hr_max,
+            hr_rest=p.physio.hr_rest, lthr=lthr_est,
+        ),
+        t(
+            "llm.profile.availability_line", weight=weight_str,
+            hours=p.availability.hours_per_week, days=days_str,
+        ),
+        t("llm.profile.coaching_mode_line", mode=coaching_mode_label),
+        t("llm.profile.hr_zones_line", zones=zones_str),
     ]
 
     # Blessure active
     injury = getattr(p, "injury_status", None)
     if injury and injury.get("is_injured"):
-        loc = LOCATION_FR.get(injury.get("location", ""), injury.get("location", ""))
-        sev = SEVERITY_FR.get(injury.get("severity", ""), injury.get("severity", ""))
+        loc = _body_location_label(injury.get("location", ""))
+        sev = _severity_label(injury.get("severity", ""))
         restrictions = injury.get("zone_restrictions", {})
-        restr_str = ", ".join(f"{k}→{v}" for k, v in restrictions.items()) if restrictions else "aucune"
+        restr_str = (
+            ", ".join(f"{k}→{v}" for k, v in restrictions.items())
+            if restrictions else t("llm.profile.no_restrictions")
+        )
         lines += [
             "",
-            f"⚠️ BLESSURE ACTIVE : {loc} ({sev}) — zones restreintes : {restr_str}",
+            t("llm.profile.active_injury", location=loc, severity=sev, restrictions=restr_str),
         ]
 
     # Mémoire coach — texte écrit par le LLM lui-même (outil update_coach_memory) et
@@ -714,12 +656,12 @@ def build_system_prompt(
     _memory = coach_memory or []
     _notes = athlete_notes or {}
     if _memory or _notes:
-        mem_lines = ["MÉMOIRE COACH :"]
+        mem_lines = [t("llm.coach_memory.header")]
         for m in sorted(_memory, key=lambda x: x.get("date", ""), reverse=True)[:5]:
             note = sanitize_untrusted_text(m.get("note", ""))
             mem_lines.append(f"• [{m.get('date','')}] {m.get('category','')} — {note}")
         if _notes:
-            mem_lines.append("NOTES ATHLÈTE :")
+            mem_lines.append(t("llm.coach_memory.athlete_notes_header"))
             for k, v in _notes.items():
                 if v:
                     key = sanitize_untrusted_text(str(k))
@@ -738,38 +680,38 @@ def build_system_prompt(
     # porte la lecture qualitative, pas le TSB seul.
     if metrics:
         as_of_note = (
-            f"Données intervals.icu au {fitness_as_of.strftime('%d/%m')}"
+            t("llm.fitness.source_note", date=fitness_as_of.strftime("%d/%m"))
             if fitness_as_of is not None
-            else "Estimation locale"
+            else t("llm.fitness.local_estimate")
         )
         if fitness_is_stale:
-            as_of_note += " (pas de donnée plus récente)"
+            as_of_note += t("llm.fitness.no_newer_data")
         lines += [
             "",
-            "FORME ACTUELLE :",
-            f"CTL {metrics.ctl:.0f} (fitness) | ATL {metrics.atl:.0f} (fatigue) | "
-            f"TSB {metrics.tsb:+.0f}",
+            t("llm.fitness.header"),
+            t("llm.fitness.metrics_line", ctl=f"{metrics.ctl:.0f}", atl=f"{metrics.atl:.0f}", tsb=f"{metrics.tsb:+.0f}"),
             as_of_note,
         ]
     else:
-        lines += ["", "FORME ACTUELLE : pas encore de données (aucune séance loggée)."]
+        lines += ["", t("llm.fitness.no_data")]
 
     if detected_phase is not None:
-        from app.llm.narrator import PHASE_FR  # même vocabulaire FR que week.phase (prescriptif)
+        from app.llm.narrator import (
+            phase_label as _phase_label,  # même vocabulaire que week.phase (prescriptif)
+        )
 
-        phase_label = PHASE_FR.get(detected_phase.detected_phase, detected_phase.detected_phase)
+        phase_lbl = _phase_label(detected_phase.detected_phase)
         agree_note = ""
         if detected_phase.streams_agree is False:
-            secondary = detected_phase.secondary_phase
-            secondary_label = PHASE_FR.get(secondary, secondary)
-            agree_note = f" (plan déclare : {secondary_label})"
-        lines.append(f"Phase détectée (comportement récent) : {phase_label}{agree_note}")
+            secondary_label = _phase_label(detected_phase.secondary_phase)
+            agree_note = t("llm.detected_phase_agree_note", phase=secondary_label)
+        lines.append(t("llm.detected_phase_line", phase=phase_lbl, agree_note=agree_note))
 
     if recovery_index is not None:
-        lines.append(f"Indice de récupération : {recovery_index:.2f}")
+        lines.append(t("llm.recovery_index_line", value=f"{recovery_index:.2f}"))
 
     if training_summary:
-        lines += ["", "CHARGE RÉCENTE :"]
+        lines += ["", t("llm.recent_load.header")]
         lines.extend(f"- {line}" for line in training_summary)
 
     # Wellness qualitatif du jour — sous-ensemble volontairement restreint (sommeil,
@@ -779,19 +721,19 @@ def build_system_prompt(
     if wellness_today is not None:
         w_parts = []
         if wellness_today.sleep_quality is not None:
-            w_parts.append(f"qualité sommeil {wellness_today.sleep_quality}/4")
+            w_parts.append(t("llm.wellness.sleep_quality", value=wellness_today.sleep_quality))
         if wellness_today.sleep_score is not None:
-            w_parts.append(f"score sommeil {wellness_today.sleep_score}")
+            w_parts.append(t("llm.wellness.sleep_score", value=wellness_today.sleep_score))
         if wellness_today.fatigue is not None:
-            w_parts.append(f"fatigue {wellness_today.fatigue}/4")
+            w_parts.append(t("llm.wellness.fatigue", value=wellness_today.fatigue))
         if wellness_today.stress is not None:
-            w_parts.append(f"stress {wellness_today.stress}/4")
+            w_parts.append(t("llm.wellness.stress", value=wellness_today.stress))
         if wellness_today.mood is not None:
-            w_parts.append(f"mood {wellness_today.mood}/4")
+            w_parts.append(t("llm.wellness.mood", value=wellness_today.mood))
         if wellness_today.motivation is not None:
-            w_parts.append(f"motivation {wellness_today.motivation}/4")
+            w_parts.append(t("llm.wellness.motivation", value=wellness_today.motivation))
         if w_parts:
-            lines.append(f"Wellness du jour (échelle 1-4, 1=meilleur état) : {' | '.join(w_parts)}")
+            lines.append(t("llm.wellness.today_line", parts=" | ".join(w_parts)))
 
     # Recent sessions (SessionLog or pre-plan Activity), already sorted and bounded by caller.
     # Deux faits rendus explicites plutôt que laissés à déduire (trouvé en test live
@@ -802,8 +744,11 @@ def build_system_prompt(
     # qu'on peut glisser dessus sans y prêter attention.
     if recent_logs:
         one_session = len(recent_logs) == 1
-        heading = "DERNIÈRE SÉANCE" if one_session else f"{len(recent_logs)} DERNIÈRES SÉANCES"
-        lines += ["", f"{heading} :"]
+        heading = (
+            t("llm.recent_sessions.single_heading") if one_session
+            else t("llm.recent_sessions.multi_heading", count=len(recent_logs))
+        )
+        lines += ["", t("llm.section_header_colon", label=heading)]
         rpe_known = 0
         previous_date = None
         for item in recent_logs:
@@ -826,18 +771,19 @@ def build_system_prompt(
                 pw_str = f"{int(item.avg_watts)}W" if item.avg_watts else "—"
                 env_str = f" ({item.environment})" if item.environment else ""
             gap = (item_date - previous_date).days if previous_date is not None else None
-            gap_str = f" [+{gap}j]" if gap is not None else ""
+            gap_str = t("llm.recent_sessions.gap_suffix", days=gap) if gap is not None else ""
             previous_date = item_date
-            lines.append(
-                f"- {item_date.strftime('%d/%m')}{gap_str} | {dur_str} | RPE {rpe_str} | "
-                f"TSS {tss_str} | {hr_str} | {pw_str}{env_str}"
-            )
+            lines.append(t(
+                "llm.recent_sessions.line",
+                date=item_date.strftime("%d/%m"), gap=gap_str, duration=dur_str,
+                rpe=rpe_str, tss=tss_str, hr=hr_str, power=pw_str, env=env_str,
+            ))
         if not one_session:
-            lines.append(
-                f"Ressenti (RPE) renseigné sur {rpe_known}/{len(recent_logs)} de ces séances."
-            )
+            lines.append(t(
+                "llm.recent_sessions.rpe_coverage", known=rpe_known, total=len(recent_logs)
+            ))
     else:
-        lines += ["", "DERNIÈRE SÉANCE : aucune séance enregistrée."]
+        lines += ["", t("llm.recent_sessions.none")]
 
     # Semaine courante du plan — avec paires plan/réalisé si session_logs fourni
     if plan and plan.start_date:
@@ -851,13 +797,20 @@ def build_system_prompt(
                 lines += _format_week_pairs(pairs, week_num, current_week.phase, today)
             else:
                 # Fallback : affichage plan seul (sans données réalisées)
-                lines.append(f"SEMAINE EN COURS (S{week_num} — phase {current_week.phase}) :")
+                lines.append(t(
+                    "llm.current_week.fallback_header", week=week_num, phase=current_week.phase
+                ))
                 week_start = plan.start_date + timedelta(weeks=week_num - 1)
                 for sess in sorted(current_week.sessions, key=lambda s: s.day_of_week):
-                    day_name = DAY_NAMES_FR[sess.day_of_week]
+                    day_name = _day_name(sess.day_of_week)
                     session_date = week_start + timedelta(days=sess.day_of_week)
-                    wtype = WORKOUT_FR.get(sess.workout_type, sess.workout_type)
-                    lines.append(f"  {day_name} {session_date.strftime('%d/%m')} : {wtype} {sess.zone_code} — {sess.duration_minutes}min (TSS cible {sess.tss_target:.0f})")
+                    wtype = _workout_label(sess.workout_type)
+                    lines.append(t(
+                        "llm.current_week.session_line",
+                        day=day_name, date=session_date.strftime("%d/%m"), type=wtype,
+                        zone=sess.zone_code, duration=sess.duration_minutes,
+                        tss=f"{sess.tss_target:.0f}",
+                    ))
 
     if calendar_divergence:
         lines += ["", calendar_divergence]
@@ -866,16 +819,13 @@ def build_system_prompt(
     # ne fait que les restituer (FR-022). Chaque signal porte sa valeur observée, sa
     # référence, et une action concrète (SC-003).
     if guardrail_findings:
-        lines += ["", "⚠️ SIGNAUX D'ENTRAÎNEMENT (à transmettre tels quels, ne recalcule rien) :"]
+        lines += ["", t("llm.guardrails.header")]
         for f in guardrail_findings:
-            lines.append(
-                f"  • {f.observed} (référence {f.reference} ; seuil {f.threshold})\n"
-                f"    → {f.action}"
-            )
-        lines.append(
-            "Si l'athlète discute d'entraînement, mentionne le ou les signaux ci-dessus "
-            "avec leur chiffre et l'action associée — c'est le cœur du métier de coach ici."
-        )
+            lines.append(t(
+                "llm.guardrails.finding_line",
+                observed=f.observed, reference=f.reference, threshold=f.threshold, action=f.action,
+            ))
+        lines.append(t("llm.guardrails.instruction"))
 
     if recovery_insufficiency:
         lines += ["", f"ℹ️ {recovery_insufficiency}"]
@@ -888,7 +838,7 @@ def build_system_prompt(
     # statique et vit désormais dans build_ux_system_prompt (préfixe stable).
     lines += ["", *_temporal_reference_rules(now_paris)]
     lines.append(
-        f"📅 {DAY_NAMES_FR[now_paris.weekday()]} {now_paris.strftime('%d/%m/%Y — %H:%M')}"
+        f"📅 {_day_name(now_paris.weekday())} {now_paris.strftime('%d/%m/%Y — %H:%M')}"
     )
 
     return "\n".join(lines)

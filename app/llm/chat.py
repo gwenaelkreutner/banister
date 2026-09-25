@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.localization import t
 from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any
@@ -27,17 +28,13 @@ from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
 
-DAY_NAMES_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-WORKOUT_FR = {
-    "long_ride": "Sortie longue",
-    "intervals": "Intervalles",
-    "endurance": "Endurance",
-    "recovery": "Récupération",
-}
-
+# Athlete free text may be in either language regardless of APP_LANGUAGE (R6) — this
+# claim detector must catch both, not just the installation language.
 _ACTION_CLAIM_RE = re.compile(
-    r"\b(?:c['’]est|ça a été|cela a été|je l['’]ai|je viens de)\s+"
-    r"(?:bien\s+)?(?:noté|enregistré|ajouté|modifié|supprimé|publié)\b",
+    r"\b(?:c['’]est|ça a été|cela a été|je l['’]ai|je viens de|it['’]s|it has been|"
+    r"i['’]ve|i just)\s+"
+    r"(?:bien\s+|just\s+)?(?:noté|enregistré|ajouté|modifié|supprimé|publié|"
+    r"noted|saved|logged|added|changed|updated|deleted|removed|published)\b",
     re.IGNORECASE,
 )
 
@@ -48,12 +45,12 @@ def _verify_action_claim(response_text: str, tool_calls_log: list[dict]) -> str:
     if meal_calls:
         saved = sum((call.get("result") or {}).get("ok") is True for call in meal_calls)
         if saved == len(meal_calls):
-            return "Repas enregistré. Le détail exact est juste en dessous."
+            return t("llm.chat.meal_saved")
         if saved:
-            return "Une partie seulement a été enregistrée. Le détail est juste en dessous."
-        return "Le repas n'a pas été enregistré. Le détail est juste en dessous."
+            return t("llm.chat.meal_partially_saved")
+        return t("llm.chat.meal_not_saved")
     if not tool_calls_log and _ACTION_CLAIM_RE.search(response_text):
-        return "Aucun outil n'a été exécuté : rien n'a été enregistré ni modifié."
+        return t("llm.chat.no_tool_executed")
     return response_text
 
 
@@ -126,7 +123,7 @@ async def run_chat(
 
     _persona, _voice_fell_back = resolve_voice(user)
     ux_rules = build_ux_system_prompt(
-        user_level, persona=_persona, first_name=user.first_name or "l'athlète"
+        user_level, persona=_persona, first_name=user.first_name or t("llm.chat.default_athlete_name")
     )
     def _item_date(item):
         return item.logged_date if hasattr(item, "logged_date") else item.activity_date
@@ -236,7 +233,7 @@ async def run_chat(
         logger.warning("Impossible de collecter les métriques garde-fous pour le registre")
 
     coaching_ctx = build_system_prompt(
-        first_name=user.first_name or "l'athlète",
+        first_name=user.first_name or t("llm.chat.default_athlete_name"),
         profile=profile,
         metrics=metrics,
         fitness_as_of=fitness_as_of,
@@ -257,16 +254,16 @@ async def run_chat(
     )
     system = f"{ux_rules}\n\n---\n\n{coaching_ctx}"
     if has_load_reduction_finding(guardrail_findings):
-        from app.llm.prompts import GUARDRAIL_LOAD_REDUCTION_RULE
+        from app.llm.prompts import guardrail_load_reduction_rule
 
-        system = f"{system}\n\n{GUARDRAIL_LOAD_REDUCTION_RULE}"
+        system = f"{system}\n\n{guardrail_load_reduction_rule()}"
 
     # spec 010 : réinjectée en entier à chaque tour (contrairement à l'historique, qui ne
     # rejoue jamais les appels d'outils passés — trouvé en live, voir prompts.py).
     if plan is None:
-        from app.llm.prompts import FREESTYLE_SESSION_TOOL_RULE
+        from app.llm.prompts import freestyle_session_tool_rule
 
-        system = f"{system}\n\n{FREESTYLE_SESSION_TOOL_RULE}"
+        system = f"{system}\n\n{freestyle_session_tool_rule()}"
 
     # Registre des métriques mises devant le modèle — définit ce qui est « retrouvé »
     # pour la vérification de réponse (spec 006 US3, FR-018).
@@ -289,9 +286,8 @@ async def run_chat(
     messages = build_context_messages(history)
     turn_content = user_message
     if reply_context:
-        turn_content = (
-            f'[L\'athlète répond directement à ce message précédent : "{reply_context}"]\n'
-            f"{user_message}"
+        turn_content = t(
+            "llm.chat.reply_context_wrapper", context=reply_context, message=user_message
         )
     messages.append({"role": "user", "content": turn_content})
 
@@ -480,10 +476,15 @@ async def run_chat(
     return response_text, intent, tool_used, pending_proposal, usage, meal_log
 
 
+# Athlete free text may be in either language regardless of APP_LANGUAGE (R6) — checked
+# together, not switched on the installation language.
 _DECLINE_PHRASES = (
     "non merci", "non je continue", "je continue quand même", "laisse tomber",
     "pas maintenant", "pas cette fois", "je garde la séance", "je fais quand même",
     "ça ira", "je préfère garder", "je maintiens",
+    "no thanks", "no i'll continue", "i'll do it anyway", "never mind",
+    "not now", "not this time", "i'll keep the session", "i'm doing it anyway",
+    "i'm fine", "i'd rather keep", "i'll stick with it",
 )
 
 
@@ -563,11 +564,19 @@ async def _execute_tool(
 
 # ── Implémentations des outils ────────────────────────────────────────────────
 
+_DAY_KEYS = [
+    "day.full.monday", "day.full.tuesday", "day.full.wednesday", "day.full.thursday",
+    "day.full.friday", "day.full.saturday", "day.full.sunday",
+]
+
+
 def _tool_get_upcoming_sessions(plan, days: int, start_offset: int = 0) -> dict:
+    from app.llm.narrator import workout_label
+
     if plan is None:
-        return {"sessions": [], "message": "Aucun plan actif trouvé."}
+        return {"sessions": [], "message": t("llm.tools.no_active_plan")}
     if plan.start_date is None:
-        return {"sessions": [], "message": "Le plan n'a pas encore de date de début."}
+        return {"sessions": [], "message": t("llm.tools.plan_no_start_date")}
 
     from app.engine.schemas import TrainingPlanSchema
     schema = TrainingPlanSchema.model_validate(plan.plan_technical)
@@ -591,8 +600,8 @@ def _tool_get_upcoming_sessions(plan, days: int, start_offset: int = 0) -> dict:
                     if sess.day_of_week == dow:
                         sessions.append({
                             "date": str(target_date),
-                            "day": DAY_NAMES_FR[dow],
-                            "workout_type": WORKOUT_FR.get(sess.workout_type, sess.workout_type),
+                            "day": t(_DAY_KEYS[dow]),
+                            "workout_type": workout_label(sess.workout_type),
                             "zone": sess.zone_code,
                             "duration_minutes": sess.duration_minutes,
                             "tss_target": round(sess.tss_target),
@@ -607,7 +616,7 @@ def _tool_get_upcoming_sessions(plan, days: int, start_offset: int = 0) -> dict:
             "range_start": str(start),
             "range_end": str(start + timedelta(days=days - 1)),
             "sessions": [],
-            "message": f"Aucune séance prévue dans cette fenêtre de {days} jours.",
+            "message": t("llm.tools.no_sessions_in_window", days=days),
         }
     return {
         "range_start": str(start),
@@ -624,11 +633,7 @@ async def _tool_get_fitness_history(args: dict, *, user: User, session: AsyncSes
     if granularity not in {"daily", "weekly"}:
         granularity = "weekly" if days > 30 else "daily"
     if granularity == "daily" and days > 90:
-        return {
-            "error": (
-                "Historique quotidien limité à 90 jours ; demande une granularité hebdomadaire."
-            )
-        }
+        return {"error": t("llm.tools.daily_history_limited")}
     return await fitness_history(session, user.id, days=days, granularity=granularity)
 
 
@@ -645,9 +650,9 @@ async def _tool_get_session_detail(args: dict, *, user: User, session: AsyncSess
     try:
         session_date = date.fromisoformat(args.get("date", ""))
     except (TypeError, ValueError):
-        return {"error": "date doit être au format AAAA-MM-JJ."}
+        return {"error": t("llm.tools.date_format_error")}
     if session_date > date.today():
-        return {"error": "Une séance future n'a pas encore de données réalisées."}
+        return {"error": t("llm.tools.future_session_no_data")}
     return await session_detail(session, user.id, session_date=session_date)
 
 
@@ -695,18 +700,19 @@ async def _tool_update_injury_status(
     # Journal daté (Enduragent parity review, 2026-09-20) — texte templaté depuis les
     # arguments déjà contraints par les enum JSON-Schema de l'outil (location, severity),
     # jamais de prose libre du LLM (source="deterministic").
+    from app.core.localization import t
     from app.db.repositories import journal_repo
-    from app.llm.tools import LOCATION_FR, SEVERITY_FR
+    from app.llm.tools import _body_location_label, _severity_label
 
-    loc_fr = LOCATION_FR.get(location, location)
-    sev_fr = SEVERITY_FR.get(severity, severity)
+    loc_label = _body_location_label(location)
+    sev_label = _severity_label(severity)
     await journal_repo.create(
         session,
         user_id=user.id,
         entry_date=date.today(),
         category="injury",
         source="deterministic",
-        text=f"Blessure signalée : {loc_fr} ({sev_fr}), récupération estimée {recovery_days}j.",
+        text=t("llm.injury_journal_entry", location=loc_label, severity=sev_label, days=recovery_days),
     )
 
     # Adapter le plan si disponible
@@ -721,13 +727,16 @@ async def _tool_update_injury_status(
         "injury_recorded": injury_data,
         "zone_restrictions": zone_restrictions,
         "adapted_weeks": adapted_weeks,
-        "message": f"Blessure ({location}, {severity}) enregistrée. Plan adapté pour {min(recovery_days, 21)} jours.",
+        "message": t(
+            "llm.tools.injury_recorded",
+            location=location, severity=severity, days=min(recovery_days, 21),
+        ),
     }
 
 
 def _tool_propose_session_adjustment(args: dict, plan, profile: AthleteProfileSchema | None) -> dict:
     if plan is None:
-        return {"error": "Aucun plan actif à modifier."}
+        return {"error": t("llm.tools.no_plan_to_modify")}
 
     day_offset = args.get("day_offset", 0)
     action = args.get("action", "skip")
@@ -746,7 +755,7 @@ def _tool_propose_session_adjustment(args: dict, plan, profile: AthleteProfileSc
 
 def _tool_propose_plan_modification(args: dict, plan) -> dict:
     if plan is None:
-        return {"error": "Aucun plan actif à modifier."}
+        return {"error": t("llm.tools.no_plan_to_modify")}
 
     reason = args.get("reason", "fatigue")
     modification_type = args.get("modification_type", "reduce_intensity")
@@ -772,12 +781,13 @@ async def _tool_update_coach_memory(args: dict, user: User, session: AsyncSessio
     toujours que du texte/catégorie, jamais de la mécanique de double écriture
     (Principe III)."""
     from datetime import date as _date
+
     from app.db.repositories import journal_repo, profile_repo
 
     action = args.get("action")
     profile_orm = await profile_repo.get_by_user_id(session, user.id)
     if profile_orm is None:
-        return {"ok": False, "error": "Profil introuvable"}
+        return {"ok": False, "error": t("llm.tools.profile_not_found")}
 
     if action == "add_note":
         category = args.get("category", "preference")
@@ -809,13 +819,13 @@ async def _tool_update_coach_memory(args: dict, user: User, session: AsyncSessio
         key = args.get("key", "")
         value = args.get("value", "")
         if not key:
-            return {"ok": False, "error": "key manquante"}
+            return {"ok": False, "error": t("llm.tools.missing_key")}
         notes: dict = dict(profile_orm.athlete_notes or {})
         notes[key] = value
         await profile_repo.update_athlete_notes(session, profile_orm, notes)
         return {"ok": True, "action": "update_athlete_notes", "key": key}
 
-    return {"ok": False, "error": f"action inconnue : {action}"}
+    return {"ok": False, "error": t("llm.tools.unknown_action", action=action)}
 
 
 # ── Outil mode libre (spec 009) ─────────────────────────────────────────────────
@@ -869,14 +879,9 @@ async def _tool_get_freestyle_session_suggestion(
         else (compute_fitness_from_any(all_items) if all_items else None)
     )
     if fitness is None:
-        return {
-            "available": False,
-            "reason": (
-                "Pas encore assez de données de forme pour proposer une séance adaptée."
-            ),
-        }
+        return {"available": False, "reason": t("llm.tools.freestyle_not_enough_data")}
     if profile is None:
-        return {"available": False, "reason": "Profil athlète introuvable — lance /setup."}
+        return {"available": False, "reason": t("llm.tools.freestyle_no_profile")}
 
     snapshot = compute_weekly_snapshot(all_items, today)
     hard_gap = days_since_hard_effort(all_items, today)
@@ -939,12 +944,7 @@ async def _tool_get_freestyle_session_suggestion(
         )
     except (SessionLibraryError, NoSuitableTemplateError) as exc:
         logger.warning("Suggestion mode libre indisponible : %s", exc)
-        return {
-            "available": False,
-            "reason": (
-                "Impossible de trouver une séance adaptée dans la bibliothèque pour le moment."
-            ),
-        }
+        return {"available": False, "reason": t("llm.tools.freestyle_no_suitable_session")}
 
     # spec 010: tagged so app/bot/routers/chat.py can offer a "publish this" button —
     # "id" identifies exactly this suggestion so a later, superseded button can be told
@@ -965,12 +965,12 @@ async def _tool_get_freestyle_session_suggestion(
 
 # ── Outils nutrition (spec 008) ────────────────────────────────────────────────
 
-_MEAL_SLOT_LABELS_FR = {
-    "breakfast": "petit-déjeuner",
-    "lunch": "déjeuner",
-    "dinner": "dîner",
-    "snack": "collation",
-    "other": "repas",
+_MEAL_SLOT_KEYS = {
+    "breakfast": "llm.meal_slot.breakfast",
+    "lunch": "llm.meal_slot.lunch",
+    "dinner": "llm.meal_slot.dinner",
+    "snack": "llm.meal_slot.snack",
+    "other": "llm.meal_slot.other",
 }
 
 
@@ -1014,14 +1014,15 @@ def _format_meal_ledger(tool_calls_log: list[dict]) -> str | None:
                 cal = result.get("estimated_calories")
                 entry_date = result.get("entry_date")
                 if args.get("entry_type") == "day_recap":
-                    label = "récap journée"
+                    label = t("llm.meal_slot.day_recap")
                 else:
-                    label = _MEAL_SLOT_LABELS_FR.get(args.get("meal_slot"), "repas")
+                    key = _MEAL_SLOT_KEYS.get(args.get("meal_slot"), "llm.meal_slot.other")
+                    label = t(key)
                 entries_by_date[entry_date].append(f"{label} ({cal} cal)")
                 if result.get("day_total_estimated_calories") is not None:
                     day_totals[entry_date] = result.get("day_total_estimated_calories")
             else:
-                failures.append(result.get("error", "erreur inconnue"))
+                failures.append(result.get("error") or t("llm.meal_ledger.unknown_error"))
 
         elif name == "undo_last_meal_entry":
             if result.get("ok"):
@@ -1030,20 +1031,22 @@ def _format_meal_ledger(tool_calls_log: list[dict]) -> str | None:
                 if result.get("day_total_estimated_calories") is not None:
                     day_totals[entry_date] = result.get("day_total_estimated_calories")
             else:
-                failures.append(result.get("error", "erreur inconnue"))
+                failures.append(result.get("error") or t("llm.meal_ledger.unknown_error"))
 
     if not entries_by_date and not removals and not failures:
         return None
 
     lines: list[str] = []
     for items in entries_by_date.values():
-        lines.append(f"✅ Enregistré — {', '.join(items)}")
+        lines.append(t("llm.meal_ledger.saved", items=", ".join(items)))
     for _entry_date, cal in removals:
-        lines.append(f"🗑️ Supprimé — -{cal} cal")
+        lines.append(t("llm.meal_ledger.removed", cal=cal))
     for error in failures:
-        lines.append(f"❌ Non enregistré — {error}")
+        lines.append(t("llm.meal_ledger.not_saved", error=error))
     for entry_date, total in day_totals.items():
-        lines.append(f"🧾 Total du {_format_short_date(entry_date)} : {total} cal")
+        lines.append(t(
+            "llm.meal_ledger.day_total", date=_format_short_date(entry_date), total=total
+        ))
 
     return "\n".join(lines)
 
@@ -1073,10 +1076,7 @@ async def _tool_log_meal(args: dict, user: User, session: AsyncSession, raw_mess
     except (TypeError, ValueError):
         calories = None
     if calories is None or not (_CALORIES_MIN <= calories <= _CALORIES_MAX):
-        return {
-            "ok": False,
-            "error": "estimation calorique manquante ou hors limites plausibles — rien n'a été enregistré",
-        }
+        return {"ok": False, "error": t("llm.tools.calorie_estimate_invalid")}
 
     try:
         days_ago = max(0, min(int(args.get("days_ago", 0) or 0), _MEAL_DAYS_AGO_MAX))
@@ -1123,7 +1123,7 @@ async def _tool_undo_last_meal_entry(user: User, session: AsyncSession) -> dict:
     today = _nutrition_today()
     latest = await meal_entry_repo.get_latest_for_date(session, user.id, today)
     if latest is None:
-        return {"ok": False, "error": "aucune entrée aujourd'hui à annuler"}
+        return {"ok": False, "error": t("llm.tools.no_entry_to_undo")}
 
     removed_calories = latest.estimated_calories
     await meal_entry_repo.delete(session, latest)
@@ -1199,17 +1199,17 @@ async def _tool_memory_query(args: dict, user: User, session: AsyncSession) -> d
         start = date.fromisoformat(args.get("from_date", ""))
         end = date.fromisoformat(args.get("to_date", ""))
     except (TypeError, ValueError):
-        return {"error": "from_date/to_date doivent être au format AAAA-MM-JJ."}
+        return {"error": t("llm.tools.date_range_format_error")}
 
     if start > end:
-        return {"error": f"from_date ({start}) est après to_date ({end}) — inverse les bornes."}
+        return {"error": t("llm.tools.date_range_reversed", start=start, end=end)}
 
     range_days = (end - start).days + 1
     if range_days > _MEMORY_QUERY_MAX_RANGE_DAYS:
         return {
-            "error": (
-                f"Plage trop large ({range_days} jours, max "
-                f"{_MEMORY_QUERY_MAX_RANGE_DAYS}) — réduis-la."
+            "error": t(
+                "llm.tools.date_range_too_wide",
+                days=range_days, max_days=_MEMORY_QUERY_MAX_RANGE_DAYS,
             ),
         }
 

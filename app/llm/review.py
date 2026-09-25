@@ -7,15 +7,16 @@ from __future__ import annotations
 import logging
 
 from app.config import settings
+from app.core.localization import t
 from app.engine.dfa import DFABlock
 from app.llm.prompts import build_review_system_prompt, build_review_user_message
 from app.services.session_review import ReviewContext
 
 logger = logging.getLogger(__name__)
 
-_FALLBACK_TEXT = (
-    "⚠️ Je n'ai pas pu rédiger la synthèse pour l'instant — réessaie dans un instant."
-)
+
+def _fallback_text() -> str:
+    return t("llm.review.fallback")
 
 
 async def generate_session_review(ctx: ReviewContext, dfa: DFABlock | None = None) -> str:
@@ -38,6 +39,6 @@ async def generate_session_review(ctx: ReviewContext, dfa: DFABlock | None = Non
         )
     except Exception as exc:
         logger.warning("generate_session_review: appel LLM échoué — %s", exc)
-        return _FALLBACK_TEXT
+        return _fallback_text()
 
-    return (raw or "").strip() or _FALLBACK_TEXT
+    return (raw or "").strip() or _fallback_text()

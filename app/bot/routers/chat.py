@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.bot.states import PlanStates
+from app.core.localization import t
 from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.plan_modifier import apply_proposed_modification, apply_session_adjustment
@@ -39,10 +40,9 @@ from app.engine.plan_modifier import apply_proposed_modification, apply_session_
 logger = logging.getLogger(__name__)
 router = Router()
 
-_FALLBACK_ERROR = (
-    "⚠️ Je rencontre un problème technique en ce moment. "
-    "Réessaie dans quelques instants ou utilise /forme pour consulter tes métriques."
-)
+
+def _fallback_error() -> str:
+    return t("chat.fallback_error")
 
 # Plafond du contexte de reply injecté au LLM — Telegram va jusqu'à 4096 caractères par
 # message, mais on ne veut que de quoi identifier de quoi l'athlète parle, pas rejouer
@@ -61,7 +61,7 @@ class _ToolTrace:
 
     def _text(self) -> str:
         icons = {"started": "⏳", "finished": "✅", "failed": "❌"}
-        return "Outils utilisés :\n" + "\n".join(
+        return t("chat.tool_trace_header") + "\n" + "\n".join(
             f"{icons[call['status']]} {call['name']}" for call in self.calls
         )
 
@@ -132,7 +132,7 @@ async def handle_chat_message(
         )
     except Exception:
         logger.exception("Erreur chat agentique")
-        await message.answer(_FALLBACK_ERROR)
+        await message.answer(_fallback_error())
         return
 
     # Sauvegarder les deux messages en DB
@@ -165,11 +165,11 @@ async def handle_chat_message(
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
-                text="📅 Publier sur intervals.icu",
+                text=t("chat.freestyle_publish_button"),
                 callback_data=f"freestyle:publish:{pending_proposal['id']}",
             ),
         ]])
-        proposal_text = to_telegram_html(_strip_cjk(response_text)).strip() or _FALLBACK_ERROR
+        proposal_text = to_telegram_html(_strip_cjk(response_text)).strip() or _fallback_error()
         await message.answer(proposal_text, reply_markup=kb, parse_mode="HTML")
         await _send_meal_log(message, meal_log)
         return
@@ -179,17 +179,17 @@ async def handle_chat_message(
         await state.update_data(pending_modification=pending_proposal)
         await state.set_state(PlanStates.PENDING_MODIFICATION)
         kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Appliquer", callback_data="chat:apply"),
-            InlineKeyboardButton(text="❌ Annuler", callback_data="chat:cancel"),
+            InlineKeyboardButton(text=t("chat.apply_button"), callback_data="chat:apply"),
+            InlineKeyboardButton(text=t("chat.cancel_button"), callback_data="chat:cancel"),
         ]])
-        proposal_text = to_telegram_html(_strip_cjk(response_text)).strip() or _FALLBACK_ERROR
+        proposal_text = to_telegram_html(_strip_cjk(response_text)).strip() or _fallback_error()
         await message.answer(proposal_text, reply_markup=kb, parse_mode="HTML")
         await _send_meal_log(message, meal_log)
         return
 
     text = to_telegram_html(_strip_cjk(response_text)).strip()
     if not text:
-        text = _FALLBACK_ERROR
+        text = _fallback_error()
     await message.answer(text, parse_mode="HTML")
     await _send_meal_log(message, meal_log)
 
@@ -204,11 +204,7 @@ async def handle_chat_message(
 
 @router.message(StateFilter(PlanStates.PENDING_MODIFICATION), F.text)
 async def handle_message_during_pending_modification(message: Message, state: FSMContext) -> None:
-    await message.answer(
-        "⏳ Tu as une proposition de modification en attente.\n"
-        "Réponds avec ✅ <b>Appliquer</b> ou ❌ <b>Annuler</b> avant de continuer la conversation.",
-        parse_mode="HTML",
-    )
+    await message.answer(t("chat.pending_modification_reminder"), parse_mode="HTML")
 
 
 # ── Callbacks confirmation modification ──────────────────────────────────────
@@ -224,13 +220,13 @@ async def cb_apply_modification(
     proposal = fsm_data.get("pending_modification")
 
     if proposal is None:
-        await callback.answer("Proposition expirée.", show_alert=True)
+        await callback.answer(t("chat.proposal_expired"), show_alert=True)
         await state.set_state(PlanStates.ACTIVE)
         return
 
     plan = await repo.plan_repo.get_active_plan(session, user.id)
     if plan is None:
-        await callback.answer("Plan introuvable.", show_alert=True)
+        await callback.answer(t("chat.plan_not_found"), show_alert=True)
         await state.set_state(PlanStates.ACTIVE)
         return
 
@@ -248,24 +244,20 @@ async def cb_apply_modification(
 
     if success:
         if is_session_adj:
-            summary = proposal.get("summary", "Séance modifiée")
+            summary = proposal.get("summary", t("chat.session_modified_default"))
             await callback.message.edit_text(
-                f"✅ <b>Séance mise à jour !</b>\n\n"
-                f"{to_telegram_html(summary)}\n"
-                f"Utilise /plan pour voir le planning.",
+                t("chat.session_updated", summary=to_telegram_html(summary)),
                 parse_mode="HTML",
             )
         else:
             week_num = proposal.get("week_number", "?")
             tss_after = proposal.get("tss_after", "?")
             await callback.message.edit_text(
-                f"✅ <b>Plan mis à jour !</b>\n\n"
-                f"Semaine {week_num} ajustée — TSS cible : {tss_after}\n"
-                f"Utilise /plan pour voir les séances modifiées.",
+                t("chat.plan_updated", week_num=week_num, tss_after=tss_after),
                 parse_mode="HTML",
             )
     else:
-        await callback.message.edit_text("❌ Impossible d'appliquer la modification.")
+        await callback.message.edit_text(t("chat.modification_failed"))
 
     await callback.answer()
 
@@ -277,7 +269,7 @@ async def cb_cancel_modification(
 ):
     await state.update_data(pending_modification=None)
     await state.set_state(PlanStates.ACTIVE)
-    await callback.message.edit_text("❌ Modification annulée. Le plan reste inchangé.")
+    await callback.message.edit_text(t("chat.modification_cancelled"))
     await callback.answer()
 
 
@@ -302,15 +294,12 @@ async def cb_publish_freestyle(
     # FR-005 : une proposition manquante ou remplacée par une plus récente (l'athlète a
     # redemandé autre chose) n'est jamais publiée sous silence.
     if pending_id is None or pending_id != tapped_id or suggestion is None:
-        await callback.answer(
-            "Cette proposition n'est plus la plus récente — redemande une séance.",
-            show_alert=True,
-        )
+        await callback.answer(t("chat.freestyle_stale_proposal"), show_alert=True)
         return
 
     profile_row = await repo.profile_repo.get_by_user_id(session, user.id)
     if profile_row is None:
-        await callback.answer("Profil introuvable — relance /setup.", show_alert=True)
+        await callback.answer(t("chat.freestyle_profile_missing"), show_alert=True)
         return
 
     from datetime import date as _date
@@ -347,8 +336,7 @@ async def cb_publish_freestyle(
         # FR-008 : jamais laisser croire que ça a marché ; pending_freestyle_id n'est
         # PAS effacé — retaper est une vraie tentative de nouveau, pas un id périmé.
         await callback.message.edit_text(
-            f"❌ La publication n'a pas abouti ({outcome.detail or outcome.status}). "
-            "Retente dans un instant."
+            t("chat.freestyle_publish_failed", detail=outcome.detail or outcome.status)
         )
         await callback.answer()
         return
@@ -366,8 +354,7 @@ async def cb_publish_freestyle(
     await state.update_data(pending_freestyle_id=None, pending_freestyle_suggestion=None)
 
     await callback.message.edit_text(
-        f"✅ <b>Séance publiée</b> sur ton calendrier intervals.icu pour aujourd'hui "
-        f"({session_date:%d/%m}).\nCe n'est pas rattaché à un plan — une séance ponctuelle.",
+        t("chat.freestyle_published", date=session_date.strftime("%d/%m")),
         parse_mode="HTML",
     )
     await callback.answer()

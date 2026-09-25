@@ -119,10 +119,53 @@ def test_a_failed_claim_withholds_its_sentence_and_keeps_the_rest():
     r = _registry(ctl=45.9)
     text = "Ton CTL est à 62. Continue comme ça, tu progresses bien."
     res = verify_response(text, r)
-    out = apply_result(text, res)
+    out = apply_result(text, res, language="fr")
     assert "62" not in out
     assert "progresses bien" in out
-    assert "ne pas avancer de chiffre" in out
+    assert (
+        "(je préfère ne pas avancer de chiffre sur ta forme de fond ici "
+        "— je n'en suis pas certain)"
+    ) in out
+
+
+def test_english_mismatch_withholds_only_the_false_metric_sentence():
+    r = _registry(rhr=52)
+    text = "Your resting heart rate is 68. Keep the next ride easy."
+    res = verify_response(text, r)
+
+    assert len(res.mismatches) == 1
+    assert res.mismatches[0][0].metric == "rhr"
+    out = apply_result(text, res, language="en")
+    assert "68" not in out
+    assert "Keep the next ride easy." in out
+    assert (
+        "(I prefer not to give a number for your resting heart rate here "
+        "— I'm not certain)"
+    ) in out
+
+
+def test_english_unretrieved_metric_uses_english_fallback():
+    r = _registry(ctl=45.9)
+    text = "Your recovery index is 0.85 today. Ride if you feel ready."
+    res = verify_response(text, r)
+
+    assert len(res.unretrieved) == 1
+    assert res.unretrieved[0].metric == "recovery_index"
+    out = apply_result(text, res, language="en")
+    assert "0.85" not in out
+    assert "Ride if you feel ready." in out
+    assert "your recovery index" in out
+
+
+def test_english_metric_words_anchor_claims_and_ignore_duration():
+    r = _registry(acwr=1.2, monotony=1.5, hrv=48)
+    text = (
+        "Your acute/chronic workload ratio is 1.2, training monotony is 1.5, "
+        "and heart rate variability is 48. Ride for 2 hours."
+    )
+    res = verify_response(text, r)
+    assert res.ok
+    assert {claim.metric for claim in res.passed} == {"acwr", "monotony", "hrv"}
 
 
 def test_a_clean_response_is_returned_unchanged():

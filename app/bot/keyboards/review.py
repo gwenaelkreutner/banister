@@ -16,27 +16,30 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.core.localization import t
 from app.db.models.session_log import SessionLog
 
 # Labels pour l'affichage des boutons uniquement — distinct de WORKOUT_FR (narrator.py),
 # qui couvre le workout_type *planifié* (4 valeurs). session_type_real (réalisé, mapper.py)
 # en a 7 : long_ride/endurance/tempo/intervals/recovery/race/unknown.
-_SESSION_TYPE_LABELS: dict[str, str] = {
-    "long_ride": "Sortie longue",
-    "endurance": "Endurance",
-    "tempo": "Tempo",
-    "intervals": "Intervalles",
-    "recovery": "Récupération",
-    "race": "Course",
+_SESSION_TYPE_KEYS: dict[str, str] = {
+    "long_ride": "review.type_long_ride",
+    "endurance": "review.type_endurance",
+    "tempo": "review.type_tempo",
+    "intervals": "review.type_intervals",
+    "recovery": "review.type_recovery",
+    "race": "review.type_race",
 }
 
 
 def _session_label(log: SessionLog) -> str:
-    type_label = _SESSION_TYPE_LABELS.get(log.session_type_real or "", "Séance")
-    parts = [f"{log.logged_date:%d/%m}", type_label]
-    if log.tss_actual is not None:
-        parts.append(f"{log.tss_actual:.0f} TSS")
-    return " · ".join(parts)
+    type_key = _SESSION_TYPE_KEYS.get(log.session_type_real or "", "review.type_unknown")
+    tss = (
+        t("review.session_tss", tss=f"{log.tss_actual:.0f}")
+        if log.tss_actual is not None else ""
+    )
+    return t("review.session_label", date=log.logged_date.strftime("%d/%m"),
+             type=t(type_key), tss=tss)
 
 
 def recent_sessions_keyboard(logs: list[SessionLog]) -> InlineKeyboardMarkup:

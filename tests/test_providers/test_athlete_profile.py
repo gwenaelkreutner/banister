@@ -23,7 +23,7 @@ def test_thresholds_come_from_the_cycling_sport_settings_entry():
     assert p.max_hr.value == 202
     assert p.has_power_meter is True
     assert p.coaching_mode == "power"
-    assert "Réglages sport" in p.ftp.origin
+    assert p.ftp.origin == "sport_settings"
 
 
 def test_age_is_derived_from_date_of_birth():
@@ -34,7 +34,7 @@ def test_age_is_derived_from_date_of_birth():
     today = date.today()
     expected = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
     assert p.age.value == expected
-    assert "naissance" in p.age.origin
+    assert p.age.origin == "birth_date"
 
 
 def test_top_level_fields_carry_their_origin():
@@ -42,14 +42,14 @@ def test_top_level_fields_carry_their_origin():
     assert p.weight_kg.value == 67.0
     assert p.sex.value == "M"
     assert p.locale.value == "fr"
-    assert all("intervals.icu" in rv.origin for rv in (p.weight_kg, p.sex))
+    assert all(rv.origin == "source" for rv in (p.weight_kg, p.sex))
 
 
 def test_resting_hr_is_flagged_as_a_profile_default():
     """research R1 — icu_resting_hr is a profile field, not the measured series."""
     p = map_athlete_profile(_ATHLETE)
     assert p.resting_hr.present
-    assert p.resting_hr.note and "mesurée" in p.resting_hr.note
+    assert p.resting_hr.note == "resting_hr_profile"
 
 
 def test_no_cycling_ftp_means_hr_mode_and_an_absent_ftp(monkeypatch):

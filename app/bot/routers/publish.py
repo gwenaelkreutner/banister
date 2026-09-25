@@ -6,6 +6,7 @@ the project's first outbound mutation: nothing is written without a recorded, pe
 PublicationApproval that the athlete explicitly approves here. The content-hash staleness
 gate (FR-004) lands with US2 (T022).
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.publish import approval_keyboard
 from app.config import settings
+from app.core.localization import t
 from app.db.models.user import User
 from app.db.repositories import plan_repo, publication_repo
 from app.providers.intervals.client import IntervalsClient
@@ -42,19 +44,22 @@ def _client() -> IntervalsClient:
 @router.message(Command("publish"))
 async def cmd_publish(message: Message, session: AsyncSession, user: User):
     if not user.onboarding_completed:
-        await message.answer("Complète d'abord ton onboarding avec /start.")
+        await message.answer(t("publish.onboarding_required"))
         return
 
     plan = await plan_repo.get_active_plan(session, user.id)
     if plan is None:
-        await message.answer("Aucun plan actif — lance /setup d'abord.")
+        await message.answer(t("publish.no_active_plan_setup"))
         return
 
     request = await publication.request_publication(session, user, plan)
     if request.session_count == 0:
         await message.answer(
-            "Aucune séance structurée à publier sur la période "
-            f"({request.approval.horizon_start:%d/%m} → {request.approval.horizon_end:%d/%m})."
+            t(
+                "publish.no_structured_sessions",
+                start=request.approval.horizon_start.strftime("%d/%m"),
+                end=request.approval.horizon_end.strftime("%d/%m"),
+            )
         )
         return
 
@@ -68,7 +73,7 @@ async def cmd_publish(message: Message, session: AsyncSession, user: User):
 @router.message(Command("unpublish"))
 async def cmd_unpublish(message: Message, session: AsyncSession, user: User):
     if not user.onboarding_completed:
-        await message.answer("Complète d'abord ton onboarding avec /start.")
+        await message.answer(t("publish.onboarding_required"))
         return
     plan = await plan_repo.get_active_plan(session, user.id)
     if plan is None:
@@ -76,49 +81,49 @@ async def cmd_unpublish(message: Message, session: AsyncSession, user: User):
         # au lieu de "Aucun plan actif", symétrique de la même bascule que /goal a déjà.
         from app.db.repositories import freestyle_publication_repo
 
-        active_freestyle = await freestyle_publication_repo.get_active_for_user(
-            session, user.id
-        )
+        active_freestyle = await freestyle_publication_repo.get_active_for_user(session, user.id)
         if not active_freestyle:
-            await message.answer("Rien n'est actuellement publié dans ton calendrier.")
+            await message.answer(t("publish.nothing_published"))
             return
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text=f"🗑 Tout retirer ({len(active_freestyle)})",
+                        text=t("publish.withdraw_all_button", count=len(active_freestyle)),
                         callback_data="pub:withdrawall_freestyle",
                     ),
-                    InlineKeyboardButton(text="Annuler", callback_data="pub:withdrawcancel"),
+                    InlineKeyboardButton(
+                        text=t("publish.cancel_plain_button"), callback_data="pub:withdrawcancel"
+                    ),
                 ]
             ]
         )
         await message.answer(
-            f"Retirer les <b>{len(active_freestyle)}</b> séance(s) mode libre que j'ai "
-            "publiées dans ton calendrier intervals.icu ? Tes propres entrées et celles "
-            "d'autres outils ne sont pas touchées.",
+            t("publish.withdraw_freestyle_prompt", count=len(active_freestyle)),
             reply_markup=kb,
             parse_mode="HTML",
         )
         return
     active = await publication_repo.get_active_entries_for_plan(session, user.id, plan.id)
     if not active:
-        await message.answer("Rien n'est actuellement publié dans ton calendrier.")
+        await message.answer(t("publish.nothing_published"))
         return
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f"🗑 Tout retirer ({len(active)})", callback_data="pub:withdrawall"
+                    text=t("publish.withdraw_all_button", count=len(active)),
+                    callback_data="pub:withdrawall",
                 ),
-                InlineKeyboardButton(text="Annuler", callback_data="pub:withdrawcancel"),
+                InlineKeyboardButton(
+                    text=t("publish.cancel_plain_button"), callback_data="pub:withdrawcancel"
+                ),
             ]
         ]
     )
     await message.answer(
-        f"Retirer les <b>{len(active)}</b> séances que j'ai publiées dans ton calendrier "
-        "intervals.icu ? Tes propres entrées et celles d'autres outils ne sont pas touchées.",
+        t("publish.withdraw_plan_prompt", count=len(active)),
         reply_markup=kb,
         parse_mode="HTML",
     )
@@ -126,30 +131,27 @@ async def cmd_unpublish(message: Message, session: AsyncSession, user: User):
 
 @router.callback_query(F.data == "pub:withdrawcancel")
 async def cb_withdraw_cancel(callback: CallbackQuery):
-    await callback.answer("Annulé.")
-    await callback.message.edit_text("Rien retiré.", parse_mode="HTML")
+    await callback.answer(t("publish.cancelled_short"))
+    await callback.message.edit_text(t("publish.nothing_withdrawn"), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "pub:withdrawall")
 async def cb_withdraw_all(callback: CallbackQuery, session: AsyncSession, user: User):
     plan = await plan_repo.get_active_plan(session, user.id)
     if plan is None:
-        await callback.answer("Aucun plan actif.", show_alert=True)
+        await callback.answer(t("publish.no_active_plan"), show_alert=True)
         return
-    await callback.answer("Retrait en cours…")
-    await callback.message.edit_text("⏳ Retrait des séances…", parse_mode="HTML")
-    withdrawn, failed = await publication.withdraw_all_publications(
-        session, _client(), user, plan
-    )
+    await callback.answer(t("publish.withdraw_in_progress"))
+    await callback.message.edit_text(t("publish.withdrawing_sessions"), parse_mode="HTML")
+    withdrawn, failed = await publication.withdraw_all_publications(session, _client(), user, plan)
     if failed:
         await callback.message.edit_text(
-            f"⚠️ {withdrawn} retirées, {failed} échec(s). Relance /unpublish pour réessayer.",
+            t("publish.withdraw_partial_failure", withdrawn=withdrawn, failed=failed),
             parse_mode="HTML",
         )
     else:
         await callback.message.edit_text(
-            f"✅ {withdrawn} séance(s) retirée(s). Ton calendrier ne contient "
-            "plus rien de ma part.",
+            t("publish.withdraw_success", withdrawn=withdrawn),
             parse_mode="HTML",
         )
 
@@ -159,20 +161,17 @@ async def cb_withdraw_all_freestyle(callback: CallbackQuery, session: AsyncSessi
     """spec 010 US3 — retire uniquement les publications mode libre, jamais les entrées
     d'un plan (une table à part, pas un filtre qui pourrait se tromper — research.md
     Decision 4)."""
-    await callback.answer("Retrait en cours…")
-    await callback.message.edit_text("⏳ Retrait des séances…", parse_mode="HTML")
-    withdrawn, failed = await publication.withdraw_freestyle_publications(
-        session, _client(), user
-    )
+    await callback.answer(t("publish.withdraw_in_progress"))
+    await callback.message.edit_text(t("publish.withdrawing_sessions"), parse_mode="HTML")
+    withdrawn, failed = await publication.withdraw_freestyle_publications(session, _client(), user)
     if failed:
         await callback.message.edit_text(
-            f"⚠️ {withdrawn} retirées, {failed} échec(s). Relance /unpublish pour réessayer.",
+            t("publish.withdraw_partial_failure", withdrawn=withdrawn, failed=failed),
             parse_mode="HTML",
         )
     else:
         await callback.message.edit_text(
-            f"✅ {withdrawn} séance(s) retirée(s). Ton calendrier ne contient "
-            "plus rien de ma part.",
+            t("publish.withdraw_success", withdrawn=withdrawn),
             parse_mode="HTML",
         )
 
@@ -182,14 +181,14 @@ async def cb_decline(callback: CallbackQuery, session: AsyncSession, user: User)
     approval_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
     approval = await publication_repo.get_approval(session, approval_id)
     if approval is None or approval.user_id != user.id:
-        await callback.answer("Demande introuvable.", show_alert=True)
+        await callback.answer(t("publish.request_not_found"), show_alert=True)
         return
     if approval.status == "pending":
         await publication_repo.mark_declined(session, approval_id)
 
-    await callback.answer("Annulé — rien n'a été publié.")
+    await callback.answer(t("publish.publication_cancelled_short"))
     await callback.message.edit_text(
-        "❌ Publication annulée — rien n'a été écrit dans ton calendrier.",
+        t("publish.publication_cancelled"),
         parse_mode="HTML",
     )
 
@@ -199,43 +198,37 @@ async def cb_approve(callback: CallbackQuery, session: AsyncSession, user: User)
     approval_id = uuid.UUID(callback.data.rsplit(":", 1)[1])
     approval = await publication_repo.get_approval(session, approval_id)
     if approval is None or approval.user_id != user.id:
-        await callback.answer("Demande introuvable.", show_alert=True)
+        await callback.answer(t("publish.request_not_found"), show_alert=True)
         return
     if approval.status != "pending":
-        await callback.answer("Cette demande a déjà été traitée.", show_alert=True)
+        await callback.answer(t("publish.request_already_handled"), show_alert=True)
         return
 
     plan = await plan_repo.get_active_plan(session, user.id)
     if plan is None or plan.id != approval.plan_id:
-        await callback.answer("Le plan a changé — relance /publish.", show_alert=True)
+        await callback.answer(t("publish.plan_changed_retry"), show_alert=True)
         return
 
-    await callback.answer("Publication en cours…")
-    await callback.message.edit_text("⏳ Publication vers intervals.icu…", parse_mode="HTML")
+    await callback.answer(t("publish.publication_in_progress"))
+    await callback.message.edit_text(t("publish.publishing_sessions"), parse_mode="HTML")
 
     await publication_repo.mark_approved(session, approval_id)
     try:
-        report = await publication.execute_publication(
-            session, _client(), user, plan, approval
-        )
+        report = await publication.execute_publication(session, _client(), user, plan, approval)
     except publication.StaleApprovalError:
         await callback.message.edit_text(
-            "⚠️ Ton plan a changé depuis cette demande — rien n'a été publié. "
-            "Relance /publish pour approuver la version à jour.",
+            t("publish.stale_approval"),
             parse_mode="HTML",
         )
         return
     except publication.PublicationNotAuthorized:
         logger.warning("Publication refused for approval %s", approval_id)
-        await callback.message.edit_text(
-            "⚠️ Cette demande n'est plus valide — relance /publish.", parse_mode="HTML"
-        )
+        await callback.message.edit_text(t("publish.invalid_request"), parse_mode="HTML")
         return
     except Exception:  # noqa: BLE001
         logger.exception("Publication failed for approval %s", approval_id)
         await callback.message.edit_text(
-            "⚠️ La publication a échoué en cours de route. Les séances déjà écrites "
-            "sont enregistrées — relance /publish pour reprendre.",
+            t("publish.publication_failed"),
             parse_mode="HTML",
         )
         return

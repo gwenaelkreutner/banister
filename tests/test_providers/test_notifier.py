@@ -12,6 +12,7 @@ from pathlib import Path
 
 from app.db.models.user import User
 from app.db.repositories import plan_repo, sync_state_repo
+from app.engine.rpe import RPE_SCALE_LABELS_FR
 from app.providers.intervals.notifier import notify_detected_activity, process_detected_activity
 
 _FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "intervals"
@@ -24,6 +25,7 @@ def _load(name: str) -> dict:
 class _FakeBot:
     def __init__(self, *, fail_on_message: int | None = None):
         self.sent: list[str] = []
+        self.sent_kwargs: list[dict] = []
         self.actions: list[str] = []
         self._fail_on_message = fail_on_message
         self._message_count = 0
@@ -36,6 +38,7 @@ class _FakeBot:
         if self._fail_on_message == self._message_count:
             raise RuntimeError("simulated Telegram outage")
         self.sent.append(text)
+        self.sent_kwargs.append(kwargs)
 
 
 class _FakeClient:
@@ -143,6 +146,15 @@ class TestNotifyDetectedActivityDeliveryGating:
         assert await sync_state_repo.is_reported(db_session, user.id, activity_id)
         # 3-message staged exchange actually sent
         assert len(bot.sent) == 3
+        assert "note de 1 à 10" in bot.sent[-1]
+        buttons = bot.sent_kwargs[-1]["reply_markup"].inline_keyboard
+        assert [row[0].callback_data.rsplit(":", 1)[-1] for row in buttons] == [
+            *(str(value) for value in range(1, 11)), "skip"
+        ]
+        assert [row[0].text for row in buttons] == [
+            *(f"{value} · {label}" for value, label in enumerate(RPE_SCALE_LABELS_FR, 1)),
+            "Passer",
+        ]
 
     async def test_failed_delivery_leaves_activity_unreported(self, db_session):
         """T049/FR-012: a Telegram failure on any of the three staged messages must not

@@ -108,6 +108,11 @@ ANTHROPIC_API_KEY=sk-ant-...
 INTERVALS_API_KEY=your_intervals_api_key
 ```
 
+Banister uses English by default. Set `APP_LANGUAGE=fr` in `.env` before starting or
+upgrading an installation if you want to keep the French bot experience. The setting
+applies to the whole single-user installation after a restart; it does not change your
+coach voice or rewrite existing training history.
+
 ```bash
 make up
 ```
@@ -125,9 +130,9 @@ can't already answer for you — your plan is generated immediately.
 | `/setup` | Confirm your profile (read from intervals.icu) and generate a plan |
 | `/goal` | Change objective, or switch between plan mode and freestyle mode |
 | `/plan` / `/week N` | View the current or a specific week |
-| `/forme` | Current fitness metrics (ATL / CTL / TSB) + power-curve trends |
-| `/recap` | Weekly adherence recap and KPI score |
-| `/review` | Relecture of a recently logged session |
+| `/fitness` (`/forme` also works) | Current fitness metrics (ATL / CTL / TSB) + power-curve trends |
+| `/summary` (`/recap` also works) | Weekly adherence recap and KPI score |
+| `/review` | Review a recently logged session |
 | `/publish` / `/unpublish` | Push planned sessions to your intervals.icu calendar, or withdraw them |
 | `/reminders` | Manage morning session reminders |
 | `/voice` | Switch coach persona |

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -46,6 +46,21 @@ class Settings(BaseSettings):
     chat_model: str = "anthropic/claude-sonnet-4-6"  # modèle via OpenRouter pour le chat agentique
 
     # App
+    app_language: str = "en"
+
+    @field_validator("app_language")
+    @classmethod
+    def _language_has_catalog(cls, value: str) -> str:
+        catalog = (
+            Path(__file__).resolve().parent.parent
+            / "locales"
+            / value
+            / "LC_MESSAGES"
+            / "banister.mo"
+        )
+        if not catalog.is_file():
+            raise ValueError(f"Unsupported APP_LANGUAGE: {value!r}; no translation catalog found")
+        return value
     environment: str = "development"
     log_level: str = "INFO"
     host: str = "0.0.0.0"

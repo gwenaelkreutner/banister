@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.bot.states import PlanStates
+from app.core.localization import t
 
 router = Router()
 
@@ -13,8 +14,7 @@ async def cmd_start(message: Message, state: FSMContext, user) -> None:
     if user is None:
         # First contact — no user in DB yet
         await message.answer(
-            "👋 Bienvenue sur <b>Banister</b> !\n\n"
-            "Lance /setup pour configurer ton profil et générer ton plan d'entraînement.",
+            t("common.welcome_new"),
             parse_mode="HTML",
         )
         return
@@ -22,9 +22,7 @@ async def cmd_start(message: Message, state: FSMContext, user) -> None:
     # User exists → already configured
     await state.set_state(PlanStates.ACTIVE)
     await message.answer(
-        f"Bon retour, {user.first_name or 'Champion'} ! 🚴\n"
-        "Tape /plan pour voir ton programme de la semaine.\n"
-        "Tape /setup pour reconfigurer ton profil.",
+        t("common.welcome_back", name=user.first_name or "Champion"),
     )
 
 
@@ -32,30 +30,15 @@ async def cmd_start(message: Message, state: FSMContext, user) -> None:
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     current = await state.get_state()
     if current is None:
-        await message.answer("Rien à annuler.")
+        await message.answer(t("common.nothing_to_cancel"))
         return
     await state.clear()
-    await message.answer("❌ Opération annulée.")
+    await message.answer(t("common.operation_cancelled"))
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
     await message.answer(
-        "<b>Banister — Aide</b>\n\n"
-        "• /setup — Configurer ton profil et générer un plan\n"
-        "• /plan — Voir ton programme de la semaine\n"
-        "• /week N — Voir la semaine N de ton plan\n"
-        "• /forme — Voir tes métriques de forme (CTL/ATL/TSB)\n"
-        "• /recap — Récapitulatif hebdomadaire\n"
-        "• /goal — Changer d'objectif et régénérer le plan\n"
-        "• /publish — Publier les 2 prochaines semaines au calendrier\n"
-        "• /unpublish — Retirer les séances publiées\n"
-        "• /reminders — Gérer les rappels de séance\n"
-        "• /voice — Choisir la voix de ton coach\n"
-        "• /reset — Effacer profil + historique local (garde intervals.icu)\n"
-        "• /cancel — Interrompre /setup, /goal ou /reset en cours\n\n"
-        "Tu peux aussi me poser des questions librement ! 💬\n"
-        "🍽️ Et me dire ce que tu manges — je note et j'estime les calories, "
-        "sans commande particulière.",
+        t("common.help"),
         parse_mode="HTML",
     )

@@ -15,6 +15,7 @@ from datetime import date, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.localization import t
 from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.atl_ctl import compute_fitness_from_any, estimate_initial_ctl, tsb_label
@@ -49,16 +50,18 @@ def _item_tss(it):
 
 def _recap_tone_directive(snapshot: WeeklySnapshot, tsb: float, compliance_pct: float | None) -> str:
     """Détermine la directive tonalité pour le LLM selon l'état de la semaine."""
+    from app.llm.prompts import recap_tone_directive
+
     comp = compliance_pct if compliance_pct is not None else 100.0
     if tsb < -30 or comp < 30:
-        return "direct et protecteur — signal d'alarme clair, suggère repos sans culpabiliser"
+        return recap_tone_directive("critical")
     if snapshot.load_trend_pct > 20 and comp >= 80:
-        return "célébratoire — semaine remarquable, souligne la progression"
+        return recap_tone_directive("celebratory")
     if comp >= 80 and tsb > -10:
-        return "enthousiaste et encourageant — belle semaine, maintenir le cap"
+        return recap_tone_directive("enthusiastic")
     if comp < 50:
-        return "compréhensif et factuel — rappelle que chaque séance compte, reprendre progressivement"
-    return "équilibré — coaching factuel et motivant"
+        return recap_tone_directive("understanding")
+    return recap_tone_directive("balanced")
 
 
 async def _estimate_ctl_seed(items: list, session: AsyncSession, user_id) -> float:
@@ -106,20 +109,28 @@ def _format_stats_section(
     trend_str = f"{trend_icon} {abs(trend):.0f}%"
 
     if sessions_planned is not None:
-        sessions_line = f"Séances : <b>{sessions_done}/{sessions_planned}</b>  ({compliance_pct:.0f}% du plan)"
+        sessions_line = t(
+            "weekly_recap.sessions_with_plan",
+            done=sessions_done, planned=sessions_planned, pct=f"{compliance_pct:.0f}",
+        )
     else:
-        sessions_line = f"Séances réalisées : <b>{sessions_done}</b>"
+        sessions_line = t("weekly_recap.sessions_no_plan", done=sessions_done)
 
     monotony_line = ""
     if snapshot.monotony_index is not None and snapshot.monotony_index > MONOTONY_HIGH:
-        monotony_line = f"\n⚠️ Charge monotone (indice : {snapshot.monotony_index:.1f}) — varie les intensités"
+        monotony_line = t(
+            "weekly_recap.monotony_warning", index=f"{snapshot.monotony_index:.1f}"
+        )
 
-    return (
-        f"📊 <b>Semaine du {monday.strftime('%d/%m')} au {sunday.strftime('%d/%m/%Y')}</b>\n\n"
-        f"TSS : <b>{snapshot.tss_7d:.0f}</b>  (moy 6 sem : {snapshot.tss_6w_avg:.0f})\n"
-        f"Tendance : <b>{trend_str}</b>\n"
-        f"{sessions_line}"
-        f"{monotony_line}"
+    return t(
+        "weekly_recap.stats_section",
+        start=monday.strftime("%d/%m"),
+        end=sunday.strftime("%d/%m/%Y"),
+        tss7d=f"{snapshot.tss_7d:.0f}",
+        tss6w=f"{snapshot.tss_6w_avg:.0f}",
+        trend=trend_str,
+        sessions_line=sessions_line,
+        monotony_line=monotony_line,
     )
 
 
@@ -198,9 +209,11 @@ async def compute_weekly_recap(
     # ── Données profil pour LLM ───────────────────────────────────────────────
     profile_data = (profile_db.profile or {}) if profile_db else {}
     user_level: int = profile_data.get("user_level", 0)
-    level_fr: str = profile_data.get("level", "débutant")
+    from app.llm.narrator import goal_label, level_label
+
+    level_fr: str = level_label(profile_data.get("level", "beginner"))
     goal_obj = profile_data.get("objective") or {}
-    goal_fr: str = goal_obj.get("type", "santé") if isinstance(goal_obj, dict) else "santé"
+    goal_fr: str = goal_label(goal_obj.get("type", "fitness") if isinstance(goal_obj, dict) else "fitness")
     ftp_watts = profile_data.get("ftp", "N/A")
     hr_max = profile_data.get("hr_max")
     hr_line = f"\n- FC max : {hr_max} bpm" if hr_max else ""
@@ -216,31 +229,33 @@ async def compute_weekly_recap(
     sessions_planned_display = sessions_planned if sessions_planned is not None else "N/A"
     compliance_display = compliance_pct if compliance_pct is not None else 0.0
     monotony_line = (
-        f"\n- Monotonie : {snapshot.monotony_index:.1f} (⚠️ élevée — varie les intensités)"
+        t("llm.recap_monotony_line", index=f"{snapshot.monotony_index:.1f}")
         if snapshot.monotony_index is not None and snapshot.monotony_index > MONOTONY_HIGH
         else ""
     )
     tid_line = ""
     if tid is not None:
-        from app.llm.prompts import _TID_CLASSIFICATION_FR
+        from app.llm.prompts import tid_classification_label
 
-        tid_label = _TID_CLASSIFICATION_FR.get(tid.classification, tid.classification)
-        tid_line = (
-            f"\n- Distribution d'intensité : {tid_label} "
-            f"(Z1-2 {tid.zone1_pct:.0f}% / Z3-4 {tid.zone2_pct:.0f}% / Z5-7 {tid.zone3_pct:.0f}%)"
+        tid_line = t(
+            "llm.recap_tid_line",
+            label=tid_classification_label(tid.classification),
+            z1=f"{tid.zone1_pct:.0f}", z2=f"{tid.zone2_pct:.0f}", z3=f"{tid.zone3_pct:.0f}",
         )
 
     # ── Séances semaine prochaine ─────────────────────────────────────────────
     next_phase = next_week_obj.phase if next_week_obj else current_phase
     next_tss_target = f"{next_week_obj.total_tss_target:.0f}" if next_week_obj else "N/A"
-    recovery_flag = "(semaine de récupération)" if (next_week_obj and next_week_obj.is_recovery_week) else ""
+    recovery_flag = (
+        t("llm.recap_recovery_flag") if (next_week_obj and next_week_obj.is_recovery_week) else ""
+    )
     if next_week_obj and next_week_obj.sessions:
         next_sessions_detail = "\n".join(
             f"  • {s.description_fr} ({s.zone_code}, {s.duration_minutes}min, ~{s.tss_target:.0f} TSS)"
             for s in next_week_obj.sessions
         )
     else:
-        next_sessions_detail = "  (fin de plan ou semaine non définie)"
+        next_sessions_detail = t("llm.recap_no_next_sessions")
 
     # ── Appels LLM ────────────────────────────────────────────────────────────
     coach_section = await _generate_coach_section(
@@ -309,9 +324,9 @@ async def _generate_coach_section(
 ) -> str:
     try:
         from app.llm.factory import get_provider
-        from app.llm.prompts import WEEKLY_RECAP_SYSTEM_PROMPT, WEEKLY_RECAP_COACH_TEMPLATE
+        from app.llm.prompts import weekly_recap_coach_message, weekly_recap_system_prompt
 
-        prompt = WEEKLY_RECAP_COACH_TEMPLATE.format(
+        prompt = weekly_recap_coach_message(
             level_fr=level_fr,
             goal_fr=goal_fr,
             ftp_watts=ftp_watts,
@@ -330,7 +345,7 @@ async def _generate_coach_section(
         )
         provider = get_provider()
         return await provider.generate(
-            system_prompt=WEEKLY_RECAP_SYSTEM_PROMPT,
+            system_prompt=weekly_recap_system_prompt(),
             user_message=prompt,
             max_tokens=4000,
         )
@@ -345,9 +360,9 @@ async def _generate_nextweek_section(
 ) -> str:
     try:
         from app.llm.factory import get_provider
-        from app.llm.prompts import WEEKLY_RECAP_SYSTEM_PROMPT, WEEKLY_RECAP_NEXTWEEK_TEMPLATE
+        from app.llm.prompts import weekly_recap_nextweek_message, weekly_recap_system_prompt
 
-        prompt = WEEKLY_RECAP_NEXTWEEK_TEMPLATE.format(
+        prompt = weekly_recap_nextweek_message(
             tss_7d=f"{tss_7d:.0f}",
             load_trend_pct=load_trend_pct,
             compliance_pct=compliance_pct,
@@ -360,7 +375,7 @@ async def _generate_nextweek_section(
         )
         provider = get_provider()
         return await provider.generate(
-            system_prompt=WEEKLY_RECAP_SYSTEM_PROMPT,
+            system_prompt=weekly_recap_system_prompt(),
             user_message=prompt,
             max_tokens=4000,
         )
@@ -372,17 +387,17 @@ async def _generate_nextweek_section(
 def _fallback_coach(load_trend_pct: float, compliance_pct: float | None) -> str:
     comp = compliance_pct if compliance_pct is not None else 100.0
     if comp < 30:
-        return "🔴 Semaine difficile sur le plan des séances réalisées. L'essentiel est de reprendre progressivement sans se mettre sous pression."
+        return t("weekly_recap.fallback_coach_critical")
     if load_trend_pct > 20 and comp >= 80:
-        return "✅ Belle semaine ! Tu as bien chargé par rapport à tes habitudes tout en respectant le programme."
+        return t("weekly_recap.fallback_coach_great")
     if comp >= 80:
-        return "💪 Bonne assiduité cette semaine — le respect du plan est la base de la progression."
-    return "🟡 Semaine correcte. Continue sur cette lancée en maintenant la régularité."
+        return t("weekly_recap.fallback_coach_good")
+    return t("weekly_recap.fallback_coach_ok")
 
 
 def _fallback_nextweek(tsb: float) -> str:
     if tsb < -10:
-        return "🔵 Tu arrives avec de la fatigue accumulée — aborde la semaine prochaine avec prudence et écoute ton corps."
+        return t("weekly_recap.fallback_nextweek_fatigued")
     if tsb > 10:
-        return "⚡ Tu es frais — la semaine prochaine est idéale pour attaquer les séances clés avec de l'énergie."
-    return "🎯 Bonne forme pour aborder la semaine prochaine — reste régulier et respecte les intensités prévues."
+        return t("weekly_recap.fallback_nextweek_fresh")
+    return t("weekly_recap.fallback_nextweek_balanced")
