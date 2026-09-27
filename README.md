@@ -9,8 +9,8 @@ your real rides on [intervals.icu](https://intervals.icu), adapts through conver
 flags overtraining before it becomes an injury — with a deterministic engine underneath so the
 LLM never gets to invent your training load.
 
-**Single user. One SQLite file. No cloud dependency, no subscription, no data leaving your
-server except calls to your LLM provider.**
+**Single user. One SQLite file. Your training history and Banister's analyses are stored on your
+own server.** There is no managed Banister database or third-party analytics service.
 
 ---
 
@@ -31,6 +31,17 @@ two jobs on purpose:
   doesn't provide (periodization, matching, guardrails).
 - **It runs on your own hardware.** One container, one SQLite file, no managed database, no
   vendor lock-in. Point it at Anthropic or OpenRouter and it's yours.
+
+---
+
+## How it works
+
+![Banister architecture: the cyclist chats through Telegram; one self-hosted service contains the coaching app, deterministic training engine, and local SQLite database; intervals.icu and the chosen AI provider connect to that service.](docs/banister-architecture.svg)
+
+Banister keeps the training logic, stored history, and analyses in one self-hosted service. Its
+deterministic engine builds plans and evaluates guardrails. For coaching replies, relevant context
+is sent to the AI provider you configure. Rides arrive from intervals.icu through periodic sync,
+and workouts are sent back to its calendar only after the cyclist approves them.
 
 ---
 

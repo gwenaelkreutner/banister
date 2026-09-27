@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="780" viewBox="0 0 1180 780" role="img" aria-labelledby="title description">
+  <title id="title">Banister architecture at a glance</title>
+  <desc id="description">A cyclist talks to Banister through Telegram. One self-hosted Banister service contains the coaching app, deterministic training engine, and local SQLite database. It synchronizes with intervals.icu and calls a configured AI provider for natural-language replies.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#eef2ff"/>
+    </linearGradient>
+    <linearGradient id="banner" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4338ca"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="170%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#334155" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 1 1 L 8 5 L 1 9" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      text { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .heading { fill: #0f172a; font-size: 29px; font-weight: 750; }
+      .subheading { fill: #475569; font-size: 17px; }
+      .section { fill: #4338ca; font-size: 16px; font-weight: 750; letter-spacing: 1.7px; }
+      .label { fill: #0f172a; font-size: 21px; font-weight: 700; }
+      .detail { fill: #475569; font-size: 16px; }
+      .icon { fill: none; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; }
+      .connector { fill: none; stroke: #64748b; stroke-width: 2.5; stroke-linecap: round; }
+    </style>
+  </defs>
+
+  <rect width="1180" height="780" rx="24" fill="url(#background)"/>
+  <rect x="62" y="43" width="9" height="56" rx="4.5" fill="url(#banner)"/>
+  <text x="94" y="72" class="heading">How Banister works</text>
+  <text x="94" y="99" class="subheading">One self-hosted coaching service, connected to the tools cyclists already use.</text>
+
+  <!-- The athlete's entry point -->
+  <rect x="110" y="145" width="228" height="94" rx="17" fill="#fff" filter="url(#shadow)"/>
+  <circle cx="153" cy="192" r="25" fill="#fef3c7"/>
+  <circle cx="153" cy="184" r="7" class="icon" stroke="#b45309"/>
+  <path d="M 140 207 C 141 195 165 195 166 207" class="icon" stroke="#b45309"/>
+  <text x="195" y="184" class="label">Cyclist</text>
+  <text x="195" y="207" class="detail">You stay in control</text>
+
+  <path d="M 345 192 H 404" class="connector" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+
+  <rect x="420" y="145" width="320" height="94" rx="17" fill="#fff" filter="url(#shadow)"/>
+  <circle cx="464" cy="192" r="25" fill="#e0f2fe"/>
+  <path d="M 452 194 L 476 181 L 467 205 L 462 196 Z M 462 196 L 476 181" class="icon" stroke="#0369a1"/>
+  <text x="505" y="184" class="label">Telegram</text>
+  <text x="505" y="207" class="detail">Chat and notifications</text>
+
+  <path d="M 580 246 V 308" class="connector" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+
+  <!-- The single self-hosted application -->
+  <rect x="85" y="312" width="1010" height="265" rx="25" fill="#eef2ff" stroke="#c7d2fe" stroke-width="2"/>
+  <rect x="111" y="333" width="171" height="31" rx="15.5" fill="url(#banner)"/>
+  <text x="127" y="354" fill="#fff" font-size="15" font-weight="700" font-family="Inter, ui-sans-serif, sans-serif">ON YOUR SERVER</text>
+
+  <rect x="119" y="390" width="250" height="146" rx="18" fill="#fff" filter="url(#shadow)"/>
+  <circle cx="158" cy="430" r="21" fill="#dcfce7"/>
+  <path d="M 146 435 L 152 428 L 158 433 L 168 420" class="icon" stroke="#15803d"/>
+  <text x="189" y="432" class="label">Training engine</text>
+  <text x="142" y="472" class="detail">Plans and workout analysis</text>
+  <text x="142" y="497" class="detail">Deterministic guardrails</text>
+
+  <path d="M 377 463 H 403" class="connector" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+
+  <rect x="420" y="390" width="320" height="146" rx="18" fill="#fff" filter="url(#shadow)"/>
+  <circle cx="462" cy="430" r="21" fill="#ede9fe"/>
+  <path d="M 451 423 H 473 V 438 H 460 L 453 444 V 438 H 451 Z" class="icon" stroke="#6d28d9"/>
+  <text x="495" y="432" class="label">Banister app</text>
+  <text x="445" y="472" class="detail">Conversation and commands</text>
+  <text x="445" y="497" class="detail">Coordinates the coaching</text>
+
+  <path d="M 748 463 H 768" class="connector" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+
+  <rect x="785" y="390" width="275" height="146" rx="18" fill="#fff" filter="url(#shadow)"/>
+  <circle cx="826" cy="430" r="21" fill="#e2e8f0"/>
+  <ellipse cx="826" cy="423" rx="10" ry="4" class="icon" stroke="#475569"/>
+  <path d="M 816 423 V 438 C 816 444 836 444 836 438 V 423 M 816 431 C 816 437 836 437 836 431" class="icon" stroke="#475569"/>
+  <text x="860" y="432" class="label">Local SQLite</text>
+  <text x="808" y="472" class="detail">Training history and plans</text>
+  <text x="808" y="497" class="detail">Stored on your server</text>
+
+  <!-- External integrations: straight paths, no crossing connectors -->
+  <path d="M 340 584 V 625" class="connector" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <path d="M 840 584 V 625" class="connector" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+
+  <rect x="145" y="640" width="390" height="100" rx="18" fill="#fff" filter="url(#shadow)"/>
+  <circle cx="190" cy="688" r="25" fill="#d1fae5"/>
+  <path d="M 177 689 H 184 L 188 679 L 194 699 L 199 688 H 204" class="icon" stroke="#047857"/>
+  <text x="230" y="680" class="label">intervals.icu</text>
+  <text x="230" y="705" class="detail">Rides in · approved workouts out</text>
+
+  <rect x="645" y="640" width="390" height="100" rx="18" fill="#fff" filter="url(#shadow)"/>
+  <circle cx="690" cy="688" r="25" fill="#ede9fe"/>
+  <path d="M 690 675 L 693 684 L 702 688 L 693 691 L 690 701 L 687 691 L 678 688 L 687 684 Z" class="icon" stroke="#6d28d9"/>
+  <text x="730" y="680" class="label">AI provider</text>
+  <text x="730" y="705" class="detail">Relevant context · drafted replies</text>
+</svg>
