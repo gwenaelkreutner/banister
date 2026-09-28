@@ -138,3 +138,20 @@ def test_no_recent_logs_still_renders_cleanly():
     )
     assert "DERNIÈRE SÉANCE : aucune séance enregistrée." in prompt
     assert "Ressenti (RPE)" not in prompt
+
+
+def test_active_injury_does_not_add_an_alert_to_system_prompt():
+    prompt = build_system_prompt(
+        first_name="Jean",
+        profile=_profile(injury_status={
+            "is_injured": True,
+            "location": "other",
+            "severity": "mild",
+            "zone_restrictions": {"Z5": "Z3", "Z6": "Z3"},
+        }),
+        metrics=None, recent_logs=[], plan=None, today=date(2026, 9, 28),
+    )
+    assert "BLESSURE ACTIVE" not in prompt
+    assert "zones restreintes" not in prompt
+    assert "Z5→Z3" not in prompt
+    assert "Z6→Z3" not in prompt

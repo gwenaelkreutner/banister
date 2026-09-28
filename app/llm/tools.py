@@ -635,21 +635,6 @@ def build_system_prompt(
         t("llm.profile.hr_zones_line", zones=zones_str),
     ]
 
-    # Blessure active
-    injury = getattr(p, "injury_status", None)
-    if injury and injury.get("is_injured"):
-        loc = _body_location_label(injury.get("location", ""))
-        sev = _severity_label(injury.get("severity", ""))
-        restrictions = injury.get("zone_restrictions", {})
-        restr_str = (
-            ", ".join(f"{k}→{v}" for k, v in restrictions.items())
-            if restrictions else t("llm.profile.no_restrictions")
-        )
-        lines += [
-            "",
-            t("llm.profile.active_injury", location=loc, severity=sev, restrictions=restr_str),
-        ]
-
     # Mémoire coach — texte écrit par le LLM lui-même (outil update_coach_memory) et
     # réinjecté tel quel à chaque tour futur : encadré entre marqueurs anti-injection
     # (app/llm/prompt_fence.py), jamais interpolé brut dans le prompt.

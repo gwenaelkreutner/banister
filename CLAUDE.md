@@ -880,6 +880,9 @@ Trois corrections dans `app/llm/tools.py::build_system_prompt()`, aucune n'est u
 
 ## Contexte chat chaud et historique à la demande (hors spec — 2026-09-22)
 
+Depuis le 2026-09-28, le prompt système du chat n'affiche plus l'alerte « BLESSURE ACTIVE »
+ni les restrictions de zones du statut de blessure enregistré, à la demande de l'utilisateur.
+
 Le chat n'injecte plus un historique détaillé de sept séances à chaque tour. `run_chat()` borne ses
 données d'entraînement à 90 jours, place seulement la dernière séance dans le prompt, puis ajoute deux
 agrégats déterministes (7 et 28 jours : nombre de séances, TSS, complétude RPE). CTL/ATL/TSB restent dans
