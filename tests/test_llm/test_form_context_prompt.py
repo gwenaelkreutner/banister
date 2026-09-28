@@ -10,9 +10,12 @@ prompt rules — see CLAUDE.md § "TSB seul ne suffit pas" / "Sourcer avant de c
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
+
+import pytest
 
 from app.db.models.session_log import SessionLog
+from app.db.models.wellness import Wellness
 from app.engine.atl_ctl import FitnessMetrics
 from app.engine.phase_detection import PhaseDetectionResult
 from app.engine.schemas import (
@@ -155,3 +158,113 @@ def test_active_injury_does_not_add_an_alert_to_system_prompt():
     assert "zones restreintes" not in prompt
     assert "Z5→Z3" not in prompt
     assert "Z6→Z3" not in prompt
+
+
+@pytest.mark.parametrize("language", ["fr", "en"])
+def test_daily_recovery_and_dated_weight_are_in_context(language, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "app_language", language)
+    today = date(2026, 9, 29)
+    prompt = build_system_prompt(
+        first_name="Jean", profile=_profile(weight_kg=80), metrics=None,
+        recent_logs=[], plan=None, today=today,
+        wellness_today=Wellness(
+            date=today, hrv=61, resting_hr=48, sleep_seconds=27000,
+            sleep_quality=1, sleep_score=83, fatigue=2, stress=1, mood=1, motivation=1,
+        ),
+        latest_weight=Wellness(date=today - timedelta(days=2), weight_kg=72.5),
+    )
+    assert "61 ms" in prompt and "48 bpm" in prompt and "7 h 30 min" in prompt
+    assert "83" in prompt and "fatigue 2/4" in prompt
+    assert "72.5 kg" in prompt and "2026-09-27" in prompt and "intervals.icu" in prompt
+    assert "80.0 kg" not in prompt
+    assert "2026-09-29" in prompt
+
+
+@pytest.mark.parametrize(
+    "language,origin", [("fr", "profil configuré"), ("en", "configured profile")]
+)
+def test_configured_weight_origin_is_explicit(language, origin, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "app_language", language)
+    prompt = build_system_prompt(
+        first_name="Jean", profile=_profile(weight_kg=80), metrics=None,
+        recent_logs=[], plan=None, today=date(2026, 9, 29),
+    )
+    assert f"80.0 kg ({origin})" in prompt
+
+
+def test_past_daily_recovery_is_never_shown_as_today():
+    prompt = build_system_prompt(
+        first_name="Jean", profile=_profile(), metrics=None,
+        recent_logs=[], plan=None, today=date(2026, 9, 29),
+        wellness_today=Wellness(date=date(2026, 9, 28), hrv=61, resting_hr=48, sleep_seconds=27000),
+    )
+    assert "61 ms" not in prompt and "48 bpm" not in prompt and "7 h 30 min" not in prompt
+
+
+async def test_run_chat_reads_paris_daily_values_and_latest_weight(db_session, monkeypatch):
+    from app.core import time
+    from app.db.models.profile import AthleteProfile
+    from app.db.models.user import User
+    from app.db.repositories import wellness_repo
+    from app.llm import chat, tools
+
+    instant = datetime(2026, 9, 28, 23, 30, tzinfo=UTC)
+
+    class ParisClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant.astimezone(tz)
+
+    monkeypatch.setattr(time, "datetime", ParisClock)
+    monkeypatch.setattr(tools, "datetime", ParisClock)
+    assert time.paris_today() == date(2026, 9, 29) != instant.date()
+
+    user = User(telegram_id=791, first_name="Jean")
+    db_session.add(user)
+    await db_session.flush()
+    db_session.add(AthleteProfile(
+        user_id=user.id, profile=_profile(weight_kg=80).model_dump(mode="json")
+    ))
+    await wellness_repo.upsert(
+        db_session, user.id, date(2026, 9, 28), ctl=30, atl=40, hrv=99, weight_kg=72.5,
+    )
+    await wellness_repo.upsert(
+        db_session, user.id, date(2026, 9, 29), ctl=65, atl=50,
+        hrv=61, resting_hr=48, sleep_seconds=27000,
+    )
+    # Future weights must not replace the latest known measurement.
+    await wellness_repo.upsert(db_session, user.id, date(2026, 9, 30), weight_kg=70)
+    await db_session.commit()
+    wellness_result = await chat._tool_get_wellness_history(
+        {"metrics": ["hrv", "sleep_seconds"], "granularity": "daily"},
+        user=user, session=db_session,
+    )
+    assert wellness_result["range_end"] == "2026-09-29"
+    assert wellness_result["points"][-1] == {
+        "date": "2026-09-29", "hrv": 61, "sleep_seconds": 27000
+    }
+    captured = {}
+
+    async def fake_agentic_loop(**kwargs):
+        captured.update(kwargs)
+        return "Bonjour", None, None, {}, []
+
+    monkeypatch.setattr(chat, "run_agentic_loop", fake_agentic_loop)
+    await chat.run_chat("Comment est ma forme ?", user, db_session)
+    prompt = captured["system"]
+    assert "CTL 65" in prompt and "ATL 50" in prompt
+    assert "61.0 ms" in prompt and "48 bpm" in prompt and "7 h 30 min" in prompt
+    assert "99.0 ms" not in prompt
+    assert "72.5 kg" in prompt and "2026-09-28" in prompt
+    assert "80.0 kg" not in prompt and "70.0 kg" not in prompt
+    assert "2026-09-29" in prompt
+
+    await wellness_repo.upsert(db_session, user.id, date(2026, 9, 30), ctl=64, atl=45)
+    instant = datetime(2026, 9, 29, 23, 30, tzinfo=UTC)
+    await chat.run_chat("Et aujourd'hui ?", user, db_session)
+    prompt = captured["system"]
+    assert "61.0 ms" not in prompt and "7 h 30 min" not in prompt

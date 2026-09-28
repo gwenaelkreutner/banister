@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.localization import t
+from app.core.time import paris_today
 from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any
@@ -78,17 +79,18 @@ async def run_chat(
     lui-même loggé dans `chat_messages`). `None` si le message n'est pas une réponse.
     """
     # 1. Charger le contexte
+    today = paris_today()
     profile_row = await repo.profile_repo.get_by_user_id(session, user.id)
     plan = await repo.plan_repo.get_active_plan(session, user.id)
-    context_start = date.today() - timedelta(days=89)
+    context_start = today - timedelta(days=89)
     logs = await repo.session_log_repo.get_in_range(
-        session, user.id, context_start, date.today()
+        session, user.id, context_start, today
     )
     history = await repo.chat_repo.get_conversation(session, user.id, limit=8)
 
     # Activités importées pré-plan (sans double-comptage avec session_logs)
-    activities = await repo.activity_repo.get_for_user(session, user.id, days=90)
-    plan_start = plan.start_date if plan else date.today()
+    activities = await repo.activity_repo.get_in_range(session, user.id, context_start, today)
+    plan_start = plan.start_date if plan else today
     pre_plan_acts = [a for a in activities if a.activity_date < plan_start]
     all_items = pre_plan_acts + logs
 
@@ -99,12 +101,12 @@ async def run_chat(
         except Exception:
             logger.warning("Impossible de valider le profil athlète")
 
-    current = await get_current_fitness(session, user.id)
+    current = await get_current_fitness(session, user.id, today=today)
     fitness_as_of = current.as_of if current is not None else None
     fitness_is_stale = current.is_stale if current is not None else False
     metrics: FitnessMetrics | None = (
         current.metrics if current is not None
-        else (compute_fitness_from_any(all_items) if all_items else None)
+        else (compute_fitness_from_any(all_items, target_date=today) if all_items else None)
     )
 
     # Convertir le plan SQLAlchemy en schema Pydantic pour build_system_prompt
@@ -132,7 +134,7 @@ async def run_chat(
     recent_items = all_recent_items[-1:]
     from app.services.coach_queries import hot_training_summary
 
-    training_summary = hot_training_summary(all_recent_items, today=date.today())
+    training_summary = hot_training_summary(all_recent_items, today=today)
     # Calendrier intervals.icu publié : si le plan a évolué depuis, le dire au coach
     # plutôt que de laisser croire que le calendrier est à jour (spec 005 FR-020).
     calendar_divergence: str | None = None
@@ -159,7 +161,7 @@ async def run_chat(
     guardrail_findings: list = []
     recovery_gap: str | None = None
     try:
-        _today = date.today()
+        _today = today
         # Séance dure prévue aujourd'hui ? (pour l'énoncé de conflit FR-012)
         prescribed_type: str | None = None
         prescribed_zone: str | None = None
@@ -194,8 +196,12 @@ async def run_chat(
     # Wellness du jour (sommeil/fatigue/stress/mood/motivation) — Section11-inspired
     # (2026-09-21), même journée que le registre de métriques ci-dessous.
     wellness_today = None
+    latest_weight = None
     try:
-        wellness_today = await repo.wellness_repo.get_by_date(session, user.id, date.today())
+        wellness_today = await repo.wellness_repo.get_by_date(session, user.id, today)
+        latest_weight = await repo.wellness_repo.get_latest_weight(
+            session, user.id, on_or_before=today
+        )
     except Exception:
         logger.warning("Impossible de charger le wellness du jour")
 
@@ -208,14 +214,14 @@ async def run_chat(
 
         _plan_week_phase: str | None = None
         if plan_schema and plan_schema.start_date:
-            _wk_num = (date.today() - plan_schema.start_date).days // 7 + 1
+            _wk_num = (today - plan_schema.start_date).days // 7 + 1
             _cur_week = next((w for w in plan_schema.weeks if w.week_number == _wk_num), None)
             if _cur_week:
                 _plan_week_phase = _cur_week.phase
         _target_date = profile.objective.target_date if profile else None
         detected_phase_result = detect_training_phase(
             all_items,
-            today=date.today(),
+            today=today,
             plan_week_phase=_plan_week_phase,
             target_date=_target_date,
         )
@@ -228,7 +234,7 @@ async def run_chat(
     try:
         from app.services.guardrail_service import collect_registry_metrics
 
-        registry_metrics = await collect_registry_metrics(session, user.id)
+        registry_metrics = await collect_registry_metrics(session, user.id, today=today)
     except Exception:
         logger.warning("Impossible de collecter les métriques garde-fous pour le registre")
 
@@ -240,7 +246,7 @@ async def run_chat(
         fitness_is_stale=fitness_is_stale,
         recent_logs=recent_items,
         plan=plan_schema,
-        today=date.today(),
+        today=today,
         session_logs=logs,  # permet d'afficher plan + réalisé pour la semaine en cours
         coach_memory=list(profile_row.coach_memory or []) if profile_row else None,
         athlete_notes=dict(profile_row.athlete_notes or {}) if profile_row else None,
@@ -248,6 +254,7 @@ async def run_chat(
         guardrail_findings=guardrail_findings,
         recovery_insufficiency=recovery_gap,
         wellness_today=wellness_today,
+        latest_weight=latest_weight,
         recovery_index=registry_metrics.get("recovery_index"),
         detected_phase=detected_phase_result,
         training_summary=training_summary,
@@ -587,7 +594,7 @@ def _tool_get_upcoming_sessions(plan, days: int, start_offset: int = 0) -> dict:
     except (TypeError, ValueError):
         days, start_offset = 7, 0
 
-    start = date.today() + timedelta(days=start_offset)
+    start = paris_today() + timedelta(days=start_offset)
     sessions = []
     for offset in range(days):
         target_date = start + timedelta(days=offset)
@@ -651,7 +658,7 @@ async def _tool_get_session_detail(args: dict, *, user: User, session: AsyncSess
         session_date = date.fromisoformat(args.get("date", ""))
     except (TypeError, ValueError):
         return {"error": t("llm.tools.date_format_error")}
-    if session_date > date.today():
+    if session_date > paris_today():
         return {"error": t("llm.tools.future_session_no_data")}
     return await session_detail(session, user.id, session_date=session_date)
 

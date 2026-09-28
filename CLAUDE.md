@@ -141,7 +141,7 @@ app/
     │   ├── history.py       # Import historique à la première connexion (idempotent)
     │   ├── poller.py        # Interrogation périodique — détecte les nouvelles activités
     │   ├── notifier.py      # Notification étagée post-sortie + clavier RPE
-    │   ├── wellness.py      # HRV / FC repos / sommeil (spec 006 guardrails consomme, pas encore branché)
+    │   ├── wellness.py      # ingestion des 38 champs wellness, rafraîchie et persistée par le poller
     │   ├── workout_dsl.py   # spec 005 : Step/RepeatGroup → texte DSL intervals.icu + hash_session_content()
     │   └── calendar.py      # spec 005 : publish_sessions() (diff idempotent), withdraw_event(),
     │                        # remote_event_hash() ; ne touche jamais la DB (couche provider pure)
@@ -159,6 +159,8 @@ consolidation).
 
 ```
 poller.py (tick périodique, cf. INTERVALS_POLL_INTERVAL_MINUTES, défaut 5 min)
+    → import historique idempotent + rafraîchissement wellness sur six jours (aujourd'hui à J-5)
+    → commit avant toute détection : les jours de repos et les échecs de notification conservent les données
     → client.list_activities() : liste des activités récentes
     → détecte les nouvelles (sync_state), une notification par activité, jamais de doublon ni d'oubli
     → mapper.map_activity(payload) → AnalyzedSession
@@ -348,7 +350,7 @@ doc (FR-016, SC-007). ⚠️ le ratio `ATL/CTL` est du 7j:42j (EWMA), la plage 0
 | `chat_messages` | Historique LLM (role, content, intent, tool_used) |
 | `activities` | Import historique (`source="intervals_icu"`, `source_activity_id`, `tss`, `tss_method`, `device_watts`) |
 | `weekly_adherence` | Taux d'adhérence hebdomadaire — upsert à chaque `/recap` ; clé `(user_id, week_start_date)` ; colonnes : `sessions_done`, `sessions_planned`, `compliance_pct`, `tss_7d`, `week_number`, `plan_id` |
-| `wellness` | HRV / FC repos / sommeil / CTL / ATL / **`ramp_rate`** quotidiens — ingérée à chaque tick du poller (`ingest_wellness`), source de `get_current_fitness()` et des signaux de charge (spec 006). `ramp_rate` = gain de CTL/semaine calculé par la source, consommé tel quel. Depuis 2026-09-21 (chantier "signaux enrichis intervals.icu", inspiré de Section11) : ~31 champs bruts /wellness supplémentaires, tous consommés tels quels — `hrv_sdnn`, `sleep_quality`/`sleep_score`, `mental_energy`, `avg_sleeping_hr`, `vo2max`, `fatigue`/`soreness`/`stress`/`mood`/`motivation`/`injury`/`hydration` (échelle 1-4, 1=meilleur état), `spo2`, `blood_glucose`, `systolic`/`diastolic`, `baevsky_si`, `lactate`, `respiration`, `body_fat_pct`, `abdomen_cm`, `steps`, `hydration_volume_l`, `kcal_consumed`, `carbohydrates_g`/`protein_g`/`fat_g`, `menstrual_phase`/`menstrual_phase_predicted`, `readiness`. `sleep_quality`/`sleep_score`/`fatigue`/`stress`/`mood`/`motivation` rejoignent le bloc FORME ACTUELLE de `build_system_prompt()` (le chat uniquement — pas `/review`/`/recap`) ; le reste (macros, spO2, tension, glycémie, lactate, menstrual_phase...) reste stocké mais non surfacé, en attente d'un besoin réel (leçon : HRV/RHR eux-mêmes vides depuis juillet 2025 sur le compte de test) |
+| `wellness` | HRV / FC repos / sommeil / CTL / ATL / **`ramp_rate`** quotidiens — ingérée à chaque tick du poller (`ingest_wellness`), source de `get_current_fitness()` et des signaux de charge (spec 006). `ramp_rate` = gain de CTL/semaine calculé par la source, consommé tel quel. Depuis 2026-09-21 (chantier "signaux enrichis intervals.icu", inspiré de Section11) : ~31 champs bruts /wellness supplémentaires, tous consommés tels quels — `hrv_sdnn`, `sleep_quality`/`sleep_score`, `mental_energy`, `avg_sleeping_hr`, `vo2max`, `fatigue`/`soreness`/`stress`/`mood`/`motivation`/`injury`/`hydration` (échelle 1-4, 1=meilleur état), `spo2`, `blood_glucose`, `systolic`/`diastolic`, `baevsky_si`, `lactate`, `respiration`, `body_fat_pct`, `abdomen_cm`, `steps`, `hydration_volume_l`, `kcal_consumed`, `carbohydrates_g`/`protein_g`/`fat_g`, `menstrual_phase`/`menstrual_phase_predicted`, `readiness`. `sleep_quality`/`sleep_score`/`fatigue`/`stress`/`mood`/`motivation` rejoignent le bloc FORME ACTUELLE de `build_system_prompt()` (le chat uniquement — pas `/review`/`/recap`) ; la VFC, la FC au repos et la durée de sommeil du jour les rejoignent depuis le 2026-09-28 ; tous les champs synchronisés sont accessibles par `get_wellness_history` (quatre mesures par appel, 90 jours) |
 | `response_check_failures` | spec 006 — une ligne par chiffre d'une réponse LLM qui ne correspond pas à ce qui a été retrouvé (`failure_kind` mismatch/unretrieved, `stated_value`, `expected_value`, `response_excerpt`). Jamais purgée : SC-001/SC-002 sont des mesures sur un corpus |
 | `guardrail_acknowledgements` | spec 006 — décision de l'athlète sur une occurrence de garde-fou (`occurrence_key` = `kind:jour`, `decision` accepted/declined). Un refus démote l'action sans museler le signal (FR-025/FR-026) |
 | `publication_approvals` | spec 005 — consentement enregistré et lié au contenu (`content_hash` SHA-256 sur ce qui a été montré) ; `status` pending/approved/declined (terminal, jamais supprimé — FR-003) ; `horizon_start`/`horizon_end`, `session_count` |
@@ -880,6 +882,24 @@ Trois corrections dans `app/llm/tools.py::build_system_prompt()`, aucune n'est u
 
 ## Contexte chat chaud et historique à la demande (hors spec — 2026-09-22)
 
+**Actualisation wellness (2026-09-28)** : l'import et le rafraîchissement du poller sont
+validés en base avant la détection des activités. Auparavant, une journée sans activité
+fermait la session sans commit et perdait les mises à jour. La fenêtre reste aujourd'hui
+à J-5, avec les dates de Paris (`app/core/time.py::paris_today`), également utilisées
+par le contexte quotidien et les outils de lecture du coach. Un nouvel upsert corrige
+la même journée sans doublon ; une valeur absente conserve la mesure déjà renseignée
+pour cette journée, et reste `NULL` si aucune mesure n'existe.
+
+Le contexte chaud ajoute la VFC (ms), la FC au repos (bpm) et la durée de sommeil du
+jour aux scores de sommeil et ressentis existants. Aucune mesure de récupération passée
+n'est présentée comme actuelle. Le poids affiché vient de la dernière mesure wellness
+renseignée, datée (sans limite d'ancienneté et jamais dans le futur) ; à défaut, il vient
+du profil configuré, dont l'origine est indiquée. Le profil et la FTP ne sont pas modifiés.
+`get_wellness_history` expose les 38 champs synchronisés, y compris les signaux bruts
+et nutritionnels, avec quatre mesures distinctes au maximum et 90 jours d'historique.
+Les unités restent celles des champs stockés (`sleep_seconds` en secondes, etc.).
+Aucun appel réseau supplémentaire au moment d'un message, aucune migration nécessaire.
+
 Depuis le 2026-09-28, le prompt système du chat n'affiche plus l'alerte « BLESSURE ACTIVE »
 ni les restrictions de zones du statut de blessure enregistré, à la demande de l'utilisateur.
 
@@ -1314,7 +1334,7 @@ retire du prompt sans toucher au reste du code, si un bloc s'avère bruyant ou t
 
 **`recovery_index`/`detected_phase` — recalculés à la date de la séance, pas "aujourd'hui"**
 (`assemble_review_context()`, `app/services/session_review.py`, câblé 2026-09-21) : contrairement au chat
-(`app/llm/chat.py`, toujours `today=date.today()`), `/review` relit une séance passée — réutiliser l'état
+(`app/llm/chat.py`, date quotidienne de Paris), `/review` relit une séance passée — réutiliser l'état
 d'aujourd'hui serait trompeur. Les deux fonctions sources (`collect_registry_metrics()`,
 `detect_training_phase()`) se sont avérées déjà pleinement paramétrées par `today` (pas de refonte
 nécessaire, contrairement à ce qui avait été supposé avant vérification) : appelées avec

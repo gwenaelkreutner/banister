@@ -11,7 +11,18 @@ from datetime import date, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import paris_today
 from app.db import repositories as repo
+
+WELLNESS_METRICS = (
+    "hrv", "resting_hr", "sleep_seconds", "weight_kg", "ctl", "atl", "ramp_rate",
+    "hrv_sdnn", "sleep_quality", "sleep_score", "mental_energy", "avg_sleeping_hr",
+    "vo2max", "fatigue", "soreness", "stress", "mood", "motivation", "injury",
+    "hydration", "spo2", "blood_glucose", "systolic", "diastolic", "baevsky_si",
+    "lactate", "respiration", "body_fat_pct", "abdomen_cm", "steps",
+    "hydration_volume_l", "kcal_consumed", "carbohydrates_g", "protein_g", "fat_g",
+    "menstrual_phase", "menstrual_phase_predicted", "readiness",
+)
 
 
 def clamp_days(value: object, *, default: int, maximum: int) -> int:
@@ -48,7 +59,7 @@ async def fitness_history(
     session: AsyncSession, user_id: uuid.UUID, *, days: int, granularity: str
 ) -> dict:
     """Return source-authoritative CTL/ATL/TSB history, bounded by caller limits."""
-    today = date.today()
+    today = paris_today()
     start = today - timedelta(days=days - 1)
     rows = await repo.wellness_repo.get_range(session, user_id, start, today)
     points = [r for r in rows if r.ctl is not None and r.atl is not None]
@@ -83,7 +94,7 @@ async def training_trend(
     session: AsyncSession, user_id: uuid.UUID, *, days: int
 ) -> dict:
     """Return workload totals by week without asking the model to add activity data."""
-    today = date.today()
+    today = paris_today()
     start = today - timedelta(days=days - 1)
     plan = await repo.plan_repo.get_active_plan(session, user_id)
     logs = await repo.session_log_repo.get_in_range(session, user_id, start, today)
@@ -129,9 +140,10 @@ async def wellness_history(
     granularity: str,
 ) -> dict:
     """Return selected raw wellness signals only; absent readings stay absent."""
-    allowed = {"hrv", "resting_hr", "sleep_score", "fatigue", "stress", "motivation", "weight_kg"}
-    selected = [m for m in metrics if m in allowed][:4] or ["hrv", "resting_hr"]
-    today = date.today()
+    selected = list(dict.fromkeys(m for m in metrics if m in WELLNESS_METRICS))[:4]
+    selected = selected or ["hrv", "resting_hr"]
+    days = clamp_days(days, default=28, maximum=90)
+    today = paris_today()
     start = today - timedelta(days=days - 1)
     rows = await repo.wellness_repo.get_range(session, user_id, start, today)
     if granularity == "weekly":

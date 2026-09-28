@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.wellness import Wellness
@@ -53,7 +53,8 @@ async def upsert(
     readiness: float | None = None,
 ) -> None:
     """Insert ou met à jour le bien-être pour (user_id, date_). Chaque signal absent de la
-    source reste `None` ici — jamais réécrit en `0` (FR-024). `ramp_rate` : gain de CTL
+    source reste inconnu à l'insertion et conserve la mesure existante au rafraîchissement
+    — jamais réécrit en `0` (FR-024). `ramp_rate` : gain de CTL
     par semaine calculé par la source, consommé tel quel (spec 006 R4)."""
     values = {
         "hrv": hrv,
@@ -98,7 +99,13 @@ async def upsert(
     stmt = (
         dialect_insert(session)(Wellness)
         .values(id=uuid.uuid4(), user_id=user_id, date=date_, **values)
-        .on_conflict_do_update(index_elements=["user_id", "date"], set_=values)
+        .on_conflict_do_update(
+            index_elements=["user_id", "date"],
+            set_={
+                key: func.coalesce(value, getattr(Wellness, key))
+                for key, value in values.items()
+            },
+        )
     )
     await session.execute(stmt)
     await session.flush()
@@ -128,6 +135,23 @@ async def get_latest(
             Wellness.date <= on_or_before,
             Wellness.ctl.is_not(None),
             Wellness.atl.is_not(None),
+        )
+        .order_by(Wellness.date.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_latest_weight(
+    session: AsyncSession, user_id: uuid.UUID, *, on_or_before: date
+) -> Wellness | None:
+    """Last dated weight, independent of whether that day has fitness metrics."""
+    result = await session.execute(
+        select(Wellness)
+        .where(
+            Wellness.user_id == user_id,
+            Wellness.date <= on_or_before,
+            Wellness.weight_kg.is_not(None),
         )
         .order_by(Wellness.date.desc())
         .limit(1)

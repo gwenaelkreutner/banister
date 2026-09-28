@@ -7,12 +7,15 @@ bounding (FR-011), overlapping-call protection (FR-014), and bounded retry (FR-0
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import asyncio
+from datetime import UTC, date, datetime
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.db.models.base import Base
 from app.db.models.user import User
-from app.db.repositories import sync_state_repo
+from app.db.repositories import activity_repo, sync_state_repo, wellness_repo
 from app.providers.intervals import poller
 from app.providers.intervals.errors import (
     CredentialRejectedError,
@@ -44,6 +47,28 @@ async def _make_user(session, telegram_id: int) -> User:
 
 
 class TestDetectNewActivities:
+    @pytest.mark.parametrize("month", [1, 9])
+    async def test_detection_uses_paris_day_when_utc_differs(self, db_session, monkeypatch, month):
+        from app.core import time
+
+        instant = datetime(2026, month, 28, 23, 30, tzinfo=UTC)
+
+        class ParisClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return instant.astimezone(tz)
+
+        monkeypatch.setattr(time, "datetime", ParisClock)
+        user = await _make_user(db_session, 621)
+
+        class Client:
+            async def list_activities(self, *, oldest, newest):
+                assert newest == date(2026, month, 29).isoformat()
+                assert oldest == date(2026, month, 22).isoformat()
+                return []
+
+        assert await poller.detect_new_activities(db_session, user.id, Client()) == []
+
     async def test_returns_only_unreported_activities(self, db_session):
         user = await _make_user(db_session, 600)
         await sync_state_repo.mark_reported(
@@ -188,3 +213,86 @@ class TestPollOnceRetryAndLocking:
 
         assert result == []
         assert client.calls == len(poller._RETRY_DELAYS_S) + 1
+
+
+@pytest.mark.parametrize("initial_import", [True, False])
+@pytest.mark.parametrize("outcome", ["rest", "detection_error", "notification_error", "no_bot"])
+async def test_scheduler_persists_source_data_before_detection_and_delivery(
+    tmp_path, monkeypatch, initial_import, outcome
+):
+    """Read after scheduler session closure: a flush alone cannot satisfy this test."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'poller.sqlite'}")
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    today = date(2026, 9, 29)
+    monkeypatch.setattr(poller, "paris_today", lambda: today)
+
+    class Client:
+        wellness_windows = []
+
+        async def list_activities(self, *, oldest, newest):
+            if (date.fromisoformat(newest) - date.fromisoformat(oldest)).days > 7:
+                return [{"id": "historical", "start_date_local": "2026-09-01T10:00:00"}]
+            if outcome == "detection_error":
+                raise CredentialRejectedError("bad key")
+            return [] if outcome == "rest" else [{"id": "new"}]
+
+        async def list_wellness(self, *, oldest, newest):
+            self.wellness_windows.append((oldest, newest))
+            return [{
+                "id": str(today), "ctl": 65, "atl": 50, "weight": 72.5,
+                "hrv": 61, "restingHR": 48, "sleepSecs": 27000,
+                "sleepScore": 83, "spO2": 97, "menstrualPhase": "LUTEAL",
+            }]
+
+    client = Client()
+    sleeps = 0
+
+    async def one_tick(_delay):
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps > 1:
+            raise asyncio.CancelledError
+
+    notifications = []
+
+    async def failed_notification(*args, **kwargs):
+        notifications.append(kwargs)
+        raise RuntimeError("delivery failed")
+
+    monkeypatch.setattr(poller.asyncio, "sleep", one_tick)
+    monkeypatch.setattr(
+        "app.providers.intervals.notifier.notify_detected_activity", failed_notification
+    )
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        async with factory() as session:
+            user = await _make_user(session, 620)
+            user_id = user.id
+            if not initial_import:
+                await sync_state_repo.mark_history_import_complete(session, user_id)
+            await wellness_repo.upsert(session, user_id, today, ctl=30, atl=40, weight_kg=75)
+            await session.commit()
+
+        with pytest.raises(asyncio.CancelledError):
+            await poller.run_poller_scheduler(
+                factory, lambda: client, bot=None if outcome == "no_bot" else object()
+            )
+
+        async with factory() as reader:
+            row = await wellness_repo.get_by_date(reader, user_id, today)
+            assert (row.ctl, row.atl, row.weight_kg) == (65, 50, 72.5)
+            assert (row.hrv, row.resting_hr, row.sleep_seconds) == (61, 48, 27000)
+            assert (row.sleep_score, row.spo2, row.menstrual_phase) == (83, 97, "LUTEAL")
+            state = await sync_state_repo.get_or_create_sync_state(reader, user_id)
+            assert state.history_import_complete is True
+            if initial_import:
+                activities = await activity_repo.get_in_range(
+                    reader, user_id, date(2026, 9, 1), today
+                )
+                assert [a.source_activity_id for a in activities] == ["historical"]
+            assert not await sync_state_repo.is_reported(reader, user_id, "new")
+        assert client.wellness_windows[-1] == ("2026-09-24", "2026-09-29")
+        assert bool(notifications) == (outcome == "notification_error")
+    finally:
+        await engine.dispose()

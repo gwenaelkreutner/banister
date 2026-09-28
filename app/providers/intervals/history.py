@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import paris_today
 from app.db.repositories import activity_repo, sync_state_repo
 from app.providers.intervals.client import IntervalsClient
 from app.providers.intervals.wellness import ingest_wellness
@@ -87,7 +88,7 @@ async def import_history(
     if state.history_import_complete:
         return HistoryImportResult(0, 0, True, False)
 
-    today = today or date.today()
+    today = today or paris_today()
     oldest = today - timedelta(days=target_days)
 
     activities = await client.list_activities(oldest=oldest.isoformat(), newest=today.isoformat())

@@ -18,6 +18,7 @@ from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import paris_today
 from app.db.repositories import wellness_repo
 from app.engine.atl_ctl import FitnessMetrics
 
@@ -36,7 +37,7 @@ async def get_current_fitness(
     wellness row has been ingested yet (brand-new athlete, before the first poll/import
     cycle) — callers fall back to the local estimate in that case, same as before this
     module existed."""
-    today = today or date.today()
+    today = today or paris_today()
     row = await wellness_repo.get_latest(session, user_id, on_or_before=today)
     if row is None:
         return None

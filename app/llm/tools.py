@@ -13,6 +13,7 @@ from app.engine.rpe import rpe_label
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
 from app.engine.zones import compute_hr_zones
 from app.llm.prompt_fence import sanitize_untrusted_text, wrap_untrusted_block
+from app.services.coach_queries import WELLNESS_METRICS
 
 # ── Schémas des outils (format OpenAI tool_use) ──────────────────────────────
 
@@ -79,10 +80,7 @@ TOOL_DEFINITIONS = [
                         "type": "array",
                         "items": {
                             "type": "string",
-                            "enum": [
-                                "hrv", "resting_hr", "sleep_score", "fatigue", "stress",
-                                "motivation", "weight_kg",
-                            ],
+                            "enum": list(WELLNESS_METRICS),
                         },
                         "maxItems": 4,
                     },
@@ -595,6 +593,7 @@ def build_system_prompt(
     recovery_index: float | None = None,
     detected_phase: object | None = None,
     training_summary: list[str] | None = None,
+    latest_weight: object | None = None,
 ) -> str:
     p = profile
 
@@ -608,7 +607,15 @@ def build_system_prompt(
         else t("llm.profile.not_set")
     )
     days_str = ", ".join(p.availability.preferred_days)
-    weight_str = f"{p.weight_kg:.1f} kg" if p.weight_kg else not_provided
+    if latest_weight is not None and latest_weight.weight_kg is not None:
+        weight_str = t(
+            "llm.profile.wellness_weight", value=f"{latest_weight.weight_kg:.1f}",
+            date=latest_weight.date.isoformat(),
+        )
+    elif p.weight_kg is not None:
+        weight_str = t("llm.profile.configured_weight", value=f"{p.weight_kg:.1f}")
+    else:
+        weight_str = not_provided
     lthr_est = int(p.physio.hr_rest + 0.88 * (p.physio.hr_max - p.physio.hr_rest))
     hr_zones = compute_hr_zones(p.physio.hr_max, p.physio.hr_rest)
     zones_str = " | ".join(
@@ -699,12 +706,19 @@ def build_system_prompt(
         lines += ["", t("llm.recent_load.header")]
         lines.extend(f"- {line}" for line in training_summary)
 
-    # Wellness qualitatif du jour — sous-ensemble volontairement restreint (sommeil,
-    # fatigue, stress, mood, motivation) parmi les ~31 champs bruts désormais stockés
-    # (app/db/models/wellness.py) ; le reste (macros, spO2, tension...) attend un besoin
-    # réel avant d'être injecté ici (2026-09-21).
-    if wellness_today is not None:
+    # Daily recovery readings only; older measurements are available through tools.
+    if wellness_today is not None and wellness_today.date == today:
         w_parts = []
+        for metric in ("hrv", "resting_hr", "sleep_seconds"):
+            value = getattr(wellness_today, metric, None)
+            if value is not None:
+                if metric == "sleep_seconds":
+                    minutes = value // 60
+                    w_parts.append(t(
+                        "llm.wellness.sleep_duration", hours=minutes // 60, minutes=minutes % 60
+                    ))
+                else:
+                    w_parts.append(t(f"llm.wellness.{metric}", value=value))
         if wellness_today.sleep_quality is not None:
             w_parts.append(t("llm.wellness.sleep_quality", value=wellness_today.sleep_quality))
         if wellness_today.sleep_score is not None:
@@ -718,7 +732,9 @@ def build_system_prompt(
         if wellness_today.motivation is not None:
             w_parts.append(t("llm.wellness.motivation", value=wellness_today.motivation))
         if w_parts:
-            lines.append(t("llm.wellness.today_line", parts=" | ".join(w_parts)))
+            lines.append(t(
+                "llm.wellness.today_line", date=today.isoformat(), parts=" | ".join(w_parts)
+            ))
 
     # Recent sessions (SessionLog or pre-plan Activity), already sorted and bounded by caller.
     # Deux faits rendus explicites plutôt que laissés à déduire (trouvé en test live

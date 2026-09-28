@@ -16,6 +16,7 @@ from datetime import date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.time import paris_today
 from app.db.repositories import sync_state_repo
 from app.providers.intervals.client import IntervalsClient
 from app.providers.intervals.errors import (
@@ -78,7 +79,7 @@ async def detect_new_activities(
     """Activities in the trailing window that have no reported marker yet. An edited or
     renamed activity keeps its id (research R4), so it is filtered out here exactly like
     any other already-reported activity — satisfying FR-010 without any special case."""
-    today = today or date.today()
+    today = today or paris_today()
     oldest = today - timedelta(days=window_days)
 
     activities = await client.list_activities(oldest=oldest.isoformat(), newest=today.isoformat())
@@ -186,6 +187,7 @@ async def run_poller_scheduler(session_factory, client_factory, bot=None) -> Non
                     continue
 
                 client = client_factory()
+                today = paris_today()
 
                 # T038-T041 built this but nothing ever called it (found live, T072
                 # follow-up) — the activities table stayed empty because the poller's own
@@ -195,7 +197,7 @@ async def run_poller_scheduler(session_factory, client_factory, bot=None) -> Non
                 # tick is a cheap single-row check once done, and self-heals the athlete's
                 # very first connection whichever tick happens to see them first.
                 try:
-                    await import_history(session, user.id, client)
+                    await import_history(session, user.id, client, today=today)
                 except IntervalsError:
                     logger.warning("History import failed this tick — will retry next cycle.")
 
@@ -204,7 +206,6 @@ async def run_poller_scheduler(session_factory, client_factory, bot=None) -> Non
                 # of range) and self-healing if a tick is missed, since it re-upserts every
                 # day in the window rather than only the newest one.
                 try:
-                    today = date.today()
                     await ingest_wellness(
                         session, user.id, client,
                         oldest=(today - timedelta(days=5)).isoformat(),
@@ -212,6 +213,9 @@ async def run_poller_scheduler(session_factory, client_factory, bot=None) -> Non
                     )
                 except IntervalsError:
                     logger.warning("Wellness refresh failed this tick — will retry next cycle.")
+
+                # Persist source data even on rest days or if detection/delivery fails.
+                await session.commit()
 
                 unreported = await poll_once(session, user.id, client)
                 if not unreported:

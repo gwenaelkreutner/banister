@@ -45,6 +45,35 @@ async def _make_user(session, telegram_id: int) -> User:
     return user
 
 
+async def test_refresh_updates_same_day_preserving_absent_readings(db_session):
+    from datetime import date
+    from unittest.mock import AsyncMock
+
+    user = await _make_user(db_session, 590)
+    today = date(2026, 9, 28)
+    client = AsyncMock()
+    client.list_wellness.return_value = [{
+        "id": str(today), "ctl": 42, "atl": 55, "weight": 72,
+        "hrv": 60, "sleepSecs": 25000, "spO2": 98,
+    }]
+    await ingest_wellness(db_session, user.id, client, oldest=str(today), newest=str(today))
+    await db_session.commit()
+    client.list_wellness.return_value = [{
+        "id": str(today), "ctl": 44, "atl": 50, "weight": 71.5,
+        "hrv": None, "steps": 0,
+    }]
+    await ingest_wellness(db_session, user.id, client, oldest=str(today), newest=str(today))
+    await db_session.commit()
+
+    rows = await wellness_repo.get_range(db_session, user.id, today, today)
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row.ctl, row.atl, row.weight_kg) == (44, 50, 71.5)
+    assert (row.hrv, row.sleep_seconds, row.spo2) == (60, 25000, 98)
+    assert row.steps == 0
+    assert row.resting_hr is None
+
+
 async def test_missing_readings_stay_none_not_zero(db_session, patch_transport):
     wellness_payload = _load("wellness_range.json")
 

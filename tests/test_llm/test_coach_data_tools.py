@@ -1,5 +1,5 @@
 """Contracts for bounded coaching-data tools and compact hot-context facts."""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 from app.llm.tools import (
@@ -58,3 +58,73 @@ def test_temporal_reference_rules_bind_all_relative_dates_to_the_current_turn():
     assert "toute date relative" in rules
     assert "jamais par rapport au calendrier du plan" in rules
     assert "date ISO envoyée" in rules
+
+
+async def test_wellness_tool_exposes_all_synced_fields_in_bounded_calls(db_session, monkeypatch):
+    from app.db.models.user import User
+    from app.db.models.wellness import Wellness
+    from app.db.repositories import wellness_repo
+    from app.llm.chat import _tool_get_wellness_history
+    from app.services import coach_queries
+
+    today = date(2026, 9, 29)
+    monkeypatch.setattr(coach_queries, "paris_today", lambda: today)
+    user = User(telegram_id=792, first_name="Jean")
+    db_session.add(user)
+    await db_session.flush()
+    metrics = coach_queries.WELLNESS_METRICS
+    fields = set(Wellness.__table__.columns.keys()) - {
+        "id", "user_id", "date", "created_at", "updated_at"
+    }
+    assert set(metrics) == fields
+    values = {m: ("LUTEAL" if m.startswith("menstrual_phase") else 42) for m in metrics}
+    await wellness_repo.upsert(db_session, user.id, today, **values)
+    await wellness_repo.upsert(db_session, user.id, today - timedelta(days=90), sleep_seconds=1)
+    schema = next(
+        t["function"] for t in TOOL_DEFINITIONS
+        if t["function"]["name"] == "get_wellness_history"
+    )
+    assert set(schema["parameters"]["properties"]["metrics"]["items"]["enum"]) == fields
+    assert schema["parameters"]["properties"]["metrics"]["maxItems"] == 4
+    assert schema["parameters"]["properties"]["days"]["maximum"] == 90
+
+    for offset in range(0, len(metrics), 4):
+        selected = list(metrics[offset:offset + 4])
+        result = await _tool_get_wellness_history(
+            {"days": 999, "metrics": selected, "granularity": "daily"},
+            user=user, session=db_session,
+        )
+        assert result["metrics"] == selected
+        assert result["range_start"] == str(today - timedelta(days=89))
+        assert result["range_end"] == str(today)
+        assert result["points"] == [{"date": str(today), **{m: values[m] for m in selected}}]
+
+    result = await _tool_get_wellness_history(
+        {"days": 90, "metrics": [
+            "id", "sleep_seconds", "sleep_seconds", "spo2", "systolic", "steps", "fat_g"
+        ]},
+        user=user, session=db_session,
+    )
+    assert result["metrics"] == ["sleep_seconds", "spo2", "systolic", "steps"]
+    result = await _tool_get_wellness_history(
+        {"metrics": ["user_id"]}, user=user, session=db_session,
+    )
+    assert result["metrics"] == ["hrv", "resting_hr"]
+
+
+async def test_wellness_history_preserves_unknown_daily_readings(db_session, monkeypatch):
+    from app.db.models.user import User
+    from app.db.repositories import wellness_repo
+    from app.services import coach_queries
+
+    today = date(2026, 9, 29)
+    monkeypatch.setattr(coach_queries, "paris_today", lambda: today)
+    user = User(telegram_id=793)
+    db_session.add(user)
+    await db_session.flush()
+    await wellness_repo.upsert(db_session, user.id, today - timedelta(days=1), sleep_seconds=27000)
+    await wellness_repo.upsert(db_session, user.id, today, ctl=65)
+    result = await coach_queries.wellness_history(
+        db_session, user.id, days=7, metrics=["sleep_seconds", "readiness"], granularity="daily"
+    )
+    assert result["points"][-1] == {"date": str(today), "sleep_seconds": None, "readiness": None}
