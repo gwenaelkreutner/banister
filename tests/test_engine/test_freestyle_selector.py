@@ -28,6 +28,73 @@ _SNAPSHOT = WeeklySnapshot(
 )
 
 
+@pytest.mark.parametrize("ctl", [30, 60, 100])
+@pytest.mark.parametrize("ratio,expected", [
+    (1.49, "intervals"), (1.5, "endurance"), (1.99, "endurance"), (2, "recovery"),
+])
+def test_daily_load_is_relative_to_fitness_even_with_positive_tsb(ctl, ratio, expected):
+    choice = choose_workout_type(
+        FitnessMetrics(ctl=ctl, atl=ctl - 10, tsb=10), _SNAPSHOT,
+        days_since_hard_effort=None, recent_daily_tss=ctl * ratio,
+    )
+    assert choice.workout_type == expected
+
+
+def test_same_three_hour_endurance_ride_has_different_effect_at_different_ctl():
+    choices = [choose_workout_type(
+        FitnessMetrics(ctl=ctl, atl=ctl, tsb=0), _SNAPSHOT,
+        days_since_hard_effort=None, recent_daily_tss=120,
+    ).workout_type for ctl in (100, 70, 50)]
+    assert choices == ["intervals", "endurance", "recovery"]
+
+
+@pytest.mark.parametrize("signal", ["hrv_low", "rhr_high", "recovery_index_low", "recovery_multi"])
+def test_recovery_signal_overrides_fresh_tsb(signal):
+    choice = choose_workout_type(
+        FitnessMetrics(ctl=60, atl=45, tsb=15), _SNAPSHOT,
+        days_since_hard_effort=None, recent_daily_tss=20, recovery_finding_kind=signal,
+    )
+    assert choice.workout_type == "recovery"
+    assert signal in choice.reasoning_summary
+
+
+def test_zero_ctl_does_not_create_an_infinite_daily_load_ratio():
+    choice = choose_workout_type(
+        FitnessMetrics(ctl=0, atl=0, tsb=0), _SNAPSHOT,
+        days_since_hard_effort=None, recent_daily_tss=20,
+    )
+    assert choice.workout_type == "intervals"
+    assert "fois le CTL" not in choice.reasoning_summary
+
+
+@pytest.mark.parametrize("requested", ["endurance", "intervals", "long_ride"])
+def test_explicit_request_after_very_high_load_is_honored_with_reserve(requested):
+    choice = choose_workout_type(
+        FitnessMetrics(ctl=60, atl=45, tsb=15), _SNAPSHOT,
+        days_since_hard_effort=None, recent_daily_tss=200, requested_workout_type=requested,
+    )
+    assert choice.workout_type == requested
+    assert choice.default_conflicts
+    assert "réserve" in choice.reasoning_summary
+
+
+@pytest.mark.parametrize("caps", [
+    {"recent_daily_tss": 200}, {"acwr_finding_kind": "acwr_high"},
+    {"days_since_return_from_break": 2}, {"recovery_finding_kind": "hrv_low"},
+])
+def test_dislikes_cannot_restore_a_type_excluded_by_safety_caps(caps):
+    choice = choose_workout_type(
+        FitnessMetrics(ctl=60, atl=45, tsb=15), _SNAPSHOT,
+        days_since_hard_effort=None,
+        avoid_workout_types=frozenset({"endurance", "recovery", "long_ride"}), **caps,
+    )
+    allowed = {"endurance", "recovery"}
+    if "days_since_return_from_break" in caps:
+        allowed.add("long_ride")  # Reprise excludes intervals, not endurance volume.
+    assert choice.workout_type in allowed
+    assert choice.preference_overridden
+
+
 @dataclass
 class _FakeLog:
     logged_date: date

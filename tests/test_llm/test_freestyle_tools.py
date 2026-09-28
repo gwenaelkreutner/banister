@@ -7,10 +7,13 @@ right tool) is validated live per quickstart.md.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from types import SimpleNamespace
+
+import pytest
 
 from app.db.models.user import User
-from app.db.repositories import profile_repo, wellness_repo
+from app.db.repositories import profile_repo, session_log_repo, wellness_repo
 from app.engine.schemas import (
     AthleteProfileSchema,
     AvailabilityProfile,
@@ -42,6 +45,149 @@ def _profile(**overrides) -> AthleteProfileSchema:
     )
     base.update(overrides)
     return AthleteProfileSchema(**base)
+
+
+@pytest.mark.parametrize("ctl,expected,zone", [(100, "endurance", "Z2"), (50, "recovery", "Z1")])
+async def test_two_free_rides_yesterday_drive_the_actual_suggestion(
+    db_session, ctl, expected, zone,
+):
+    today = date(2026, 9, 29)
+    user = await _make_user(db_session, 5201)
+    await wellness_repo.upsert(db_session, user.id, today, ctl=ctl, atl=ctl)
+    logs = []
+    for source_id in ("ride-a", "ride-b"):
+        logs.append(await session_log_repo.create(
+            db_session, user.id, None, None, None, today - timedelta(days=1), "unplanned",
+            tss_actual=80, duration_minutes_actual=120,
+            source="intervals_icu", source_activity_id=source_id,
+        ))
+    imported_copy = SimpleNamespace(
+        activity_date=today - timedelta(days=1), tss=80, duration_seconds=7200,
+        source="intervals_icu", source_activity_id="ride-a",
+    )
+    result = await _tool_get_freestyle_session_suggestion(
+        {}, user=user, session=db_session, profile=_profile(), logs=logs,
+        activities=[imported_copy], today=today,
+    )
+    assert result["available"]
+    assert result["workout_type"] == expected
+    assert result["zone_code"] == zone
+    assert "7 derniers jours 160 TSS" in result["reasoning_summary"]
+    assert "veille : 160 TSS" in result["reasoning_summary"]
+    assert result["fitness_as_of"] == "2026-09-29"
+    assert result["fitness_is_stale"] is False
+    assert result["fitness_source"] == "intervals.icu"
+    assert "non évaluable" in result["reasoning_summary"]
+
+
+async def test_freestyle_reports_stale_source_fitness_and_unknown_load(db_session):
+    today = date(2026, 9, 29)
+    user = await _make_user(db_session, 5202)
+    await wellness_repo.upsert(db_session, user.id, today - timedelta(days=1), ctl=60, atl=50)
+    log = SimpleNamespace(logged_date=today, status="unplanned", tss_actual=None)
+    result = await _tool_get_freestyle_session_suggestion(
+        {}, user=user, session=db_session, profile=_profile(), logs=[log],
+        activities=[], today=today,
+    )
+    assert result["available"]
+    assert result["fitness_as_of"] == "2026-09-28"
+    assert result["fitness_is_stale"] is True
+    assert "anciennes" in result["reasoning_summary"]
+    assert "Charge incomplète" in result["reasoning_summary"]
+
+
+async def test_local_fitness_fallback_uses_the_requested_day(db_session, monkeypatch):
+    from app.engine import atl_ctl
+
+    today = date(2026, 9, 29)
+    user = await _make_user(db_session, 5203)
+    observed = []
+    actual_compute = atl_ctl.compute_fitness_from_any
+
+    def compute(items, **kwargs):
+        observed.append(kwargs["target_date"])
+        return actual_compute(items, **kwargs)
+
+    monkeypatch.setattr(atl_ctl, "compute_fitness_from_any", compute)
+    result = await _tool_get_freestyle_session_suggestion(
+        {}, user=user, session=db_session, profile=_profile(),
+        logs=[SimpleNamespace(logged_date=today, status="unplanned", tss_actual=80,
+                              duration_minutes_actual=120)], activities=[], today=today,
+    )
+    assert observed == [today]
+    assert result["available"]
+    assert result["fitness_source"] == "local_estimate"
+    assert result["fitness_as_of"] is None
+    assert "estimée localement" in result["reasoning_summary"]
+
+
+async def test_chat_and_tool_share_completed_history_and_turn_day(db_session, monkeypatch):
+    from app.db.models.activity import Activity
+    from app.llm import chat
+
+    today = date(2026, 9, 29)
+    monkeypatch.setattr(chat, "paris_today", lambda: today)
+    user = await _make_user(db_session, 5204)
+    await profile_repo.create(db_session, user.id, _profile().model_dump(mode="json"))
+    await wellness_repo.upsert(db_session, user.id, today, ctl=100, atl=100)
+    # Today's imported ride used to disappear behind the pre-plan date filter.
+    db_session.add(Activity(user_id=user.id, activity_date=today,
+                            source="intervals_icu", source_activity_id="ride-a", tss=80,
+                            duration_seconds=7200))
+    await session_log_repo.create(
+        db_session, user.id, None, None, None, today, "unplanned", tss_actual=80,
+        duration_minutes_actual=120, source="intervals_icu", source_activity_id="ride-b",
+    )
+    captured = {}
+
+    async def loop(**kwargs):
+        captured["system"] = kwargs["system"]
+        # Simulate midnight passing during the model call: the tool must keep the turn date.
+        monkeypatch.setattr(chat, "paris_today", lambda: today + timedelta(days=1))
+        result = await kwargs["tool_executor"]("get_freestyle_session_suggestion", {})
+        captured["result"] = result
+        return "Une séance facile.", "get_freestyle_session_suggestion", result, {}, [
+            {"name": "get_freestyle_session_suggestion", "args": {}, "result": result},
+        ]
+
+    monkeypatch.setattr(chat, "run_agentic_loop", loop)
+    _, _, _, proposal, _, _ = await chat.run_chat("Que faire aujourd'hui ?", user, db_session)
+    assert "7 jours : 2 séances, 160 TSS" in captured["system"]
+    assert "7 derniers jours 160 TSS" in captured["result"]["reasoning_summary"]
+    assert proposal["workout_type"] == "endurance"
+    assert proposal["fitness_as_of"] == str(today)
+    assert proposal["fitness_is_stale"] is False
+
+
+async def test_freestyle_reuses_measured_recovery_signal_for_selection_and_picker(
+    db_session, monkeypatch,
+):
+    from app.engine.guardrail_thresholds import BASELINE_MIN_SAMPLES
+    from app.llm import template_picker
+
+    today = date(2026, 9, 29)
+    user = await _make_user(db_session, 5205)
+    for i in range(BASELINE_MIN_SAMPLES):
+        await wellness_repo.upsert(
+            db_session, user.id, today - timedelta(days=2 + i), resting_hr=50,
+        )
+    await wellness_repo.upsert(db_session, user.id, today - timedelta(days=1), resting_hr=56)
+    await wellness_repo.upsert(db_session, user.id, today, ctl=60, atl=45, resting_hr=57)
+    seen = []
+
+    async def pick(preference, candidates):
+        seen.extend(candidate.workout_type for candidate in candidates)
+        return None
+
+    monkeypatch.setattr(template_picker, "pick_template", pick)
+    result = await _tool_get_freestyle_session_suggestion(
+        {"style_preference": "facile et régulière"}, user=user, session=db_session,
+        profile=_profile(), logs=[], activities=[], today=today,
+    )
+    assert result["available"]
+    assert result["workout_type"] == "recovery"
+    assert set(seen) == {"recovery"}
+    assert "rhr_high" in result["reasoning_summary"]
 
 
 class TestGetFreestyleSessionSuggestion:

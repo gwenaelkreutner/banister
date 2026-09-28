@@ -76,8 +76,8 @@ async def assemble_workload_findings(
 
     - acute:chronic ratio and ramp rate come from the latest `wellness` row — the
       source's own figures, consumed as-is (research R3, R4).
-    - monotony comes from `compute_weekly_snapshot` over the athlete's logs + pre-plan
-      activities (the corrected Foster value, research R2).
+    - monotony comes from `compute_weekly_snapshot` over completed logs + imported
+      activities, deduplicated by source activity ID (the corrected Foster value, R2).
 
     No writes. `today` is injectable for tests; production passes `date.today()`.
     """
@@ -97,10 +97,7 @@ async def assemble_workload_findings(
 
     logs = await repo.session_log_repo.get_all_for_user(session, user_id)
     activities = await repo.activity_repo.get_for_user(session, user_id, days=90)
-    plan = await repo.plan_repo.get_active_plan(session, user_id)
-    plan_start = plan.start_date if plan is not None else today
-    pre_plan_acts = [a for a in activities if a.activity_date < plan_start]
-    snapshot = compute_weekly_snapshot(list(logs) + pre_plan_acts, today)
+    snapshot = compute_weekly_snapshot(list(logs) + list(activities), today)
     findings.append(
         evaluate_monotony(snapshot.monotony_index, finding_date=today)
     )
@@ -345,10 +342,7 @@ async def collect_registry_metrics(
 
     logs = await repo.session_log_repo.get_all_for_user(session, user_id)
     activities = await repo.activity_repo.get_for_user(session, user_id, days=90)
-    plan = await repo.plan_repo.get_active_plan(session, user_id)
-    plan_start = plan.start_date if plan is not None else today
-    pre_plan_acts = [a for a in activities if a.activity_date < plan_start]
-    snap = compute_weekly_snapshot(list(logs) + pre_plan_acts, today)
+    snap = compute_weekly_snapshot(list(logs) + list(activities), today)
     if snap.monotony_index is not None:
         out["monotony"] = round(snap.monotony_index, 1)
 

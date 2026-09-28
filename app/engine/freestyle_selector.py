@@ -22,6 +22,7 @@ from datetime import date
 from app.engine.atl_ctl import FitnessMetrics
 from app.engine.fitting import FitResult, FittingError, fit_template
 from app.engine.session_library import SessionLibraryError, SessionTemplate, load_library
+from app.engine.training_history import completed_training_items
 from app.engine.tss import estimate_session_tss
 from app.engine.weekly_snapshot import WeeklySnapshot
 
@@ -75,6 +76,14 @@ RETURN_FROM_BREAK_GAP_DAYS = 10
 # (longer) side deliberately.
 RETURN_FROM_BREAK_WINDOW_DAYS = 14
 
+# Joe Friel, "Applying the Numbers Part 2: Training Stress Score": hard sessions
+# are approximately 1.5–2 times CTL, followed by an easy session.
+# https://www.trainingpeaks.com/learn/articles/applying-the-numbers-part-2-training-stress-score/
+# Applying those endpoints to a summed training day and choosing Z2/Z1 for the
+# following day is our product heuristic, NOT a validated recovery-time formula.
+ELEVATED_DAILY_LOAD_CTL_RATIO = 1.5
+VERY_HIGH_DAILY_LOAD_CTL_RATIO = 2.0
+
 
 def days_since_return_from_break(items: list, today: date) -> int | None:
     """`None` when the athlete isn't in an early return-to-training window right now —
@@ -86,6 +95,7 @@ def days_since_return_from_break(items: list, today: date) -> int | None:
     read as a high TSB, since it only measures recent load, not how it got low. This walks
     the athlete's own ride dates instead, the same way `days_since_hard_effort` does,
     rather than trusting a derived fitness number that doesn't carry this distinction."""
+    items = completed_training_items(items, end=today)
     dates = sorted({
         d for it in items
         if (d := (getattr(it, "logged_date", None) or getattr(it, "activity_date", None)))
@@ -115,6 +125,7 @@ def days_since_hard_effort(items: list, today: date) -> int | None:
     `None` when no qualifying effort is found in `items` at all — the caller then
     treats the athlete as not recently having done anything hard."""
     best: int | None = None
+    items = completed_training_items(items, end=today)
     for it in items:
         tss = getattr(it, "tss_actual", None) or getattr(it, "tss", None)
         if not tss:
@@ -216,6 +227,8 @@ def choose_workout_type(
     available_minutes: int | None = None,
     days_since_return_from_break: int | None = None,
     acwr_finding_kind: str | None = None,
+    recent_daily_tss: float | None = None,
+    recovery_finding_kind: str | None = None,
 ) -> WorkoutTypeChoice:
     """Pure decision: given fitness state + recent load, which workout type and target
     TSS to suggest. Never references a periodization phase or week (SC-005) — the only
@@ -228,7 +241,7 @@ def choose_workout_type(
     caller whether this diverges from what fitness alone would have suggested, so the
     coach can say so honestly instead of presenting it as the natural choice (FR-002).
 
-    Two independent **safety caps** narrow the *default* pick only — never a silent block
+    **Safety caps** narrow the *default* pick only — never a silent block
     on an explicit request, which always wins outright (same doctrine as
     `avoid_workout_types`); the caution becomes a spoken note instead:
 
@@ -245,15 +258,37 @@ def choose_workout_type(
       the model not to recommend more load), this is a hard exclusion in the deterministic
       selector itself — not dependent on the model reliably honoring a text rule.
 
-    Both caps can apply at once (a break followed by an over-eager ramp-back is exactly
-    how an athlete lands in both) — each fires its own note if it actually changed the
-    outcome.
+    Daily load (maximum of today/yesterday, supplied by the caller) adds a CTL-relative
+    cap: 1.5–2 times CTL permits easy endurance, >=2 selects recovery. An existing
+    adverse recovery finding also selects recovery. Unknown recovery stays unknown;
+    no ratio is inferred for nonpositive CTL. These combine with break/ACWR caps.
 
     `coaching_mode`/`ftp`/`available_minutes` only feed `_long_ride_target_tss()` — every
     other workout type's target stays the CTL-multiplier estimate above, untouched."""
     preferences = _tsb_bucket_preferences(fitness.tsb, days_since_hard_effort)
 
+    load_ratio = (
+        recent_daily_tss / fitness.ctl
+        if recent_daily_tss is not None and fitness.ctl > 0 else None
+    )
+    very_high_load = load_ratio is not None and load_ratio >= VERY_HIGH_DAILY_LOAD_CTL_RATIO
+    elevated_load = load_ratio is not None and load_ratio >= ELEVATED_DAILY_LOAD_CTL_RATIO
+    needs_recovery = very_high_load or recovery_finding_kind is not None
+    original_preferences = preferences
+    if needs_recovery:
+        preferences = ["recovery"]
+    elif elevated_load:
+        preferences = ["recovery", "endurance"] if fitness.tsb < -30 else ["endurance", "recovery"]
+
     safety_caps: list[tuple[str, frozenset[str]]] = []
+    if very_high_load:
+        safety_caps.append((
+            "daily_load_recovery", frozenset({"intervals", "long_ride", "endurance"}),
+        ))
+    elif elevated_load:
+        safety_caps.append(("daily_load", frozenset({"intervals", "long_ride"})))
+    if recovery_finding_kind is not None:
+        safety_caps.append(("recovery_signal", frozenset({"intervals", "long_ride", "endurance"})))
     if days_since_return_from_break is not None:
         safety_caps.append(("break", frozenset({"intervals"})))
     if acwr_finding_kind == "acwr_high":
@@ -270,15 +305,18 @@ def choose_workout_type(
         overridden = False
         triggered_caps = [name for name, excluded in safety_caps if chosen in excluded]
     else:
-        baseline_choice = next((wt for wt in preferences if wt not in avoid_workout_types), None)
+        baseline_choice = next(
+            (wt for wt in original_preferences if wt not in avoid_workout_types), None,
+        )
         effective_avoid = avoid_workout_types | cap_excluded
         chosen = next((wt for wt in preferences if wt not in effective_avoid), None)
         overridden = chosen is None
         if chosen is None:
-            # Every preferred type is on the avoid list — honesty over silence: pick the
-            # top preference anyway rather than refusing to answer, and say so (the tool
-            # layer surfaces `preference_overridden` to the athlete).
-            chosen = preferences[0]
+            # Dislikes may be overridden, but a safety exclusion may not be restored.
+            # Recovery remains available under every cap, so this always has a result.
+            chosen = next(
+                wt for wt in [*preferences, "recovery", "endurance"] if wt not in cap_excluded
+            )
         triggered_caps = [
             name for name, excluded in safety_caps
             if baseline_choice in excluded and chosen != baseline_choice
@@ -295,6 +333,31 @@ def choose_workout_type(
         f"TSB {fitness.tsb:+.0f}, charge des 7 derniers jours {snapshot.tss_7d:.0f} TSS "
         f"→ séance de type {chosen}."
     )
+    if recent_daily_tss is not None:
+        reasoning += (
+            f" Charge quotidienne maximale aujourd'hui/veille : {recent_daily_tss:.0f} TSS."
+        )
+        if load_ratio is not None:
+            reasoning += f" CTL {fitness.ctl:.1f}, soit {load_ratio:.2f} fois le CTL."
+    if very_high_load:
+        reasoning += " Charge quotidienne très élevée pour ton niveau — récupération Z1 par défaut."
+    elif elevated_load:
+        reasoning += (
+            " Charge quotidienne élevée pour ton niveau"
+            " — j'évite l'intensité et les sorties longues par défaut."
+        )
+    if recovery_finding_kind is not None:
+        reasoning += (
+            f" Signal de récupération défavorable ({recovery_finding_kind})"
+            " — récupération Z1 par défaut."
+        )
+    if was_requested and any(
+        name in {"daily_load", "daily_load_recovery", "recovery_signal"}
+        for name in triggered_caps
+    ):
+        reasoning += (
+            " Je conserve ta demande explicite, avec une réserve sur la charge et la récupération."
+        )
     for cap_name in triggered_caps:
         if cap_name == "break" and was_requested:
             reasoning += (
@@ -368,6 +431,8 @@ def build_freestyle_suggestion(
     requested_template_id: str | None = None,
     days_since_return_from_break: int | None = None,
     acwr_finding_kind: str | None = None,
+    recent_daily_tss: float | None = None,
+    recovery_finding_kind: str | None = None,
 ) -> FreestyleSuggestion:
     """End to end: choose a workout type (`choose_workout_type`), pick a template for it
     (rotated deterministically by `day_ordinal` — same day, same ask, same answer; a new
@@ -393,6 +458,8 @@ def build_freestyle_suggestion(
         available_minutes=available_minutes,
         days_since_return_from_break=days_since_return_from_break,
         acwr_finding_kind=acwr_finding_kind,
+        recent_daily_tss=recent_daily_tss,
+        recovery_finding_kind=recovery_finding_kind,
     )
     candidates = candidates_for(choice.workout_type)
     # Start from the day-rotated candidate for variety, but a fixed-duration template

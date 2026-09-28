@@ -34,7 +34,9 @@ def test_new_coach_data_tools_are_safe_to_run_in_one_read_wave():
 
 
 def test_plan_tool_supports_a_bounded_window():
-    tool = next(tool for tool in TOOL_DEFINITIONS if tool["function"]["name"] == "get_upcoming_sessions")
+    tool = next(
+        tool for tool in TOOL_DEFINITIONS if tool["function"]["name"] == "get_upcoming_sessions"
+    )
     properties = tool["function"]["parameters"]["properties"]
     assert properties["days"]["maximum"] == 42
     assert properties["start_offset"]["minimum"] == -7
@@ -49,6 +51,38 @@ def test_hot_training_summary_stays_compact_and_uses_deterministic_totals():
     summary = hot_training_summary(items, today=date(2026, 9, 22))
 
     assert summary == ["7 jours : 1 séances, 45 TSS, RPE 1/1", "28 jours : 2 séances, 115 TSS"]
+
+
+async def test_training_queries_and_hot_context_share_deduplicated_history(db_session, monkeypatch):
+    from app.db.models.activity import Activity
+    from app.db.models.user import User
+    from app.db.repositories import session_log_repo
+    from app.services import coach_queries
+
+    today = date(2026, 9, 29)
+    monkeypatch.setattr(coach_queries, "paris_today", lambda: today)
+    user = User(telegram_id=793)
+    db_session.add(user)
+    await db_session.flush()
+    log = await session_log_repo.create(
+        db_session, user.id, None, None, None, today, "unplanned", tss_actual=80,
+        duration_minutes_actual=120, source="intervals_icu", source_activity_id="ride-a",
+    )
+    copies = [Activity(
+        user_id=user.id, activity_date=today, source="intervals_icu",
+        source_activity_id=source_id, tss=80, duration_seconds=7200,
+    ) for source_id in ("ride-a", "ride-b")]
+    db_session.add_all(copies)
+    trend = await coach_queries.training_trend(db_session, user.id, days=7)
+    assert trend["weeks"] == [{
+        "week_start": "2026-09-28", "sessions": 2, "tss": 160, "minutes": 240,
+    }]
+    detail = await coach_queries.session_detail(db_session, user.id, session_date=today)
+    assert len(detail["sessions"]) == 2
+    assert sum(row["tss"] for row in detail["sessions"]) == 160
+    assert hot_training_summary([*copies, log], today=today)[0] == (
+        "7 jours : 2 séances, 160 TSS, RPE 0/2"
+    )
 
 
 def test_temporal_reference_rules_bind_all_relative_dates_to_the_current_turn():

@@ -120,6 +120,12 @@ _NON_CLAIM_AFTER = re.compile(
     re.IGNORECASE,
 )
 _ZONE = re.compile(r"\bZ[1-7]\b", re.IGNORECASE)
+# A daily workload expressed as a multiple of CTL/ATL is relative, like a percent;
+# it is not the absolute CTL/ATL value registered for the athlete.
+_RELATIVE_LOAD_MULTIPLE = re.compile(
+    rf"{_NUMBER}\s+(?:fois\s+(?:le\s+)?|times\s+(?:the\s+)?)(?:CTL|ATL)\b",
+    re.IGNORECASE,
+)
 
 # Clause boundaries — a claim is a term and a number in the *same* clause. A period or
 # comma *between digits* is a decimal separator, not a boundary.
@@ -178,7 +184,10 @@ def _extract_claims(text: str) -> list[Claim]:
                 if any(start >= d_start and end <= d_end for d_start, d_end in date_spans):
                     continue
                 # Skip durations / zones / percentages / cadence.
-                if _NON_CLAIM_AFTER.match(clause[start:]):
+                if (
+                    _NON_CLAIM_AFTER.match(clause[start:])
+                    or _RELATIVE_LOAD_MULTIPLE.match(clause[start:])
+                ):
                     continue
                 if _ZONE.search(clause[max(0, start - 2):end + 2]):
                     continue

@@ -1177,6 +1177,42 @@ chemin « matched », mais ne prétend jamais avoir tenté un matching. `notifie
 notification (« Activité enregistrée », jamais « hors plan »). Idempotence conservée : le garde-fou de
 relecture d'une activité déjà loggée s'applique aussi aux logs en mode libre.
 
+**Charge réelle et lendemain de grosse journée** (2026-09-28) : le snapshot hebdomadaire
+comptait uniquement `status="done"`, excluant toutes les sorties libres (`unplanned`).
+Deux sorties connues du chat pouvaient ainsi donner « 0 TSS sur 7 jours » à freestyle.
+Le snapshot inclut désormais `done` et `unplanned`, toujours sans les séances `skipped`.
+`app/engine/training_history.py::completed_training_items()` est l'assemblage commun du chat,
+des outils historiques, du snapshot/garde-fous et du repli de forme post-sortie : déduplication
+par `(source, source_activity_id)`, priorité au `SessionLog`, aucune fusion par date et
+conservation des entrées sans identifiant. Le filtre ancien « avant le début du plan »
+ne sert plus à dédupliquer ; les activités importées du jour restent disponibles.
+
+Freestyle reçoit la charge quotidienne maximale d'aujourd'hui et de la veille, somme des
+TSS source connus (aucune estimation des TSS manquants). La comparaison au CTL courant
+positif ne dépend pas de la durée seule : ratio <1,5 = choix TSB/efforts récents existant ;
+1,5 inclus à 2 exclu = endurance facile, ou récupération si TSB <−30 ; ≥2 = récupération Z1.
+Un signal de récupération défavorable existant (`assemble_recovery_findings()`) choisit
+également Z1. Une récupération non évaluable reste explicitement inconnue ; CTL ≤0 ne
+produit aucun ratio. Les restrictions se combinent avec reprise/ACWR et les préférences
+ne les contournent plus. Une demande explicite reste honorée avec réserve. Le coach
+peut exprimer son désaccord et attendre le retour de l'athlète, sans préparer automatiquement
+une deuxième séance.
+
+Les repères 1,5–2×CTL viennent de Joe Friel, « Applying the Numbers Part 2: Training Stress
+Score » (https://www.trainingpeaks.com/learn/articles/applying-the-numbers-part-2-training-stress-score/).
+L'application au cumul quotidien et la traduction en choix Z2/Z1 sont une **heuristique
+du produit**, pas une formule validée de récupération. Les autres cibles TSS par type
+restent inchangées.
+
+La date de Paris du tour est transmise à l'outil, y compris si minuit passe pendant l'appel
+LLM ; le repli de forme utilise cette date également. Le résultat freestyle ajoute
+`fitness_as_of`, `fitness_is_stale`, `fitness_source` (`intervals.icu` ou `local_estimate`) ;
+son explication date la forme, signale les données anciennes/estimées, les TSS absents et
+l'insuffisance de récupération. L'écart réel « TSB +1 vs 0 » nécessite encore de comparer
+les valeurs et dates source du déploiement ; aucune valeur n'est forcée pour le masquer.
+Le vérificateur distingue également « 3,2 fois le CTL » d'une valeur absolue de CTL,
+comme pour les pourcentages relatifs, afin de ne pas supprimer cette explication correcte.
+
 **Garde-fous et mémoire du coach : aucun changement** — `guardrail_service.py` était déjà tolérant à
 `plan is None` (`plan_start = plan.start_date if plan is not None else today`), vérifié par test de
 régression plutôt que supposé (`tests/test_services/test_guardrail_service.py`).

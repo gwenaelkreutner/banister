@@ -20,6 +20,7 @@ from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import paris_today
 from app.db import repositories as repo
 from app.db.models.session_log import SessionLog
 from app.db.models.user import User
@@ -31,12 +32,13 @@ from app.engine.atl_ctl import (
     tsb_label,
 )
 from app.engine.schemas import TrainingPlanSchema
+from app.engine.training_history import completed_training_items
 from app.engine.tss import tss_from_weekly_hours
-from app.services.fitness import get_current_fitness
 from app.engine.weekly_snapshot import WeeklySnapshot, compute_weekly_snapshot
 from app.providers.analysis.analysis_models import AnalyzedSession
 from app.providers.analysis.highlight import HighlightResult, select_highlight
 from app.providers.analysis.matching import ActivitySessionMatch, evaluate_activity_plan_match
+from app.services.fitness import get_current_fitness
 
 Outcome = Literal["matched", "freestyle", "unplanned", "bonus"]
 
@@ -402,24 +404,23 @@ async def _build_fitness_feedback(
     session: AsyncSession, user_id: uuid.UUID
 ) -> tuple[FitnessMetrics | None, str]:
     """Same fitness-state computation used by the (now-removed) inbound webhook path."""
-    plan = await repo.plan_repo.get_active_plan(session, user_id)
-    plan_start = plan.start_date if plan else date.today()
-
     activities = await repo.activity_repo.get_for_user(session, user_id, days=365)
-    pre_plan_acts = [a for a in activities if a.activity_date < plan_start]
     logs = await repo.session_log_repo.get_all_for_user(session, user_id)
 
-    all_items = pre_plan_acts + logs
+    today = paris_today()
+    all_items = completed_training_items([*logs, *activities], end=today)
     if not all_items:
         return None, "📊 Données de forme indisponibles pour le moment."
 
-    current = await get_current_fitness(session, user_id)
+    current = await get_current_fitness(session, user_id, today=today)
     if current is not None:
         metrics = current.metrics
     else:
-        initial_ctl = await _estimate_ctl_seed(all_items, session, user_id)
-        seed_date = (date.today() - timedelta(days=49)) if initial_ctl > 0 else None
-        metrics = compute_fitness_from_any(all_items, initial_ctl=initial_ctl, seed_date=seed_date)
+        initial_ctl = await _estimate_ctl_seed(all_items, session, user_id, today=today)
+        seed_date = (today - timedelta(days=49)) if initial_ctl > 0 else None
+        metrics = compute_fitness_from_any(
+            all_items, initial_ctl=initial_ctl, seed_date=seed_date, target_date=today,
+        )
     label = tsb_label(metrics.tsb)
     text = (
         "📊 <b>Impact forme après cette séance</b>\n"
@@ -433,12 +434,14 @@ def _item_date(it):
     return getattr(it, "logged_date", None) or getattr(it, "activity_date", None)
 
 
-async def _estimate_ctl_seed(items: list, session: AsyncSession, user_id: uuid.UUID) -> float:
+async def _estimate_ctl_seed(
+    items: list, session: AsyncSession, user_id: uuid.UUID, *, today: date | None = None,
+) -> float:
     if not items:
         return 0.0
 
     oldest = min(_item_date(it) for it in items)
-    span_days = (date.today() - oldest).days
+    span_days = ((today or paris_today()) - oldest).days
     if span_days >= 84:
         return 0.0
 

@@ -23,6 +23,7 @@ from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
+from app.engine.training_history import completed_training_items, daily_training_tss
 from app.llm.chat_client import run_agentic_loop
 from app.llm.tools import PARALLEL_READ_TOOLS, build_context_messages, build_system_prompt
 from app.services.fitness import get_current_fitness
@@ -90,9 +91,7 @@ async def run_chat(
 
     # Activités importées pré-plan (sans double-comptage avec session_logs)
     activities = await repo.activity_repo.get_in_range(session, user.id, context_start, today)
-    plan_start = plan.start_date if plan else today
-    pre_plan_acts = [a for a in activities if a.activity_date < plan_start]
-    all_items = pre_plan_acts + logs
+    all_items = completed_training_items([*logs, *activities], start=context_start, end=today)
 
     profile: AthleteProfileSchema | None = None
     if profile_row and profile_row.profile:
@@ -125,12 +124,13 @@ async def run_chat(
 
     _persona, _voice_fell_back = resolve_voice(user)
     ux_rules = build_ux_system_prompt(
-        user_level, persona=_persona, first_name=user.first_name or t("llm.chat.default_athlete_name")
+        user_level, persona=_persona,
+        first_name=user.first_name or t("llm.chat.default_athlete_name"),
     )
     def _item_date(item):
         return item.logged_date if hasattr(item, "logged_date") else item.activity_date
 
-    all_recent_items = sorted(list(pre_plan_acts) + list(logs or []), key=_item_date)
+    all_recent_items = sorted(all_items, key=_item_date)
     recent_items = all_recent_items[-1:]
     from app.services.coach_queries import hot_training_summary
 
@@ -310,11 +310,11 @@ async def run_chat(
                 return await _execute_tool(
                     name, args, user=user, session=read_session, plan=plan, profile=profile,
                     logs=logs,
-                    activities=pre_plan_acts, raw_message=user_message,
+                    activities=activities, raw_message=user_message, today=today,
                 )
         return await _execute_tool(
             name, args, user=user, session=session, plan=plan, profile=profile, logs=logs,
-            activities=pre_plan_acts, raw_message=user_message,
+            activities=activities, raw_message=user_message, today=today,
         )
 
     # 4. Appel agentique — outils filtrés par mode (spec 009 : pas d'outil plan en mode
@@ -513,6 +513,7 @@ async def _execute_tool(
     logs: list,
     activities: list | None = None,
     raw_message: str = "",
+    today: date | None = None,
 ) -> dict:
     """Dispatch vers la fonction déterministe correspondante."""
 
@@ -550,7 +551,7 @@ async def _execute_tool(
     elif name == "get_freestyle_session_suggestion":
         return await _tool_get_freestyle_session_suggestion(
             args, user=user, session=session, profile=profile, logs=logs,
-            activities=activities or [],
+            activities=activities or [], today=today,
         )
 
     elif name == "log_meal":
@@ -719,7 +720,9 @@ async def _tool_update_injury_status(
         entry_date=date.today(),
         category="injury",
         source="deterministic",
-        text=t("llm.injury_journal_entry", location=loc_label, severity=sev_label, days=recovery_days),
+        text=t(
+            "llm.injury_journal_entry", location=loc_label, severity=sev_label, days=recovery_days,
+        ),
     )
 
     # Adapter le plan si disponible
@@ -741,7 +744,9 @@ async def _tool_update_injury_status(
     }
 
 
-def _tool_propose_session_adjustment(args: dict, plan, profile: AthleteProfileSchema | None) -> dict:
+def _tool_propose_session_adjustment(
+    args: dict, plan, profile: AthleteProfileSchema | None,
+) -> dict:
     if plan is None:
         return {"error": t("llm.tools.no_plan_to_modify")}
 
@@ -845,6 +850,7 @@ async def _tool_get_freestyle_session_suggestion(
     profile: AthleteProfileSchema | None,
     logs: list,
     activities: list,
+    today: date | None = None,
 ) -> dict:
     """Propose une séance sans référence à un plan (contracts/llm-tool-session-suggestion.md).
     Tout le calcul est déterministe (app/engine/freestyle_selector.py, Constitution
@@ -859,8 +865,6 @@ async def _tool_get_freestyle_session_suggestion(
     (`app/llm/template_picker.py`) qui ne voit que les candidats du type déjà retenu — le
     catalogue complet ne transite plus par le schéma de l'outil. Aucun calcul de charge
     n'a lieu ici (Constitution Principe III : llm/ ne calcule jamais)."""
-    from datetime import date as _date
-
     from app.db.repositories import profile_repo
     from app.engine.atl_ctl import compute_fitness_from_any
     from app.engine.freestyle_selector import (
@@ -875,15 +879,19 @@ async def _tool_get_freestyle_session_suggestion(
     from app.engine.weekly_snapshot import compute_weekly_snapshot
     from app.llm.template_picker import pick_template
     from app.services.fitness import get_current_fitness
-    from app.services.guardrail_service import assemble_workload_findings
+    from app.services.guardrail_service import (
+        assemble_recovery_findings,
+        assemble_workload_findings,
+        recovery_insufficiency,
+    )
 
-    today = _date.today()
-    all_items = list(activities) + list(logs)
+    today = today or paris_today()
+    all_items = completed_training_items([*logs, *activities], end=today)
 
     current = await get_current_fitness(session, user.id, today=today)
     fitness = (
         current.metrics if current is not None
-        else (compute_fitness_from_any(all_items) if all_items else None)
+        else (compute_fitness_from_any(all_items, target_date=today) if all_items else None)
     )
     if fitness is None:
         return {"available": False, "reason": t("llm.tools.freestyle_not_enough_data")}
@@ -893,6 +901,8 @@ async def _tool_get_freestyle_session_suggestion(
     snapshot = compute_weekly_snapshot(all_items, today)
     hard_gap = days_since_hard_effort(all_items, today)
     return_gap = days_since_return_from_break(all_items, today)
+    daily_tss = daily_training_tss(all_items, start=today - timedelta(days=1), end=today)
+    recent_daily_tss = max(daily_tss.values(), default=None)
     # Rendu contraignant côté freestyle (2026-09-21) — jusqu'ici l'ACWR n'existait que
     # comme texte consultatif dans le prompt (GUARDRAIL_LOAD_REDUCTION_RULE), sans
     # garantie que le modèle le respecte. Ici c'est une exclusion dure dans le sélecteur
@@ -905,6 +915,17 @@ async def _tool_get_freestyle_session_suggestion(
         )
     except Exception:
         logger.warning("Impossible de calculer l'ACWR pour la suggestion freestyle")
+
+    recovery_finding_kind = None
+    recovery_gap = None
+    try:
+        recovery_findings = await assemble_recovery_findings(session, user.id, today=today)
+        recovery_finding_kind = next((f.kind for f in recovery_findings), None)
+        if not recovery_findings:
+            recovery_gap = await recovery_insufficiency(session, user.id, today=today)
+    except Exception:
+        logger.warning("Impossible de calculer la récupération pour la suggestion freestyle")
+        recovery_gap = "Signaux de récupération indisponibles."
 
     profile_orm = await profile_repo.get_by_user_id(session, user.id)
     avoid_raw = (
@@ -928,6 +949,8 @@ async def _tool_get_freestyle_session_suggestion(
                 requested_workout_type=requested_workout_type,
                 days_since_return_from_break=return_gap,
                 acwr_finding_kind=acwr_finding_kind,
+                recent_daily_tss=recent_daily_tss,
+                recovery_finding_kind=recovery_finding_kind,
             )
             template_id = await pick_template(style_preference, candidates_for(choice.workout_type))
         except SessionLibraryError as exc:
@@ -948,6 +971,8 @@ async def _tool_get_freestyle_session_suggestion(
             requested_template_id=template_id,
             days_since_return_from_break=return_gap,
             acwr_finding_kind=acwr_finding_kind,
+            recent_daily_tss=recent_daily_tss,
+            recovery_finding_kind=recovery_finding_kind,
         )
     except (SessionLibraryError, NoSuitableTemplateError) as exc:
         logger.warning("Suggestion mode libre indisponible : %s", exc)
@@ -956,6 +981,20 @@ async def _tool_get_freestyle_session_suggestion(
     # spec 010: tagged so app/bot/routers/chat.py can offer a "publish this" button —
     # "id" identifies exactly this suggestion so a later, superseded button can be told
     # apart from the current one (contracts/confirmation-button.md).
+    reasoning = suggestion.reasoning_summary
+    if current is not None:
+        reasoning += f" Forme source intervals.icu datée du {current.as_of.isoformat()}."
+        if current.is_stale:
+            reasoning += " Données de forme anciennes, pas une mesure actuelle."
+    else:
+        reasoning += " Forme estimée localement, faute de mesure source disponible."
+    if recovery_gap:
+        reasoning += f" Récupération non évaluable : {recovery_gap}"
+    missing_tss = sum(1 for item in all_items if (
+        getattr(item, "tss_actual", None) is None and getattr(item, "tss", None) is None
+    ))
+    if missing_tss:
+        reasoning += f" Charge incomplète : {missing_tss} sortie(s) sans TSS renseigné."
     return {
         "available": True,
         "type": "freestyle_publish",
@@ -964,7 +1003,10 @@ async def _tool_get_freestyle_session_suggestion(
         "duration_minutes": suggestion.duration_minutes,
         "target_tss": suggestion.target_tss,
         "zone_code": suggestion.zone_code,
-        "reasoning_summary": suggestion.reasoning_summary,
+        "reasoning_summary": reasoning,
+        "fitness_as_of": current.as_of.isoformat() if current is not None else None,
+        "fitness_is_stale": current.is_stale if current is not None else False,
+        "fitness_source": "intervals.icu" if current is not None else "local_estimate",
         "duration_warning": suggestion.duration_warning,
         "steps": [step.model_dump(mode="json") for step in suggestion.steps],
     }

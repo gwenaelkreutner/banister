@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import paris_today
 from app.db import repositories as repo
+from app.engine.training_history import completed_training_items
 
 WELLNESS_METRICS = (
     "hrv", "resting_hr", "sleep_seconds", "weight_kg", "ctl", "atl", "ramp_rate",
@@ -35,6 +36,7 @@ def clamp_days(value: object, *, default: int, maximum: int) -> int:
 def hot_training_summary(items: list[object], *, today: date) -> list[str]:
     """Compact facts for every chat turn; details remain available through tools."""
     summaries: list[str] = []
+    items = completed_training_items(items, end=today)
     for days in (7, 28):
         start = today - timedelta(days=days - 1)
         window = [
@@ -96,14 +98,11 @@ async def training_trend(
     """Return workload totals by week without asking the model to add activity data."""
     today = paris_today()
     start = today - timedelta(days=days - 1)
-    plan = await repo.plan_repo.get_active_plan(session, user_id)
     logs = await repo.session_log_repo.get_in_range(session, user_id, start, today)
     activities = await repo.activity_repo.get_in_range(session, user_id, start, today)
-    if plan is not None:
-        activities = [a for a in activities if a.activity_date < plan.start_date]
 
     weeks: dict[date, dict] = defaultdict(lambda: {"sessions": 0, "tss": 0.0, "minutes": 0})
-    for item in [*logs, *activities]:
+    for item in completed_training_items([*logs, *activities], start=start, end=today):
         item_date = item.logged_date if hasattr(item, "logged_date") else item.activity_date
         week_start = item_date - timedelta(days=item_date.weekday())
         bucket = weeks[week_start]
@@ -172,11 +171,9 @@ async def session_detail(
     """Return one day of activity data. A date can contain a planned-log and a bonus ride."""
     logs = await repo.session_log_repo.get_by_date(session, user_id, session_date)
     activities = await repo.activity_repo.get_in_range(session, user_id, session_date, session_date)
-    logged_source_ids = {log.source_activity_id for log in logs if log.source_activity_id}
-    activities = [
-        activity for activity in activities
-        if activity.source_activity_id not in logged_source_ids
-    ]
+    items = completed_training_items([*logs, *activities], start=session_date, end=session_date)
+    logs = [item for item in items if hasattr(item, "logged_date")]
+    activities = [item for item in items if not hasattr(item, "logged_date")]
     records: list[dict] = []
     for row in logs:
         records.append({

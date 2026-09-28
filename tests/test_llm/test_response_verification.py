@@ -168,6 +168,19 @@ def test_english_metric_words_anchor_claims_and_ignore_duration():
     assert {claim.metric for claim in res.passed} == {"acwr", "monotony", "hrv"}
 
 
+def test_daily_load_multiple_is_not_mistaken_for_an_absolute_ctl():
+    for text in (
+        "CTL 50, soit 3.20 fois le CTL pour ta charge quotidienne.",
+        "CTL 50, yesterday's load was 3.20 times the CTL.",
+    ):
+        result = verify_response(text, _registry(ctl=50))
+        assert result.ok
+        assert [claim.stated_value for claim in result.passed] == [50]
+    result = verify_response("CTL 80, charge de 3.20 fois le CTL.", _registry(ctl=50))
+    assert not result.ok
+    assert result.mismatches[0][0].stated_value == 80
+
+
 def test_a_clean_response_is_returned_unchanged():
     r = _registry(ctl=45.9)
     text = "Ton CTL est à 45.9, belle forme."

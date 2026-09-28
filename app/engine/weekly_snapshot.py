@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from statistics import mean, stdev
 
+from app.engine.training_history import completed_training_items
+
 
 @dataclass
 class WeeklySnapshot:
@@ -48,9 +50,9 @@ def _item_tss(it) -> float | None:
 
 
 def _item_is_done(it) -> bool:
-    """SessionLog doit avoir status='done'. Activity est toujours comptée si TSS présent."""
+    """Les sorties réalisées incluent les sorties libres/hors plan."""
     status = getattr(it, "status", None)
-    return status is None or status == "done"
+    return status is None or status in {"done", "unplanned"}
 
 
 def compute_weekly_snapshot(logs: list, today: date) -> WeeklySnapshot:
@@ -65,6 +67,7 @@ def compute_weekly_snapshot(logs: list, today: date) -> WeeklySnapshot:
     Returns:
         WeeklySnapshot avec toutes les métriques pré-calculées.
     """
+    logs = completed_training_items(logs, end=today)
     cutoff_7d = today - timedelta(days=6)  # fenêtre inclusive [today-6 .. today]
 
     # ── Fenêtre 7 jours ──────────────────────────────────────────────────────
@@ -75,8 +78,10 @@ def compute_weekly_snapshot(logs: list, today: date) -> WeeklySnapshot:
         and cutoff_7d <= (_item_date(it) or date.min) <= today
     ]
     tss_7d = sum(_item_tss(it) for it in recent)
-    # sessions_done_7d : uniquement les SessionLog (status explicite) — pas les Activity
-    sessions_done_7d = sum(1 for it in recent if getattr(it, "status", None) == "done")
+    # sessions_done_7d : logs réalisés, y compris libres/hors plan — pas les Activity.
+    sessions_done_7d = sum(
+        1 for it in recent if getattr(it, "status", None) in {"done", "unplanned"}
+    )
 
     # TSS par jour sur les 7 jours de la fenêtre — jours de repos initialisés à 0.
     # Les zéros font partie de la formule Foster (spec 006 R2) : une semaine avec des
