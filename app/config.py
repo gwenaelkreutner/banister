@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     # avec stepfun/step-3.5-flash : 300–2048 insuffisant, 4000 suffisant).
     llm_max_tokens: int = 4000
     chat_model: str = "anthropic/claude-sonnet-4-6"  # modèle via OpenRouter pour le chat agentique
+    chat_tool_fallback_model: str = "google/gemini-3-flash-preview"
 
     # App
     app_language: str = "en"

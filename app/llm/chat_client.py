@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 _client: AsyncOpenAI | None = None
 
 _NO_TOOL_NAME = "respond_without_tool"
+_MUTATING_TOOLS = frozenset({
+    "update_injury_status", "update_coach_memory", "log_meal", "undo_last_meal_entry",
+})
 
 
 def _no_tool_definition() -> dict:
@@ -90,6 +93,52 @@ def _parse_text_tool_calls(content: str) -> list[dict]:
         return []
 
 
+def _validate_tool_arguments(name: str, args: object, definitions: list[dict]) -> str | None:
+    """Check the JSON Schema subset used by our tool definitions before dispatch."""
+    definition = next(
+        (tool["function"] for tool in definitions if tool["function"]["name"] == name), None
+    )
+    if definition is None:
+        return f"Unknown tool: {name}"
+    if not isinstance(args, dict):
+        return "Tool arguments must be an object"
+    if "parameters" not in definition:
+        return None
+    schema = definition.get("parameters") or {}
+    properties = schema.get("properties", {})
+    missing = [key for key in schema.get("required", []) if key not in args]
+    if missing:
+        return f"Missing required arguments: {', '.join(missing)}"
+    for key, value in args.items():
+        if key not in properties:
+            return f"Unknown argument: {key}"
+        field = properties[key]
+        kind = field.get("type")
+        if kind == "integer" and type(value) is not int:
+            return f"{key} must be an integer"
+        if kind == "string" and not isinstance(value, str):
+            return f"{key} must be a string"
+        if kind == "array" and not isinstance(value, list):
+            return f"{key} must be an array"
+        if "enum" in field and value not in field["enum"]:
+            return f"{key} has an invalid value"
+        if kind == "integer":
+            if "minimum" in field and value < field["minimum"]:
+                return f"{key} is below its minimum"
+            if "maximum" in field and value > field["maximum"]:
+                return f"{key} exceeds its maximum"
+        if kind == "array":
+            if "maxItems" in field and len(value) > field["maxItems"]:
+                return f"{key} has too many items"
+            item_schema = field.get("items", {})
+            for item in value:
+                if item_schema.get("type") == "string" and not isinstance(item, str):
+                    return f"{key} has an invalid item type"
+                if "enum" in item_schema and item not in item_schema["enum"]:
+                    return f"{key} has an invalid item value"
+    return None
+
+
 async def run_agentic_loop(
     system: str,
     messages: list[dict],
@@ -124,6 +173,7 @@ async def run_agentic_loop(
     tool_used = None
     last_tool_result: dict | None = None
     tool_calls_log: list[dict] = []
+    mutation_results: dict[tuple[str, str], dict] = {}
     usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
 
     def _track_usage(response) -> None:
@@ -136,44 +186,65 @@ async def run_agentic_loop(
         usage_total["calls"] += 1
 
     for iteration in range(max_iterations):
-        logger.info("[LLM →] agentic iter=%d/%d | model=%s | messages=%d | tools=%d",
-                    iteration + 1, max_iterations, effective_model, len(all_messages) + 1, len(decision_tools))
+        logger.info(
+            "[LLM →] agentic iter=%d/%d | model=%s | messages=%d | tools=%d",
+            iteration + 1, max_iterations, effective_model,
+            len(all_messages) + 1, len(decision_tools),
+        )
         logger.debug("[LLM AGENTIC SYSTEM]\n%s", system)
         logger.debug("[LLM AGENTIC MESSAGES]\n%s",
                      json.dumps(all_messages[-4:], ensure_ascii=False, indent=2))
 
-        try:
-            response = await client.chat.completions.create(
-                model=effective_model,
-                messages=[{"role": "system", "content": system}] + all_messages,
-                tools=decision_tools,
-                tool_choice="required" if iteration == 0 else "auto",
-                max_tokens=4096,
-                # Found live (2026-09-18): with reasoning left on, deepseek-v4-flash
-                # burns 1000-2000+ hidden reasoning tokens on this exact production
-                # context (long system prompt, real history, 6-8 tools) and then
-                # answers in plain text with finish_reason="stop" and NO tool call at
-                # all — confirmed by replaying the real request both ways. Disabling
-                # reasoning only for this tool-decision call restores tool_calls
-                # reliably and costs far fewer tokens; OpenRouter's `reasoning` field
-                # is a unified param other providers/models simply ignore, so this is
-                # safe to apply unconditionally here.
-                extra_body={"reasoning": {"enabled": False}},
+        # Some OpenRouter model/provider combinations return plain text even when
+        # tool_choice=required. A text answer is not an executed tool decision.
+        for decision_attempt in range(2 if iteration == 0 else 1):
+            decision_model = (
+                settings.chat_tool_fallback_model or effective_model
+                if iteration == 0 and decision_attempt == 1
+                else effective_model
             )
-        except Exception:
-            logger.exception("Erreur appel LLM agentique")
-            raise
-        _track_usage(response)
-
-        choice = response.choices[0]
+            try:
+                response = await client.chat.completions.create(
+                    model=decision_model,
+                    messages=[{"role": "system", "content": system}] + all_messages,
+                    tools=decision_tools,
+                    tool_choice="required" if iteration == 0 else "auto",
+                    max_tokens=1024 if decision_model != effective_model else 4096,
+                    # Reasoning on this model consumed the tool-decision budget in
+                    # production; keep the existing setting for all attempts.
+                    extra_body={"reasoning": {"enabled": False}},
+                )
+            except Exception:
+                logger.exception("Erreur appel LLM agentique | model=%s", decision_model)
+                if iteration == 0 and decision_attempt == 1:
+                    return t("llm.chat.no_tool_executed"), None, None, usage_total, tool_calls_log
+                raise
+            _track_usage(response)
+            choice = response.choices[0]
+            if iteration != 0:
+                break
+            content = (choice.message.content or "").strip()
+            if choice.message.tool_calls or _parse_text_tool_calls(content):
+                break
+            logger.warning(
+                "[LLM TOOL CONTRACT] required returned no tool | attempt=%d/2 "
+                "finish=%s model=%s generation=%s",
+                decision_attempt + 1, choice.finish_reason, decision_model,
+                getattr(response, "id", None),
+            )
+        else:
+            return t("llm.chat.no_tool_executed"), None, None, usage_total, tool_calls_log
         logger.info("[LLM ←] agentic | finish=%s | model=%s", choice.finish_reason, effective_model)
 
         # finish=length peut survenir quand un tool call JSON est tronqué :
         # tool_calls est parfois présent mais finish_reason != "tool_calls"
         has_tool_calls = bool(choice.message.tool_calls)
-        if choice.finish_reason == "tool_calls" or (choice.finish_reason == "length" and has_tool_calls):
+        if has_tool_calls:
             if choice.finish_reason == "length":
-                logger.warning("[LLM WARN] finish=length avec tool_calls — tool call potentiellement tronqué, tentative")
+                logger.warning(
+                    "[LLM WARN] finish=length avec tool_calls — "
+                    "tool call potentiellement tronqué, tentative"
+                )
         elif choice.finish_reason != "tool_calls":
             content = (choice.message.content or "").strip()
 
@@ -211,12 +282,14 @@ async def run_agentic_loop(
                 )
                 return answer, tool_used, last_tool_result, usage_total, tool_calls_log
             if text_calls:
-                logger.info("[LLM TEXT TOOL] %d tool call(s) détecté(s) dans le texte", len(text_calls))
+                logger.info(
+                    "[LLM TEXT TOOL] %d tool call(s) détecté(s) dans le texte", len(text_calls)
+                )
                 tool_results_for_prompt = []
 
                 for tc in text_calls:
                     name = tc["name"]
-                    args = tc["arguments"] if isinstance(tc["arguments"], dict) else {}
+                    args = tc["arguments"]
                     if name == _NO_TOOL_NAME:
                         if on_tool_event:
                             await on_tool_event(name, "started")
@@ -226,15 +299,27 @@ async def run_agentic_loop(
                     if on_tool_event:
                         await on_tool_event(name, "started")
                     logger.info("[LLM TOOL (text) →] %s | args: %.200s", name, str(args))
-                    try:
-                        result = await tool_executor(name, args)
-                        last_tool_result = result
-                        logger.info("[LLM TOOL (text) ←] %s | result: %.200s", name, str(result))
-                    except Exception as e:
-                        logger.warning("Erreur tool (text) %s: %s", name, e)
-                        result = {"error": str(e)}
-                        last_tool_result = result
-                    tool_calls_log.append({"name": name, "args": args, "result": result})
+                    validation_error = _validate_tool_arguments(name, args, decision_tools)
+                    signature = (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
+                    duplicate = name in _MUTATING_TOOLS and signature in mutation_results
+                    if validation_error:
+                        result = {"ok": False, "error": validation_error}
+                    elif duplicate:
+                        result = mutation_results[signature]
+                    else:
+                        try:
+                            result = await tool_executor(name, args)
+                            logger.info(
+                                "[LLM TOOL (text) ←] %s | result: %.200s", name, str(result)
+                            )
+                        except Exception as e:
+                            logger.warning("Erreur tool (text) %s: %s", name, e)
+                            result = {"error": str(e)}
+                        if name in _MUTATING_TOOLS:
+                            mutation_results[signature] = result
+                    last_tool_result = result
+                    if not duplicate:
+                        tool_calls_log.append({"name": name, "args": args, "result": result})
                     if on_tool_event:
                         status = (
                             "failed" if result.get("error") or result.get("ok") is False
@@ -318,15 +403,27 @@ async def run_agentic_loop(
                 if on_tool_event:
                     await on_tool_event(name, "started")
                     await on_tool_event(name, "finished")
-                return name, {}, {"ok": True}, tc.id
+                return name, {}, {"ok": True}, tc.id, False
             if on_tool_event:
                 await on_tool_event(name, "started")
             logger.info("[LLM TOOL →] %s | args: %.200s", name, tc.function.arguments)
             args: dict = {}
+            duplicate = False
             try:
                 args = json.loads(tc.function.arguments)
-                result = await tool_executor(name, args)
-                logger.info("[LLM TOOL ←] %s | result: %.200s", name, str(result))
+                validation_error = _validate_tool_arguments(name, args, decision_tools)
+                if validation_error:
+                    result = {"ok": False, "error": validation_error}
+                else:
+                    signature = (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
+                    duplicate = name in _MUTATING_TOOLS and signature in mutation_results
+                    if duplicate:
+                        result = mutation_results[signature]
+                    else:
+                        result = await tool_executor(name, args)
+                        logger.info("[LLM TOOL ←] %s | result: %.200s", name, str(result))
+                        if name in _MUTATING_TOOLS:
+                            mutation_results[signature] = result
             except Exception as e:
                 logger.warning("Erreur tool %s: %s", name, e)
                 result = {"error": str(e)}
@@ -336,18 +433,19 @@ async def run_agentic_loop(
                     else "finished"
                 )
                 await on_tool_event(name, status)
-            return name, args, result, tc.id
+            return name, args, result, tc.id, not duplicate
 
         if all(tc.function.name in parallel_tool_names for tc in tool_calls):
             executed_tools = await asyncio.gather(*(execute_native_tool(tc) for tc in tool_calls))
         else:
             executed_tools = [await execute_native_tool(tc) for tc in tool_calls]
 
-        for name, args, result, tool_call_id in executed_tools:
+        for name, args, result, tool_call_id, record in executed_tools:
             if name != _NO_TOOL_NAME:
                 tool_used = name
                 last_tool_result = result
-                tool_calls_log.append({"name": name, "args": args, "result": result})
+                if record:
+                    tool_calls_log.append({"name": name, "args": args, "result": result})
             all_messages.append({
                 "role": "tool",
                 "content": json.dumps(result, ensure_ascii=False, default=str),
@@ -355,7 +453,10 @@ async def run_agentic_loop(
             })
 
     # Fallback : dernier appel sans tools si on a épuisé les itérations
-    logger.info("[LLM →] agentic fallback | model=%s | messages=%d", effective_model, len(all_messages) + 1)
+    logger.info(
+        "[LLM →] agentic fallback | model=%s | messages=%d",
+        effective_model, len(all_messages) + 1,
+    )
     response = await client.chat.completions.create(
         model=effective_model,
         messages=[{"role": "system", "content": system}] + all_messages,

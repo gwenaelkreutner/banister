@@ -39,6 +39,16 @@ _ACTION_CLAIM_RE = re.compile(
     r"noted|saved|logged|added|changed|updated|deleted|removed|published)\b",
     re.IGNORECASE,
 )
+_OTHER_ACTION_CLAIM_RE = re.compile(
+    r"\b(?:je|nous|i|we)\s+(?:(?:le|la|les|ça|cela|it|this)\s+)?"
+    r"(?:note|enregistre|ajoute|modifie|supprime|save|log|add|update|delete)\b|"
+    r"\b[\wÀ-ÿ'-]+\s+(?:noté|enregistré|ajouté|modifié|supprimé)"
+    r"(?:e|s|es)?\b",
+    re.IGNORECASE,
+)
+_WRITE_TOOLS = frozenset({
+    "update_injury_status", "update_coach_memory", "log_meal", "undo_last_meal_entry",
+})
 
 
 def _verify_action_claim(response_text: str, tool_calls_log: list[dict]) -> str:
@@ -51,8 +61,17 @@ def _verify_action_claim(response_text: str, tool_calls_log: list[dict]) -> str:
         if saved:
             return t("llm.chat.meal_partially_saved")
         return t("llm.chat.meal_not_saved")
-    if not tool_calls_log and _ACTION_CLAIM_RE.search(response_text):
-        return t("llm.chat.no_tool_executed")
+    wrote = any(
+        call.get("name") in _WRITE_TOOLS
+        and not (call.get("result") or {}).get("error")
+        and ((call.get("result") or {}).get("ok") is True
+             or (call.get("result") or {}).get("success") is True)
+        for call in tool_calls_log
+    )
+    if not wrote and (
+        _ACTION_CLAIM_RE.search(response_text) or _OTHER_ACTION_CLAIM_RE.search(response_text)
+    ):
+        return t("llm.chat.no_action_executed" if tool_calls_log else "llm.chat.no_tool_executed")
     return response_text
 
 

@@ -1062,6 +1062,15 @@ réponse (normal, `pending_proposal` plan, `freestyle_publish`).
 explicitement un outil (`tool_choice=required`). `respond_without_tool` est le choix explicite pour une
 réponse sans action ; il ne lance aucun outil applicatif. Ce protocole général remplace les tentatives de
 déduire l'intention nutritionnelle avec des mots-clés ou d'obliger l'athlète à écrire « appelle meal ».
+**Fiabilité du protocole (2026-09-30)** : Phoenix a montré que certains appels `required` de DeepSeek
+revenaient en texte simple (`finish=stop`) sans outil. Le chat rejette ce résultat et retente la décision
+une fois avec `CHAT_TOOL_FALLBACK_MODEL` (Gemini 3 Flash par défaut ; valeur vide = même modèle). Après
+deux réponses sans outil, il annonce explicitement qu'aucune action n'a eu lieu. Les arguments des outils
+sont vérifiés avant exécution ; une mutation identique répétée dans le même tour ne s'exécute qu'une fois.
+La confirmation d'action tient compte du succès réel de l'outil, pas seulement de sa présence dans la trace.
+Le banc d'essai `eval/chat_tool_benchmark.py` et le rejeu Phoenix `eval/phoenix_tool_replay.py` ne lancent
+jamais les outils applicatifs. Sur 12 décisions réelles du 29/09, DeepSeek a choisi `log_meal` 7 fois,
+Qwen 4 fois ; Gemini l'a choisi sur 6/6 cas d'échec rejoués. Échantillon restreint, à suivre dans Phoenix.
 Dans Telegram, un message de suivi apparaît dès le premier appel d'outil et se met à jour avant la réponse :
 nom exact de chaque outil et statut ⏳/✅/❌, sans paramètres ni résultats détaillés. Le choix
 `respond_without_tool` est visible également. Une panne d'édition de ce message ne doit jamais bloquer une
