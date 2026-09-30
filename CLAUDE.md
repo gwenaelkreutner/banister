@@ -1071,18 +1071,6 @@ La confirmation d'action tient compte du succès réel de l'outil, pas seulement
 Le banc d'essai `eval/chat_tool_benchmark.py` et le rejeu Phoenix `eval/phoenix_tool_replay.py` ne lancent
 jamais les outils applicatifs. Sur 12 décisions réelles du 29/09, DeepSeek a choisi `log_meal` 7 fois,
 Qwen 4 fois ; Gemini l'a choisi sur 6/6 cas d'échec rejoués. Échantillon restreint, à suivre dans Phoenix.
-**Réduction des replis inutiles (2026-09-30)** : `tool_choice=required` seul ne suffit pas à faire
-choisir `respond_without_tool` à DeepSeek pour une conversation ordinaire. La première décision porte
-désormais aussi une consigne système explicite : appeler un outil, ou appeler `respond_without_tool`
-avec la réponse complète. Cette consigne reste présente lors du réessai, puis disparaît après les
-résultats d'outils pour permettre la réponse finale normale. Aucun tri par mots-clés ni acceptation
-silencieuse d'un texte sans décision : le secours Gemini reste disponible en cas de non-respect.
-Comparaison sur six cas synthétiques (conversation, repas explicite/implicite, historique), sans
-exécuter d'outil : 4/6 choix attendus avant, 6/6 avec la consigne ; `require_parameters=true` seul
-ne résout pas le problème (3/6). Un essai ultérieur a choisi une mémorisation inutile pour un
-remerciement : la consigne précise donc de ne pas inventer d'action pour satisfaire le protocole.
-Après cette précision, trois rejeux du remerciement choisissent `respond_without_tool` et le cas
-repas choisit `log_meal`. Petits échantillons, pas une garantie de conformité du fournisseur.
 Dans Telegram, un message de suivi apparaît dès le premier appel d'outil et se met à jour avant la réponse :
 nom exact de chaque outil et statut ⏳/✅/❌, sans paramètres ni résultats détaillés. Le choix
 `respond_without_tool` reste invisible côté Telegram ; sans outil applicatif, aucun message de suivi

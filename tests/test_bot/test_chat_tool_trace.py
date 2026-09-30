@@ -1,11 +1,7 @@
 """Telegram shows actual application tool calls before the final answer."""
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
-
 import pytest
 
 from app.bot.routers.chat import _ToolTrace
-from app.llm.chat_client import run_agentic_loop
 
 
 class _SentMessage:
@@ -78,39 +74,3 @@ async def test_respond_without_tool_never_creates_or_changes_trace():
         "Outils utilisés :\n⏳ get_fitness_history",
         "Outils utilisés :\n✅ get_fitness_history",
     ]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("native", [True, False])
-async def test_hidden_no_action_reply_finishes_after_one_llm_call(monkeypatch, native):
-    incoming = _IncomingMessage()
-    function = SimpleNamespace(name="respond_without_tool", arguments='{"answer":"Bonjour !"}')
-    response = SimpleNamespace(
-        usage=None,
-        choices=[SimpleNamespace(
-            finish_reason="tool_calls" if native else "stop",
-            message=SimpleNamespace(
-                tool_calls=[SimpleNamespace(id="call-1", function=function)] if native else None,
-                content=None if native else (
-                    'TOOLCALL>[{"name":"respond_without_tool",'
-                    '"arguments":{"answer":"Bonjour !"}}]>'
-                ),
-            ),
-        )],
-    )
-    create = AsyncMock(return_value=response)
-    execute = AsyncMock()
-    monkeypatch.setattr(
-        "app.llm.chat_client._get_client",
-        lambda: SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))),
-    )
-
-    answer, used, _, _, log = await run_agentic_loop(
-        system="test", messages=[{"role": "user", "content": "Salut"}], tools=[],
-        tool_executor=execute, on_tool_event=_ToolTrace(incoming),
-    )
-
-    assert (answer, used, log) == ("Bonjour !", None, [])
-    create.assert_awaited_once()
-    execute.assert_not_awaited()
-    assert incoming.sent == []
