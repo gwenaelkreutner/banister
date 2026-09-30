@@ -54,23 +54,3 @@ async def test_repeated_same_tool_keeps_separate_status_lines():
     assert incoming.sent[0].versions[-1] == (
         "Outils utilisés :\n✅ log_meal\n❌ log_meal"
     )
-
-
-@pytest.mark.asyncio
-async def test_respond_without_tool_never_creates_or_changes_trace():
-    incoming = _IncomingMessage()
-    trace = _ToolTrace(incoming)
-
-    await trace("respond_without_tool", "started")
-    await trace("respond_without_tool", "finished")
-    assert incoming.sent == []
-
-    await trace("get_fitness_history", "started")
-    await trace("respond_without_tool", "started")
-    await trace("respond_without_tool", "finished")
-    await trace("get_fitness_history", "finished")
-
-    assert incoming.sent[0].versions == [
-        "Outils utilisés :\n⏳ get_fitness_history",
-        "Outils utilisés :\n✅ get_fitness_history",
-    ]

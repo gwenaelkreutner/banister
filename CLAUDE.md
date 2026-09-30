@@ -1073,8 +1073,7 @@ jamais les outils applicatifs. Sur 12 décisions réelles du 29/09, DeepSeek a c
 Qwen 4 fois ; Gemini l'a choisi sur 6/6 cas d'échec rejoués. Échantillon restreint, à suivre dans Phoenix.
 Dans Telegram, un message de suivi apparaît dès le premier appel d'outil et se met à jour avant la réponse :
 nom exact de chaque outil et statut ⏳/✅/❌, sans paramètres ni résultats détaillés. Le choix
-`respond_without_tool` reste invisible côté Telegram ; sans outil applicatif, aucun message de suivi
-n'est envoyé. Une panne d'édition de ce message ne doit jamais bloquer une
+`respond_without_tool` est visible également. Une panne d'édition de ce message ne doit jamais bloquer une
 écriture. Si aucun outil applicatif n'a tourné, une phrase du modèle telle que « c'est noté » est remplacée
 par un constat sans action. Quand `log_meal` tourne, la réponse libre est remplacée par le résultat réel de
 l'écriture, puis par la confirmation nutrition détaillée existante ; le modèle ne peut plus inventer un
