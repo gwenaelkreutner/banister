@@ -27,6 +27,7 @@ from app.engine.schemas import (
     TrainingPlanSchema,
 )
 from app.llm.chat_client import (
+    _TOOL_DECISION_RULE,
     _no_tool_definition,
     _parse_text_tool_calls,
     _validate_tool_arguments,
@@ -142,7 +143,9 @@ async def _run(max_usd: float, case_count: int, repeats: int) -> None:
                         response = await llm.chat.completions.create(
                             model=model,
                             messages=[
-                                {"role": "system", "content": _system(case.mode)},
+                                {"role": "system", "content": (
+                                    f"{_system(case.mode)}\n\n{_TOOL_DECISION_RULE}"
+                                )},
                                 {"role": "user", "content": case.message},
                             ],
                             tools=tools, tool_choice="required", max_tokens=4096,
