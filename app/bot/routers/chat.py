@@ -66,6 +66,8 @@ class _ToolTrace:
         )
 
     async def __call__(self, name: str, status: str) -> None:
+        if name == "respond_without_tool":
+            return
         async with self.lock:
             if status == "started":
                 self.calls.append({"name": name, "status": status})
