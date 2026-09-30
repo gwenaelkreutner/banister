@@ -21,6 +21,16 @@ logger = logging.getLogger(__name__)
 _client: AsyncOpenAI | None = None
 
 _NO_TOOL_NAME = "respond_without_tool"
+# Some providers accept tool_choice="required" without enforcing it. State the
+# first-turn protocol to the model too, including the conversational exit path.
+_TOOL_DECISION_RULE = (
+    "For this first response, you must call an available tool. "
+    "Choose an application tool only if needed to fulfil the user's request; "
+    "otherwise call respond_without_tool and put your complete answer in its "
+    "answer argument. Calling respond_without_tool fully satisfies this protocol: "
+    "do not invent an application action just to call a tool. "
+    "Do not respond in plain text instead of making this tool call."
+)
 _MUTATING_TOOLS = frozenset({
     "update_injury_status", "update_coach_memory", "log_meal", "undo_last_meal_entry",
 })
@@ -186,12 +196,13 @@ async def run_agentic_loop(
         usage_total["calls"] += 1
 
     for iteration in range(max_iterations):
+        decision_system = f"{system}\n\n{_TOOL_DECISION_RULE}" if iteration == 0 else system
         logger.info(
             "[LLM →] agentic iter=%d/%d | model=%s | messages=%d | tools=%d",
             iteration + 1, max_iterations, effective_model,
             len(all_messages) + 1, len(decision_tools),
         )
-        logger.debug("[LLM AGENTIC SYSTEM]\n%s", system)
+        logger.debug("[LLM AGENTIC SYSTEM]\n%s", decision_system)
         logger.debug("[LLM AGENTIC MESSAGES]\n%s",
                      json.dumps(all_messages[-4:], ensure_ascii=False, indent=2))
 
@@ -206,7 +217,7 @@ async def run_agentic_loop(
             try:
                 response = await client.chat.completions.create(
                     model=decision_model,
-                    messages=[{"role": "system", "content": system}] + all_messages,
+                    messages=[{"role": "system", "content": decision_system}] + all_messages,
                     tools=decision_tools,
                     tool_choice="required" if iteration == 0 else "auto",
                     max_tokens=1024 if decision_model != effective_model else 4096,
@@ -234,7 +245,7 @@ async def run_agentic_loop(
             )
         else:
             return t("llm.chat.no_tool_executed"), None, None, usage_total, tool_calls_log
-        logger.info("[LLM ←] agentic | finish=%s | model=%s", choice.finish_reason, effective_model)
+        logger.info("[LLM ←] agentic | finish=%s | model=%s", choice.finish_reason, decision_model)
 
         # finish=length peut survenir quand un tool call JSON est tronqué :
         # tool_calls est parfois présent mais finish_reason != "tool_calls"

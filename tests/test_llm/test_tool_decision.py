@@ -8,7 +8,7 @@ from app.config import settings
 from app.db.models.user import User
 from app.db.repositories import meal_entry_repo
 from app.llm.chat import _tool_log_meal, _verify_action_claim
-from app.llm.chat_client import run_agentic_loop
+from app.llm.chat_client import _TOOL_DECISION_RULE, run_agentic_loop
 
 
 def _tool_call(name, arguments):
@@ -58,7 +58,9 @@ async def test_no_action_decision_does_not_execute_a_tool(monkeypatch):
         tools=[{"type": "function", "function": {"name": "log_meal"}}],
         tool_executor=execute, on_tool_event=on_event,
     )
+    assert len(calls) == 1
     assert calls[0]["tool_choice"] == "required"
+    assert calls[0]["messages"][0]["content"] == f"test\n\n{_TOOL_DECISION_RULE}"
     assert {tool["function"]["name"] for tool in calls[0]["tools"]} == {
         "respond_without_tool", "log_meal",
     }
@@ -101,6 +103,9 @@ async def test_required_plain_text_is_retried_before_any_tool_runs(monkeypatch):
     )
 
     assert [call["tool_choice"] for call in calls] == ["required", "required", "auto"]
+    assert [call["messages"][0]["content"] for call in calls] == [
+        f"test\n\n{_TOOL_DECISION_RULE}", f"test\n\n{_TOOL_DECISION_RULE}", "test",
+    ]
     assert [call["model"] for call in calls[:2]] == [
         settings.chat_model, "google/gemini-3-flash-preview",
     ]
