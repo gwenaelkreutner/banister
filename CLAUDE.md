@@ -177,6 +177,12 @@ mapper.map_activity()
 # estimation présentée comme actuelle (FR-020 / Constitution Principe IV)
 ```
 
+**Séances mobilité/renfo ignorées** (2026-10-21) : `detect_new_activities()` saute les activités de type
+`Yoga`, `Pilates` et `WeightTraining` (`NON_RIDE_SESSION_TYPES`, `poller.py`). Le hub du serveur
+(`/root/hub`) pousse ces séances guidées sur intervals.icu ; elles restent dans le calendrier de la source
+mais ne déclenchent ni notification post-sortie, ni clavier RPE, ni matching au plan. Les autres types non
+vélo (course, natation) gardent le comportement existant.
+
 **Import d'historique** (`history.py`) : à la première connexion, un seul appel `list_activities()`
 ramène tout l'historique disponible (jusqu'à ~120 jours en un seul call, pas de pagination observée) —
 `activity_repo.bulk_insert()` avec `on_conflict_do_nothing` le rend idempotent, donc réentrant sans

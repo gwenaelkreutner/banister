@@ -68,6 +68,13 @@ def resolve_poll_interval_minutes() -> int:
     return configured
 
 
+# Mobility / strength sessions logged on intervals.icu by the athlete's other tools (the
+# server's hub pushes its guided Yoga/Pilates/strength sessions there). They belong in the
+# source's calendar, but are not rides: no post-ride notification, no RPE keyboard, no
+# plan matching. Filtered at detection, so they are never announced nor marked reported.
+NON_RIDE_SESSION_TYPES = frozenset({"Yoga", "Pilates", "WeightTraining"})
+
+
 async def detect_new_activities(
     session: AsyncSession,
     user_id: uuid.UUID,
@@ -86,6 +93,8 @@ async def detect_new_activities(
 
     unreported = []
     for activity in activities:
+        if activity.get("type") in NON_RIDE_SESSION_TYPES:
+            continue
         activity_id = str(activity["id"])
         if not await sync_state_repo.is_reported(session, user_id, activity_id):
             unreported.append(activity)

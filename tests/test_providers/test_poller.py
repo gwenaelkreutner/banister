@@ -105,6 +105,21 @@ class TestDetectNewActivities:
 
         assert result == []
 
+    async def test_mobility_and_strength_sessions_are_not_detected(self, db_session):
+        user = await _make_user(db_session, 603)
+        client = _FakeClient(
+            [
+                {"id": "ride", "type": "Ride", "start_date": "2026-08-25T10:00:00Z"},
+                {"id": "yoga", "type": "Yoga", "start_date": "2026-08-25T19:00:00Z"},
+                {"id": "pilates", "type": "Pilates", "start_date": "2026-08-26T19:00:00Z"},
+                {"id": "renfo", "type": "WeightTraining", "start_date": "2026-08-26T20:00:00Z"},
+            ]
+        )
+
+        result = await poller.detect_new_activities(db_session, user.id, client)
+
+        assert [a["id"] for a in result] == ["ride"]
+
     async def test_results_sorted_oldest_first(self, db_session):
         user = await _make_user(db_session, 602)
         client = _FakeClient(
