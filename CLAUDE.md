@@ -52,8 +52,9 @@ ruff check app/ tests/
 
 - **Runtime** : Python 3.13
 - **Bot** : aiogram v3 (async FSM, MemoryStorage)
-- **API** : FastAPI — sert le webhook Telegram uniquement (plus d'endpoint entrant côté source de données ;
-  voir Pipeline intervals.icu ci-dessous)
+- **API** : FastAPI — sert le webhook Telegram et une API interne de contexte sportif en lecture seule
+  (`/internal/v1/context`, voir § API interne) ; aucun endpoint entrant côté source de données (voir
+  Pipeline intervals.icu ci-dessous)
 - **DB** : SQLite local (fichier unique sous `DATA_DIR`, `data/` par défaut) via SQLAlchemy + `aiosqlite`.
   Aucun service séparé à administrer — le fichier est créé et migré automatiquement au démarrage.
 - **LLM** : OpenRouter (provider actuel) ou Anthropic — abstraction multi-provider dans `app/llm/providers/`
@@ -71,6 +72,8 @@ ruff check app/ tests/
 app/
 ├── main.py                  # FastAPI + lifespan (polling dev / webhook prod)
 ├── config.py                # Settings Pydantic
+├── api/
+│   └── internal.py          # GET /internal/v1/context — contexte sportif pour services locaux (jeton)
 ├── core/
 │   ├── persona.py           # load_persona() → Persona depuis personas/*.yaml (câblé spec 007
 │   │                        # via services/coach_voice.py — /voice choisit users.coach_voice)
@@ -97,6 +100,7 @@ app/
 ├── services/                # Orchestration : repos + LLM, sans dépendance aiogram
 │   ├── weekly_recap.py      # compute_weekly_recap() → WeeklyRecapResult
 │   ├── activity_feedback.py # assemble_activity_feedback() — contexte post-séance, sans dépendance bot
+│   ├── sport_context.py     # build_sport_context() — lecture seule pour l'API interne
 │   ├── fitness.py           # get_current_fitness() — CTL/ATL/TSB courants depuis la table wellness
 │   ├── publication.py       # spec 005 : cycle de vie approbation, barrière authorize_publication(),
 │   │                        # diff plan↔calendrier, check_divergence(), retrait — sans dépendance aiogram
@@ -178,8 +182,8 @@ mapper.map_activity()
 ```
 
 **Séances mobilité/renfo ignorées** (2026-10-21) : `detect_new_activities()` saute les activités de type
-`Yoga`, `Pilates` et `WeightTraining` (`NON_RIDE_SESSION_TYPES`, `poller.py`). Le hub du serveur
-(`/root/hub`) pousse ces séances guidées sur intervals.icu ; elles restent dans le calendrier de la source
+`Yoga`, `Pilates` et `WeightTraining` (`NON_RIDE_SESSION_TYPES`, `poller.py`). Le coach mobilité du
+serveur (`/root/mobilite`, ex-`/root/hub`) pousse ces séances guidées sur intervals.icu ; elles restent dans le calendrier de la source
 mais ne déclenchent ni notification post-sortie, ni clavier RPE, ni matching au plan. Les autres types non
 vélo (course, natation) gardent le comportement existant.
 
@@ -1422,6 +1426,23 @@ tous les deux des chiffres de **consommation** (pas de dépense), rien n'empêch
 entrer. Aucune valeur observée sur ce compte de test au moment du câblage (petite base, pas représentative
 du serveur réel).
 
+## API interne de contexte sportif (hors spec — 2026-10-23)
+
+`GET /internal/v1/context?days=7&ahead=7` (`app/api/internal.py` → `app/services/sport_context.py`) : le
+contexte vélo dont un autre service du serveur a besoin, sans lire la SQLite de Banister. Premier client :
+le coach mobilité Hermes (`/root/mobilite`), qui lisait auparavant la base en `mode=ro` (couplage au schéma).
+
+- **Lecture seule, rien de recalculé** : CTL/ATL/TSB via `get_current_fitness()` (date source + `stale`),
+  `ramp_rate` de la dernière ligne wellness, récupération = dernière ligne wellness datée + moyennes des 7
+  jours précédents, `guardrails` = findings de `assemble_workload_findings()` + `assemble_recovery_findings()`
+  (même logique que le chat, décisions de l'athlète comprises), `recovery_unknown_reason` =
+  `recovery_insufficiency()`, sorties = `session_log_repo.get_in_range()` (sans `skipped`), séances prévues
+  = `iter_horizon_sessions()` du plan actif + séances libres publiées non retirées. Valeur non mesurée → `null`.
+- **Accès** : port 127.0.0.1 sur l'hôte ; les conteneurs voisins passent par le réseau Docker
+  `banister_default` (`http://banister_app:8000`). Jeton `Authorization: Bearer <INTERNAL_API_TOKEN>`
+  obligatoire (comparaison à temps constant) ; `INTERNAL_API_TOKEN` vide = routeur en 404 (fermé par défaut).
+- Bornes : `days` 1–28, `ahead` 1–14. Tests : `tests/test_services/test_sport_context.py`.
+
 ## Variables d'environnement
 
 ```
@@ -1443,6 +1464,7 @@ OPENROUTER_API_KEY=...
 ANTHROPIC_API_KEY=...            # si LLM_PROVIDER=anthropic
 PHOENIX_ENABLED=false                    # optionnel — active le tracing LLM (voir § Observabilité)
 PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défaut déjà correct en docker-compose
+INTERNAL_API_TOKEN=                      # optionnel — active /internal/v1/context (jeton partagé, voir § API interne)
 ```
 
 ## Navigation rapide
@@ -1521,4 +1543,5 @@ PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces  # optionnel — défau
 | Modifier le tracing LLM (Phoenix) | `app/observability.py` — `setup_observability()` ; span manuel dans `app/llm/providers/openrouter.py` |
 | Modifier `/review` (picker, synthèse) | `app/bot/routers/review.py` + `app/llm/review.py` — prompt dans `app/llm/prompts.py::build_review_system_prompt()`/`build_review_user_message()` |
 | Activer/désactiver un bloc de données `/review` (puissance brute, qualité, contexte externe, forme, nutrition) | `app/llm/prompts.py` — `REVIEW_DATA_BLOCKS` |
+| Modifier le contexte sportif exposé aux services locaux | `app/services/sport_context.py` — `build_sport_context()` ; route + jeton dans `app/api/internal.py` |
 | Architecture complète | `docs/ARCHITECTURE.md` |

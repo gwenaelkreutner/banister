@@ -114,6 +114,10 @@ class Settings(BaseSettings):
     # error for an out-of-range value without duplicating that logic.
     intervals_poll_interval_minutes: int = 5
 
+    # Internal API (app/api/internal.py) — bearer token shared with local services such as
+    # the Hermes mobility coach. Empty (default) disables the endpoint entirely.
+    internal_api_token: SecretStr = SecretStr("")
+
     # Persona — filename in personas/ without .yaml. Deployer default; per-athlete
     # override lives in users.coach_voice (spec 007). "coach-default" is both the
     # deployer default and guaranteed-present fallback target (FR-026).

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.api.internal import router as internal_router
 from app.bot.setup import create_bot, create_dispatcher, register_bot_commands
 from app.bot.text_format import to_telegram_html
 from app.config import settings
@@ -149,6 +150,7 @@ async def lifespan(app: FastAPI):
     logger.info("Bot arrêté")
 
 app = FastAPI(title="Banister", lifespan=lifespan)
+app.include_router(internal_router)
 
 @app.get("/health")
 async def health():
