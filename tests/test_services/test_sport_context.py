@@ -67,7 +67,7 @@ async def test_fitness_recovery_and_recent_rides(db_session):
     assert rec["sleep_hours"] == 6.0 and rec["fatigue"] == 3
     # skipped and out-of-window sessions excluded; TSS taken as stored
     assert ctx["recent_rides"] == [{"date": "2026-10-22", "type": "long_ride", "duration_min": 180,
-                                    "tss": 148.0, "rpe": 7, "planned": False}]
+                                    "tss": 148.0, "kj": None, "rpe": 7, "planned": False}]
     assert ctx["recent_tss"] == 148.0
     for f in ctx["guardrails"]:
         assert f["action"] and f["kind"]
@@ -130,3 +130,31 @@ async def test_endpoint_requires_matching_bearer_token(db_session, monkeypatch):
     assert body["recent_days"] == 3
     expected = {"fitness", "recovery", "guardrails", "recent_rides", "planned", "profile"}
     assert expected <= body.keys()
+
+
+async def test_ftp_weight_and_traits_come_from_the_real_profile_shape(db_session):
+    """Regression: the FTP lives in profile.equipment, age in profile.physio. Reading them flat
+    silently returned null."""
+    from app.db.repositories import profile_repo
+
+    user = await _make_user(db_session)
+    await profile_repo.create(db_session, user.id, {
+        "equipment": {"power_meter": True, "ftp": 290, "ftp_source": "source"},
+        "physio": {"age": 28, "hr_max": 202, "hr_rest": 65},
+        "sex": "M", "height_cm": 170,
+    })
+    for day, kg in ((date(2026, 10, 1), 67.5), (date(2026, 10, 17), 66.8)):
+        await wellness_repo.upsert(db_session, user.id, day, weight_kg=kg)
+    await wellness_repo.upsert(db_session, user.id, date(2026, 10, 20), hrv=60.0)
+
+    ctx = await build_sport_context(db_session, user.id, today=date(2026, 10, 23))
+    assert ctx["ftp"] == 290
+    assert (ctx["profile"]["age"], ctx["profile"]["sex"], ctx["profile"]["height_cm"]) == (28, "M", 170)
+    assert ctx["weight"] == {"kg": 66.8, "date": "2026-10-17"}  # dated, not presented as today's
+    assert [w["date"] for w in ctx["weight_history"]] == ["2026-10-01", "2026-10-17"]
+
+
+async def test_no_weight_is_null_not_invented(db_session):
+    user = await _make_user(db_session)
+    ctx = await build_sport_context(db_session, user.id, today=date(2026, 10, 23))
+    assert ctx["weight"] is None and ctx["weight_history"] == [] and ctx["ftp"] is None

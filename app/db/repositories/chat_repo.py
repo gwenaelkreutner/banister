@@ -69,8 +69,7 @@ async def token_usage_by_day(
     session: AsyncSession, user_id: uuid.UUID, start: date, end: date
 ) -> list[DailyTokenUsage]:
     """Un `DailyTokenUsage` par jour ayant au moins une réponse de l'assistant dans
-    [start, end] — un jour sans tour de chat est absent, jamais présent à 0 (même
-    convention que `meal_entry_repo.daily_totals`). Ne compte que `role="assistant"` :
+    [start, end] — un jour sans tour de chat est absent, jamais présent à 0. Ne compte que `role="assistant"` :
     c'est la seule ligne qui porte des tokens (`tokens_input`/`tokens_output` restent
     NULL sur les messages "user" et sur tout ce qui a été créé avant cette colonne,
     donc `func.sum`/`func.count` les ignorent naturellement — pas de filtre explicite

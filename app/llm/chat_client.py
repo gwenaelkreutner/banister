@@ -32,7 +32,7 @@ _TOOL_DECISION_RULE = (
     "Do not respond in plain text instead of making this tool call."
 )
 _MUTATING_TOOLS = frozenset({
-    "update_injury_status", "update_coach_memory", "log_meal", "undo_last_meal_entry",
+    "update_injury_status", "update_coach_memory",
 })
 
 
@@ -171,9 +171,8 @@ async def run_agentic_loop(
     "calls"} — tous à 0 si l'API n'a jamais renvoyé de champ `usage` (ne devrait pas
     arriver avec OpenRouter/OpenAI, mais mieux vaut 0 que planter sur un provider qui
     l'omettrait). `tool_calls_log` = liste de {"name", "args", "result"} pour CHAQUE
-    tool call exécuté ce tour (`last_tool_result` n'en garde que le dernier — un tour
-    qui enregistre plusieurs repas dans la même conversation a besoin des autres aussi,
-    pour construire une confirmation qui ne dépend pas de ce que le LLM dit avoir fait).
+    tool call exécuté ce tour (`last_tool_result` n'en garde que le dernier — vérifier ce
+    qui a réellement tourné ne doit pas dépendre de ce que le LLM dit avoir fait).
     """
     client = _get_client()
     effective_model = model or settings.chat_model

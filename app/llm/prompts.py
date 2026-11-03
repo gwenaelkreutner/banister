@@ -307,7 +307,7 @@ REVIEW_DATA_BLOCKS = {
     # qu'il n'a pas de VFC/FC repos récentes (recovery_index) ou d'historique (phase).
     "form_context": True,
     # hydration_volume_l, kcal_consumed — wellness du jour de la séance tel que renseigné
-    # sur intervals.icu (pas notre suivi calorique chat, table séparée — /log_meal). Champs
+    # sur intervals.icu (pas le service nutrition, indépendant). Champs
     # bruts déjà stockés côté wellness mais jamais montrés avant ce câblage (2026-09-21).
     "nutrition_context": True,
 }

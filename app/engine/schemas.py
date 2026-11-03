@@ -238,6 +238,7 @@ class AthleteProfileSchema(BaseModel):
     # {is_injured, location, severity, zone_restrictions, start_date, estimated_recovery_date}
     weight_kg: float | None = None
     sex: str | None = None  # "M" | "F" | None
+    height_cm: float | None = None
     # Métriques de forme actuelles (calculées depuis l'historique importé si disponible)
     current_ctl: float | None = None  # fitness (CTL journalier, ex: 65.0)
     current_atl: float | None = None  # fatigue aiguë (ATL journalier)

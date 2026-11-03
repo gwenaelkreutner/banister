@@ -49,6 +49,7 @@ class ReadProfile:
     age: ReadValue
     date_of_birth: ReadValue
     locale: ReadValue
+    height_cm: ReadValue = ReadValue(None, "source")
     has_power_meter: bool = False    # True iff a cycling sportSettings entry has an ftp
     fields: list[ReadValue] = field(default_factory=list, repr=False)
 
@@ -100,6 +101,8 @@ def map_athlete_profile(athlete: dict) -> ReadProfile:
     age = ReadValue(age_val, "birth_date")
     dob_rv = ReadValue(dob.isoformat() if dob else None, _src)
     locale = ReadValue(athlete.get("locale"), _src)
+    height_m = athlete.get("height")  # metres on intervals.icu
+    height_cm = ReadValue(round(height_m * 100) if height_m else None, _src)
 
     profile = ReadProfile(
         ftp=ftp,
@@ -111,6 +114,7 @@ def map_athlete_profile(athlete: dict) -> ReadProfile:
         age=age,
         date_of_birth=dob_rv,
         locale=locale,
+        height_cm=height_cm,
         has_power_meter=bool(ftp_raw),
     )
     object.__setattr__(

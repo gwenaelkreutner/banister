@@ -151,7 +151,7 @@ async def test_chat_and_tool_share_completed_history_and_turn_day(db_session, mo
         ]
 
     monkeypatch.setattr(chat, "run_agentic_loop", loop)
-    _, _, _, proposal, _, _ = await chat.run_chat("Que faire aujourd'hui ?", user, db_session)
+    _, _, _, proposal, _ = await chat.run_chat("Que faire aujourd'hui ?", user, db_session)
     assert "7 jours : 2 séances, 160 TSS" in captured["system"]
     assert "7 derniers jours 160 TSS" in captured["result"]["reasoning_summary"]
     assert proposal["workout_type"] == "endurance"
@@ -436,8 +436,8 @@ class TestToolsForMode:
             assert plan_only in goal_tools
 
     def test_filtering_never_drops_an_unrelated_tool(self):
-        """Only the two mode-specific tool sets are affected — everything else (meal
-        logging, coach memory, injury status) stays available in both modes."""
+        """Only the two mode-specific tool sets are affected — everything else (nutrition
+        summary, coach memory, injury status) stays available in both modes."""
         freestyle_tools = {t["function"]["name"] for t in tools_for_mode("freestyle")}
         goal_tools = {t["function"]["name"] for t in tools_for_mode("goal")}
         all_names = {t["function"]["name"] for t in TOOL_DEFINITIONS}

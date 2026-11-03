@@ -12,8 +12,7 @@ Flux :
 import logging
 import re
 import uuid
-from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +25,7 @@ from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
 from app.engine.training_history import completed_training_items, daily_training_tss
 from app.llm.chat_client import run_agentic_loop
 from app.llm.tools import PARALLEL_READ_TOOLS, build_context_messages, build_system_prompt
+from app.services import nutrition_source
 from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
@@ -47,20 +47,12 @@ _OTHER_ACTION_CLAIM_RE = re.compile(
     re.IGNORECASE,
 )
 _WRITE_TOOLS = frozenset({
-    "update_injury_status", "update_coach_memory", "log_meal", "undo_last_meal_entry",
+    "update_injury_status", "update_coach_memory",
 })
 
 
 def _verify_action_claim(response_text: str, tool_calls_log: list[dict]) -> str:
     """A conversational claim cannot substitute for an executed tool."""
-    meal_calls = [call for call in tool_calls_log if call.get("name") == "log_meal"]
-    if meal_calls:
-        saved = sum((call.get("result") or {}).get("ok") is True for call in meal_calls)
-        if saved == len(meal_calls):
-            return t("llm.chat.meal_saved")
-        if saved:
-            return t("llm.chat.meal_partially_saved")
-        return t("llm.chat.meal_not_saved")
     wrote = any(
         call.get("name") in _WRITE_TOOLS
         and not (call.get("result") or {}).get("error")
@@ -81,17 +73,14 @@ async def run_chat(
     session: AsyncSession,
     reply_context: str | None = None,
     on_tool_event=None,
-) -> tuple[str, str | None, str | None, dict | None, dict, str | None]:
+) -> tuple[str, str | None, str | None, dict | None, dict]:
     """
     Exécute le cycle de chat agentique pour un message utilisateur.
 
-    Retourne (response_text, intent, tool_used_name, pending_proposal, usage, meal_log).
+    Retourne (response_text, intent, tool_used_name, pending_proposal, usage).
     intent est déterminé a posteriori selon l'outil appelé. `usage` (tokens
     prompt/completion/total, nombre d'appels API) sert à mesurer le coût réel d'un tour
-    de chat — voir app/services/token_usage.py et scripts/token_usage_state.py. `meal_log`
-    est une confirmation déterministe (pas du texte LLM) de ce que `log_meal`/
-    `undo_last_meal_entry` ont réellement écrit en base ce tour, destinée à être envoyée
-    comme second message Telegram séparé façon log — `None` si aucun des deux n'a tourné.
+    de chat — voir app/services/token_usage.py et scripts/token_usage_state.py.
 
     `reply_context` : texte du message Telegram auquel l'athlète a répondu en reply-quote
     (n'importe quel message du bot — chat, /review, /recap, notification — puisque
@@ -329,11 +318,11 @@ async def run_chat(
                 return await _execute_tool(
                     name, args, user=user, session=read_session, plan=plan, profile=profile,
                     logs=logs,
-                    activities=activities, raw_message=user_message, today=today,
+                    activities=activities, today=today,
                 )
         return await _execute_tool(
             name, args, user=user, session=session, plan=plan, profile=profile, logs=logs,
-            activities=activities, raw_message=user_message, today=today,
+            activities=activities, today=today,
         )
 
     # 4. Appel agentique — outils filtrés par mode (spec 009 : pas d'outil plan en mode
@@ -438,18 +427,6 @@ async def run_chat(
     except Exception:
         logger.warning("Vérification de réponse impossible — réponse envoyée telle quelle")
 
-    # 4c. Confirmation calorique déterministe — ce que le modèle DIT avoir enregistré
-    # n'est pas fiable à 100% (texte libre, jamais vérifié comme les métriques d'entraînement
-    # ci-dessus — cf. CLAUDE.md § Suivi calorique, "délibérément non fait"). Bug réel vu en
-    # conditions réelles (2026-09-21) : un repas décrit en langage naturel n'entraînait
-    # aucun appel `log_meal` tant que l'athlète ne redemandait pas explicitement, et un
-    # second tour n'a loggé que 2 des 3 aliments sans que ce soit clair dans la réponse.
-    # Décision utilisateur (2026-09-21) : PAS fusionné dans response_text — un message
-    # Telegram séparé, façon trace de log, envoyé en plus de la réponse normale du coach.
-    # `None` si aucun outil nutrition n'a tourné ce tour (le silence EST le signal —
-    # rien n'apparaît quand rien n'a été écrit en base, au lieu d'un texte ambigu).
-    meal_log = _format_meal_ledger(tool_calls_log)
-
     # 5. Déduire l'intent depuis l'outil appelé
     intent = _intent_from_tool(tool_used)
 
@@ -499,7 +476,7 @@ async def run_chat(
         except Exception:
             logger.warning("Impossible d'enregistrer la décision garde-fou")
 
-    return response_text, intent, tool_used, pending_proposal, usage, meal_log
+    return response_text, intent, tool_used, pending_proposal, usage
 
 
 # Athlete free text may be in either language regardless of APP_LANGUAGE (R6) — checked
@@ -531,7 +508,6 @@ async def _execute_tool(
     profile: AthleteProfileSchema | None,
     logs: list,
     activities: list | None = None,
-    raw_message: str = "",
     today: date | None = None,
 ) -> dict:
     """Dispatch vers la fonction déterministe correspondante."""
@@ -573,14 +549,8 @@ async def _execute_tool(
             activities=activities or [], today=today,
         )
 
-    elif name == "log_meal":
-        return await _tool_log_meal(args, user=user, session=session, raw_message=raw_message)
-
-    elif name == "undo_last_meal_entry":
-        return await _tool_undo_last_meal_entry(user=user, session=session)
-
-    elif name == "get_calorie_history":
-        return await _tool_get_calorie_history(args, user=user, session=session)
+    elif name == "get_nutrition_summary":
+        return await _tool_get_nutrition_summary(args, user=user, session=session)
 
     elif name == "memory_query":
         return await _tool_memory_query(args, user=user, session=session)
@@ -1031,212 +1001,17 @@ async def _tool_get_freestyle_session_suggestion(
     }
 
 
-# ── Outils nutrition (spec 008) ────────────────────────────────────────────────
-
-_MEAL_SLOT_KEYS = {
-    "breakfast": "llm.meal_slot.breakfast",
-    "lunch": "llm.meal_slot.lunch",
-    "dinner": "llm.meal_slot.dinner",
-    "snack": "llm.meal_slot.snack",
-    "other": "llm.meal_slot.other",
-}
+# ── Nutrition : lecture seule d'une source externe (docs/NUTRITION_INTEGRATION.md) ──
+# Banister ne stocke ni n'estime aucun repas. Il lit, quand ça éclaire le vélo.
 
 
-def _format_short_date(iso_date: str) -> str:
-    """"2026-09-21" -> "21/09" — format court FR pour le message de confirmation."""
-    try:
-        return date.fromisoformat(iso_date).strftime("%d/%m")
-    except (TypeError, ValueError):
-        return iso_date
-
-
-def _format_meal_ledger(tool_calls_log: list[dict]) -> str | None:
-    """Confirmation déterministe de ce qui a RÉELLEMENT été écrit en base ce tour —
-    construite depuis les résultats de `log_meal`/`undo_last_meal_entry`, jamais depuis
-    le texte du modèle (qui peut décrire une entrée comme enregistrée sans qu'elle le
-    soit, ou l'inverse — bug réel vu en conditions réelles, 2026-09-21).
-
-    Destinée à un second message Telegram séparé, pas fusionnée à la réponse du coach
-    (décision utilisateur) — format minimaliste choisi par l'utilisateur après plusieurs
-    itérations : une ligne "✅ Enregistré" groupée par date, une ligne "🗑️ Supprimé" par
-    annulation, une ligne "❌ Non enregistré" par échec, un total 🧾 par date concernée.
-    `None` si aucun outil nutrition n'a tourné ce tour — l'absence du message EST le
-    signal que rien n'a été écrit (le code n'a aucun moyen de savoir que le LLM *aurait
-    dû* appeler l'outil et ne l'a pas fait — seule l'absence de message le trahit)."""
-    from collections import defaultdict
-
-    entries_by_date: dict[str, list[str]] = defaultdict(list)
-    day_totals: dict[str, object] = {}
-    removals: list[tuple[str, object]] = []
-    failures: list[str] = []
-
-    for call in tool_calls_log:
-        name = call.get("name")
-        if name not in ("log_meal", "undo_last_meal_entry"):
-            continue
-        args = call.get("args") or {}
-        result = call.get("result") or {}
-
-        if name == "log_meal":
-            if result.get("ok"):
-                cal = result.get("estimated_calories")
-                entry_date = result.get("entry_date")
-                if args.get("entry_type") == "day_recap":
-                    label = t("llm.meal_slot.day_recap")
-                else:
-                    key = _MEAL_SLOT_KEYS.get(args.get("meal_slot"), "llm.meal_slot.other")
-                    label = t(key)
-                entries_by_date[entry_date].append(f"{label} ({cal} cal)")
-                if result.get("day_total_estimated_calories") is not None:
-                    day_totals[entry_date] = result.get("day_total_estimated_calories")
-            else:
-                failures.append(result.get("error") or t("llm.meal_ledger.unknown_error"))
-
-        elif name == "undo_last_meal_entry":
-            if result.get("ok"):
-                entry_date = result.get("entry_date")
-                removals.append((entry_date, result.get("removed_estimated_calories")))
-                if result.get("day_total_estimated_calories") is not None:
-                    day_totals[entry_date] = result.get("day_total_estimated_calories")
-            else:
-                failures.append(result.get("error") or t("llm.meal_ledger.unknown_error"))
-
-    if not entries_by_date and not removals and not failures:
-        return None
-
-    lines: list[str] = []
-    for items in entries_by_date.values():
-        lines.append(t("llm.meal_ledger.saved", items=", ".join(items)))
-    for _entry_date, cal in removals:
-        lines.append(t("llm.meal_ledger.removed", cal=cal))
-    for error in failures:
-        lines.append(t("llm.meal_ledger.not_saved", error=error))
-    for entry_date, total in day_totals.items():
-        lines.append(t(
-            "llm.meal_ledger.day_total", date=_format_short_date(entry_date), total=total
-        ))
-
-    return "\n".join(lines)
-
-_MEAL_DAYS_AGO_MAX = 2
-_CALORIES_MIN = 1
-_CALORIES_MAX = 8000
-
-
-def _nutrition_today() -> date:
-    """Nutrition dates follow the Paris date shown to the athlete in the prompt."""
-    return datetime.now(ZoneInfo("Europe/Paris")).date()
-
-
-async def _tool_log_meal(args: dict, user: User, session: AsyncSession, raw_message: str) -> dict:
-    """Enregistre un repas ou un récap de journée (contracts/nutrition-tools.md §1).
-    L'estimation calorique vient du LLM (research R2 — hors du périmètre du Principe I,
-    qui porte sur la charge d'entraînement) ; le total du jour, lui, est une somme SQL
-    déterministe recalculée après insertion, jamais additionnée par le modèle."""
-    from app.db.repositories import meal_entry_repo
-
-    entry_type = args.get("entry_type")
-    if entry_type not in ("meal", "day_recap"):
-        entry_type = "meal"
-
-    try:
-        calories = round(float(args.get("estimated_calories")))
-    except (TypeError, ValueError):
-        calories = None
-    if calories is None or not (_CALORIES_MIN <= calories <= _CALORIES_MAX):
-        return {"ok": False, "error": t("llm.tools.calorie_estimate_invalid")}
-
-    try:
-        days_ago = max(0, min(int(args.get("days_ago", 0) or 0), _MEAL_DAYS_AGO_MAX))
-    except (TypeError, ValueError):
-        days_ago = 0
-    entry_date = _nutrition_today() - timedelta(days=days_ago)
-
-    meal_slot = args.get("meal_slot") if entry_type == "meal" else None
-
-    # Un récap de journée REMPLACE les entrées déjà loggées ce jour-là plutôt que de s'y
-    # ajouter — sinon la journée serait comptée deux fois (FR-009).
-    replaced = False
-    if entry_type == "day_recap":
-        deleted_count = await meal_entry_repo.delete_for_date(session, user.id, entry_date)
-        replaced = deleted_count > 0
-
-    await meal_entry_repo.create(
-        session,
-        user_id=user.id,
-        entry_date=entry_date,
-        entry_type=entry_type,
-        meal_slot=meal_slot,
-        raw_description=raw_message[:500],
-        estimated_calories=calories,
-    )
-
-    totals = await meal_entry_repo.daily_totals(session, user.id, entry_date, entry_date)
-    day_total = totals[0].total_calories if totals else calories
-
-    return {
-        "ok": True,
-        "estimated_calories": calories,
-        "entry_date": str(entry_date),
-        "day_total_estimated_calories": day_total,
-        "replaced_existing_entries": replaced,
-    }
-
-
-async def _tool_undo_last_meal_entry(user: User, session: AsyncSession) -> dict:
-    """Supprime la dernière entrée loggée AUJOURD'HUI (contracts §2) — jamais un autre
-    jour, une correction est un geste dans la même session."""
-    from app.db.repositories import meal_entry_repo
-
-    today = _nutrition_today()
-    latest = await meal_entry_repo.get_latest_for_date(session, user.id, today)
-    if latest is None:
-        return {"ok": False, "error": t("llm.tools.no_entry_to_undo")}
-
-    removed_calories = latest.estimated_calories
-    await meal_entry_repo.delete(session, latest)
-
-    totals = await meal_entry_repo.daily_totals(session, user.id, today, today)
-    day_total = totals[0].total_calories if totals else 0
-
-    return {
-        "ok": True,
-        "removed_estimated_calories": removed_calories,
-        "entry_date": str(today),
-        "day_total_estimated_calories": day_total,
-    }
-
-
-async def _tool_get_calorie_history(args: dict, user: User, session: AsyncSession) -> dict:
-    """Historique jour par jour (contracts §3) — chaque jour de la période est présent,
-    loggé ou non ; un jour non loggé n'a jamais de `total_calories` (FR-008)."""
-    from app.db.repositories import meal_entry_repo
-
+async def _tool_get_nutrition_summary(args: dict, user: User, session: AsyncSession) -> dict:
+    """Apports récents, ou `available: false` si la source ne répond pas : rien d'inventé."""
     try:
         days = max(1, min(int(args.get("days", 7) or 7), 30))
     except (TypeError, ValueError):
         days = 7
-
-    today = _nutrition_today()
-    start = today - timedelta(days=days - 1)
-    totals = await meal_entry_repo.daily_totals(session, user.id, start, today)
-    by_date = {t.entry_date: t for t in totals}
-
-    result_days = []
-    for offset in range(days):
-        d = start + timedelta(days=offset)
-        if d in by_date:
-            t = by_date[d]
-            result_days.append({
-                "date": str(d),
-                "logged": True,
-                "total_calories": t.total_calories,
-                "entry_count": t.entry_count,
-            })
-        else:
-            result_days.append({"date": str(d), "logged": False})
-
-    return {"range_start": str(start), "range_end": str(today), "days": result_days}
+    return await nutrition_source.daily_summary(session, user.id, days)
 
 
 # ── Journal daté / memory_query (Enduragent parity review, 2026-09-20) ──────────

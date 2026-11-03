@@ -96,7 +96,6 @@ app/
 │       ├── weekly_adherence_repo.py  # upsert + get_recent — persistance taux d'adhérence /recap
 │       ├── publication_repo.py       # PublicationApproval + PublishedEntry (spec 005)
 │       ├── guardrail_repo.py         # ResponseCheckFailure + GuardrailAcknowledgement (spec 006)
-│       └── meal_entry_repo.py        # create/delete_for_date/daily_totals — suivi calorique (spec 008)
 ├── services/                # Orchestration : repos + LLM, sans dépendance aiogram
 │   ├── weekly_recap.py      # compute_weekly_recap() → WeeklyRecapResult
 │   ├── activity_feedback.py # assemble_activity_feedback() — contexte post-séance, sans dépendance bot
@@ -107,7 +106,6 @@ app/
 │   ├── guardrail_service.py # spec 006 : assemble_workload/recovery_findings, recovery_insufficiency,
 │   │                        # décline/accepte via chemins existants — AUCUN chemin d'écriture propre
 │   ├── response_verification.py  # spec 006 : MetricRegistry + verify_response + apply_result (US3)
-│   ├── nutrition_reminder.py # spec 008 : needs_reminder() — pur, testable sans importer app/main.py
 │   └── coaching_mode.py     # spec 009 : get_coaching_mode()/mode_from_plan() — mode dérivé de
 │                            # l'existence d'un plan actif, jamais stocké
 ├── engine/                  # Moteur déterministe — zéro LLM ici
@@ -365,7 +363,6 @@ doc (FR-016, SC-007). ⚠️ le ratio `ATL/CTL` est du 7j:42j (EWMA), la plage 0
 | `guardrail_acknowledgements` | spec 006 — décision de l'athlète sur une occurrence de garde-fou (`occurrence_key` = `kind:jour`, `decision` accepted/declined). Un refus démote l'action sans museler le signal (FR-025/FR-026) |
 | `publication_approvals` | spec 005 — consentement enregistré et lié au contenu (`content_hash` SHA-256 sur ce qui a été montré) ; `status` pending/approved/declined (terminal, jamais supprimé — FR-003) ; `horizon_start`/`horizon_end`, `session_count` |
 | `published_entries` | spec 005 — une ligne par séance écrite au calendrier ; `external_id` unique/user (`banister:<plan>:<date>:<slug>`), `intervals_event_id`, `approval_id` (FR-005), `content_hash`, `withdrawn_at` (gardée en historique — distingue « retirée par nous » de « supprimée par l'athlète ») |
-| `meal_entries` | spec 008 — un repas ou un récap de journée loggé en langage naturel via le chat ; `entry_date`, `entry_type` (meal/day_recap), `meal_slot` (nullable), `raw_description` (texte verbatim de l'athlète), `estimated_calories` (estimation LLM, jamais recalculée). Gardée indéfiniment, **jamais purgée par `/reset`** (ni donnée d'entraînement, ni identité — un historique perso que l'athlète a explicitement demandé de garder) |
 
 `oauth_connections` a été supprimée (spec 002 T059) — l'authentification intervals.icu est une clé API
 personnelle, pas un flux OAuth, donc aucune table de tokens n'est nécessaire.
@@ -801,9 +798,8 @@ chiffrée de ce qui sera supprimé, confirmation tapée `SUPPRIMER`, puis `user_
 ça `history_import_complete` restait à `True` après la purge d'`activities`, donc `import_history()`
 ne relançait jamais le réimport des ~120 jours d'historique au `/setup` suivant (bug réel, corrigé après
 coup — pas repéré au moment où spec 007 a écrit `/reset`). Garde `coach_voice` et
-`disclaimer_acknowledged_at` (identité, pas données d'entraînement) **et** `meal_entries` (spec 008 —
-historique perso, ni donnée d'entraînement ni identité, gardé par demande explicite de l'athlète ;
-`MealEntry` n'est délibérément pas dans `_PURGE_MODELS`, vérifié par test). `onboarding_completed_at` remis
+`disclaimer_acknowledged_at` (identité, pas données d'entraînement). La nutrition n'est plus ici : `/reset`
+n'y touche pas. `onboarding_completed_at` remis
 à `None` → prochain `/setup` = vrai premier run.
 
 **`/voice`** (`app/bot/routers/voice.py`) — liste `personas/*.yaml` avec leur descripteur, écrit
@@ -952,7 +948,7 @@ message, donc c'est là que le gros du coût récurrent se trouve).
 
 **Lecture** : `python -m scripts.token_usage_state --describe [--days N]` — totaux et moyenne par jour,
 lecture seule (`app/db/repositories/chat_repo.py::token_usage_by_day()`, un jour sans tour de chat est
-absent du résultat, jamais affiché à 0 token — même convention que `meal_entry_repo.daily_totals`).
+absent du résultat, jamais affiché à 0 token).
 
 **Étape suivante, pas encore faite** : ces chiffres sont ce qu'il faut pour juger si le prompt caching
 (préfixe stable du system prompt devant, volatile derrière) vaut le coût de l'implémenter — pas fait ici,
@@ -1023,94 +1019,23 @@ première instruction de `lifespan()` (`app/main.py`) — `register()` patche le
 des SDK anthropic/openai en place, donc l'ordre par rapport à `get_provider()` (lazy,
 `lru_cache`) ne compte pas tant que c'est fait avant le premier message traité.
 
-## Suivi calorique (spec 008)
+## Nutrition : source externe, lecture seule
 
-L'athlète décrit ce qu'il a mangé en langage naturel dans le chat — pas de commande dédiée, pas de FSM.
-Trois outils LLM de plus (8 au total) dans `app/llm/tools.py` / `app/llm/chat.py`, même mécanisme que les
-5 outils existants (le LLM extrait, une fonction Python déterministe persiste et calcule).
+Banister ne saisit, n'estime ni ne stocke aucun repas (retiré le 2026-11-03, spec 008 historique), et ne
+doit pas redevenir propriétaire de cette logique : ni table, ni estimation, ni prompt nutritionnel.
 
-- **`log_meal`** — repas isolé ou récap de journée. L'estimation calorique vient de la connaissance du LLM
-  (pas de base nutritionnelle externe, choix explicite v1) — **hors du périmètre du Principe I**, qui porte
-  sur la charge d'entraînement, pas la nutrition. Le **total du jour**, lui, reste une somme SQL
-  déterministe recalculée après chaque insertion (`meal_entry_repo.daily_totals`), jamais additionnée par
-  le modèle. Un récap de journée (`entry_type=day_recap`) **remplace** les entrées déjà loggées ce jour-là
-  au lieu de s'y ajouter — sinon double-comptage.
-- **`undo_last_meal_entry`** — supprime la dernière entrée loggée aujourd'hui (correction = annuler puis
-  reloguer, pas d'édition en place).
-- **`get_calorie_history`** — total jour par jour sur une période ; un jour sans entrée est explicitement
-  `"logged": false`, jamais affiché comme 0 kcal.
+Seul lien : l'outil `get_nutrition_summary`, qui lit via `app/services/nutrition_source.py` :
+- `NUTRITION_API_URL` renseigné : `GET {url}/v1/days?from=&to=`, contrat public et stable décrit dans
+  `docs/NUTRITION_INTEGRATION.md` (projet open source : n'importe quelle application peut l'implémenter). Sur ce
+  serveur, c'est le service `/root/nutrition`, jeton lecture seule, réseau `nutrition_net` dans
+  `docker-compose.override.yml`.
+- Sinon : champs nutrition de `wellness` (intervals.icu).
 
-**Délibérément non fait** : aucune de ces trois figures n'est vérifiée par
-`app/services/response_verification.py` (spec 006) — ce module est ancré sur un vocabulaire
-d'entraînement (CTL/ATL/TSB/FTP/ACWR/monotonie/VFC/FC repos) et le rester tant que le suivi calorique reste
-standalone. Aucun changement à `/recap` ni au system prompt du chat — intégration explicitement différée.
+Source en panne : `available: false`, et le coaching continue. Jour non renseigné : `kcal` nul, jamais 0.
 
-**Confirmation déterministe de ce qui a été enregistré** (hors spec, 2026-09-21) : ⚠️ bug réel remonté par
-l'utilisateur — un repas décrit en langage naturel pouvait ne déclencher **aucun** appel `log_meal` (le
-modèle se contentait de commenter le repas, sans rien persister), et un tour explicite ("ajoute ça") pouvait
-n'en logger qu'une partie tout en laissant le texte du modèle suggérer que tout était enregistré. Le texte
-libre du bot n'a jamais été une preuve fiable de ce qui est réellement en base. `run_agentic_loop()`
-(`app/llm/chat_client.py`) retourne maintenant `tool_calls_log` — chaque tool call réellement exécuté ce
-tour (nom/args/résultat), pas seulement le dernier (`last_tool_result` écrasait les précédents).
-
-**Message Telegram séparé, pas fusionné à la réponse du coach** (décision utilisateur explicite — un
-retour dédié, pas une phrase UX collée à la réponse) : `run_chat()` renvoie `meal_log` comme élément
-séparé du tuple (`response_text` reste la réponse normale du coach, inchangée). `app/llm/chat.py::
-_format_meal_ledger()` construit `meal_log` depuis les résultats VRAIS de `log_meal`/
-`undo_last_meal_entry`, jamais depuis ce que le modèle prétend avoir fait. Format minimaliste (itéré
-plusieurs fois avec l'utilisateur, 2026-09-21) : une ligne `✅ Enregistré — item (cal), item (cal)`
-groupée par date, `🗑️ Supprimé — -N cal` par annulation, `❌ Non enregistré — <raison>` par échec, et
-`🧾 Total du JJ/MM : N cal` par date concernée (`_format_short_date()` convertit l'ISO en JJ/MM) — texte
-normal, pas de bloc monospace (rejeté par l'utilisateur, jugé moins agréable à lire qu'un format court à
-emojis). `None` si aucun outil nutrition n'a tourné ce tour — **l'absence du second message est elle-même
-le signal** que rien n'a été écrit en base (le code n'a aucun moyen de savoir que le LLM *aurait dû*
-appeler l'outil et ne l'a pas fait — seule l'absence de message le trahit).
-`app/bot/routers/chat.py::_send_meal_log()` l'envoie juste après le message normal, sur les 3 chemins de
-réponse (normal, `pending_proposal` plan, `freestyle_publish`).
-
-**Choix et trace des outils** (2026-09-24) : le premier appel du chat demande au modèle de choisir
-explicitement un outil (`tool_choice=required`). `respond_without_tool` est le choix explicite pour une
-réponse sans action ; il ne lance aucun outil applicatif. Ce protocole général remplace les tentatives de
-déduire l'intention nutritionnelle avec des mots-clés ou d'obliger l'athlète à écrire « appelle meal ».
-**Fiabilité du protocole (2026-09-30)** : Phoenix a montré que certains appels `required` de DeepSeek
-revenaient en texte simple (`finish=stop`) sans outil. Le chat rejette ce résultat et retente la décision
-une fois avec `CHAT_TOOL_FALLBACK_MODEL` (Gemini 3 Flash par défaut ; valeur vide = même modèle). Après
-deux réponses sans outil, il annonce explicitement qu'aucune action n'a eu lieu. Les arguments des outils
-sont vérifiés avant exécution ; une mutation identique répétée dans le même tour ne s'exécute qu'une fois.
-La confirmation d'action tient compte du succès réel de l'outil, pas seulement de sa présence dans la trace.
-Le banc d'essai `eval/chat_tool_benchmark.py` et le rejeu Phoenix `eval/phoenix_tool_replay.py` ne lancent
-jamais les outils applicatifs. Sur 12 décisions réelles du 29/09, DeepSeek a choisi `log_meal` 7 fois,
-Qwen 4 fois ; Gemini l'a choisi sur 6/6 cas d'échec rejoués. Échantillon restreint, à suivre dans Phoenix.
-**Réduction des replis inutiles (2026-09-30)** : `tool_choice=required` seul ne suffit pas à faire
-choisir `respond_without_tool` à DeepSeek pour une conversation ordinaire. La première décision porte
-désormais aussi une consigne système explicite : appeler un outil, ou appeler `respond_without_tool`
-avec la réponse complète. Cette consigne reste présente lors du réessai, puis disparaît après les
-résultats d'outils pour permettre la réponse finale normale. Aucun tri par mots-clés ni acceptation
-silencieuse d'un texte sans décision : le secours Gemini reste disponible en cas de non-respect.
-Comparaison sur six cas synthétiques (conversation, repas explicite/implicite, historique), sans
-exécuter d'outil : 4/6 choix attendus avant, 6/6 avec la consigne ; `require_parameters=true` seul
-ne résout pas le problème (3/6). Un essai ultérieur a choisi une mémorisation inutile pour un
-remerciement : la consigne précise donc de ne pas inventer d'action pour satisfaire le protocole.
-Après cette précision, trois rejeux du remerciement choisissent `respond_without_tool` et le cas
-repas choisit `log_meal`. Petits échantillons, pas une garantie de conformité du fournisseur.
-Dans Telegram, un message de suivi apparaît dès le premier appel d'outil et se met à jour avant la réponse :
-nom exact de chaque outil et statut ⏳/✅/❌, sans paramètres ni résultats détaillés. Le choix
-`respond_without_tool` reste invisible côté Telegram ; sans outil applicatif, aucun message de suivi
-n'est envoyé. Une panne d'édition de ce message ne doit jamais bloquer une
-écriture. Si aucun outil applicatif n'a tourné, une phrase du modèle telle que « c'est noté » est remplacée
-par un constat sans action. Quand `log_meal` tourne, la réponse libre est remplacée par le résultat réel de
-l'écriture, puis par la confirmation nutrition détaillée existante ; le modèle ne peut plus inventer un
-total du jour dans cette réponse. Les dates de `log_meal`, annulation et historique suivent la date de Paris,
-comme l'horloge montrée à l'athlète dans le prompt.
-
-**Rappel du soir** — `app/main.py::_nutrition_reminder_scheduler` envoie un message vers 22h00 heure de
-Paris (`PARIS_TZ`, même `ZoneInfo("Europe/Paris")` que `_run_session_reminders` depuis la correction du
-2026-09-18 — c'était un décalage UTC+1 fixe avant, voir research R4 de spec 008) si rien n'a été loggé ce
-jour-là. Pas de nouvelle colonne : l'absence de ligne `meal_entries` pour aujourd'hui **est** l'état « pas
-encore fait » (`app/services/nutrition_reminder.py::needs_reminder`). Pas de `/commande` pour changer
-l'heure — fixe pour cette version.
-
-**Script** : `scripts/nutrition_state.py --describe` (totaux récents, lecture seule).
+Dans l'autre sens, une application tierce peut lire `GET /internal/v1/context` : `ftp`, `weight`,
+`weight_history`, `profile.{age,sex,height_cm}` et `recent_rides[].kj` y sont exposés. `kj` vient de `icu_joules` : il est nul sur une sortie
+sans capteur de puissance, jamais estimé.
 
 ## Mode libre — coaching sans objectif (spec 009)
 
@@ -1412,19 +1337,10 @@ le fait le chat — plus exact pour une séance passée puisque la semaine exact
 seulement approximée depuis la date. `None` sur ce compte de test tant qu'il n'a pas de VFC/FC repos
 récentes (`recovery_index`, aucune donnée depuis juillet 2025) ou d'historique suffisant (`detected_phase`).
 
-**`hydration_volume_l`/`kcal_consumed` — wellness du jour de la séance, lus depuis intervals.icu, jamais
-depuis `meal_entries`** (câblé 2026-09-21) : deux champs bruts de la table `wellness` (ingérés depuis le
-chantier "signaux enrichis intervals.icu", jamais montrés nulle part avant ça), lus à `log.logged_date`
-comme `recovery_index`/`detected_phase` ci-dessus. **Volontairement séparés du suivi calorique chat**
-(`/log_meal`, `meal_entries`) — discuté explicitement avec l'utilisateur (2026-09-21) et écarté : écrire
-une ligne "calories brûlées" dans `meal_entries` casserait la garantie que cette table "c'est juste ce que
-j'ai consommé" (le `SUM` de `daily_totals()` mélangerait alors mangé et brûlé sans le vouloir, et
-`undo_last_meal_entry` risquerait de supprimer la mauvaise ligne). `hydration_volume_l`/`kcal_consumed`
-restent donc purement informatifs dans `/review`, jamais agrégés avec `meal_entries` — mais comme ce sont
-tous les deux des chiffres de **consommation** (pas de dépense), rien n'empêche de les copier dans
-`meal_entries` plus tard si un besoin réel apparaît, contrairement à un kJ de séance qui ne doit jamais y
-entrer. Aucune valeur observée sur ce compte de test au moment du câblage (petite base, pas représentative
-du serveur réel).
+**`hydration_volume_l`/`kcal_consumed` — wellness du jour de la séance, lus depuis intervals.icu**
+(câblé 2026-09-21) : deux champs bruts de la table `wellness`, lus à `log.logged_date` comme
+`recovery_index`/`detected_phase` ci-dessus, purement informatifs. Sans rapport avec le service nutrition.
+`kcal_consumed` n'était rempli sur aucune ligne au 2026-11-03.
 
 ## API interne de contexte sportif (hors spec — 2026-10-23)
 
@@ -1525,10 +1441,7 @@ INTERNAL_API_TOKEN=                      # optionnel — active /internal/v1/con
 | Modifier `/goal` (re-plan) ou `/reset` (purge) | `app/bot/routers/{goal,reset}.py` |
 | Ajouter / modifier une voix de coach | `personas/*.yaml` (YAML seul, aucun code) — `/voice` la liste |
 | Modifier la résolution de voix / le fallback | `app/services/coach_voice.py` — `resolve_voice()` |
-| Modifier le suivi calorique (`log_meal`, `undo_last_meal_entry`, `get_calorie_history`) | `app/llm/tools.py` (schémas) + `_tool_log_meal()`/`_tool_undo_last_meal_entry()`/`_tool_get_calorie_history()` dans `app/llm/chat.py` |
-| Modifier l'agrégation calorique (total du jour, historique) | `app/db/repositories/meal_entry_repo.py` — `daily_totals()` |
-| Modifier la trace log de confirmation nutrition (2e message Telegram) | `app/llm/chat.py` — `_format_meal_ledger()` ; envoi dans `app/bot/routers/chat.py::_send_meal_log()` ; capture des tool calls dans `app/llm/chat_client.py::run_agentic_loop()` (`tool_calls_log`) |
-| Modifier le rappel calorique du soir | `app/main.py` — `_nutrition_reminder_scheduler()` / `_run_nutrition_reminders()` ; sélection dans `app/services/nutrition_reminder.py` |
+| Modifier la lecture nutrition | `app/services/nutrition_source.py` + `_tool_get_nutrition_summary()` (`app/llm/chat.py`) |
 | Modifier la dérivation du mode (libre/objectif) | `app/services/coaching_mode.py` — `get_coaching_mode()`, `mode_from_plan()` |
 | Modifier la bascule `/goal` (libre ↔ objectif) | `app/bot/routers/goal.py` — `_enter_freestyle_mode()`, `_goal_kb()` |
 | Modifier la sélection de séance en mode libre (type, TSS cible) | `app/engine/freestyle_selector.py` — `choose_workout_type()`, `build_freestyle_suggestion()` |

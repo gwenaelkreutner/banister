@@ -51,8 +51,7 @@ class ReviewContext:
     recovery_index: float | None = None
     detected_phase: PhaseDetectionResult | None = None
     # Wellness du jour de la séance — hydratation/calories mangées telles que renseignées
-    # sur intervals.icu (pas via notre suivi calorique chat, table séparée — voir
-    # app/services/meal_entry_repo.py). Champs bruts déjà stockés depuis le chantier
+    # sur intervals.icu (pas le service nutrition, indépendant). Champs bruts déjà stockés depuis le chantier
     # "signaux enrichis intervals.icu" (2026-09-21) mais jamais montrés nulle part avant
     # ce câblage (2026-09-21, session suivante).
     hydration_volume_l: float | None = None

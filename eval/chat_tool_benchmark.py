@@ -44,10 +44,7 @@ class Case:
 
 CASES = [
     # The first twelve are the paid pilot's paired sample.
-    Case("J'ai mangé une banane au goûter.", "log_meal"),
-    Case("J'ai dîné de pâtes et de légumes, ajoute-le à ma journée.", "log_meal"),
-    Case("Annule la dernière entrée de repas, je me suis trompé.", "undo_last_meal_entry"),
-    Case("Combien de calories ai-je enregistrées hier ?", "get_calorie_history"),
+    Case("Combien de calories ai-je mangées hier ?", "get_nutrition_summary"),
     Case("J'ai mal au genou depuis hier, prends-le en compte.", "update_injury_status"),
     Case("Retiens que je préfère rouler le matin.", "update_coach_memory"),
     Case("Allège mon plan pour toute la semaine, je suis fatigué.", "propose_plan_modification"),
@@ -62,10 +59,6 @@ CASES = [
     Case("Donne le détail de ma séance du 20 septembre.", "get_session_detail"),
     Case("Comment a évolué ma VFC cette semaine ?", "get_wellness_history"),
     Case("Quand ai-je parlé de ma précédente blessure ?", "memory_query"),
-    Case("J'ai mangé une pomme et un yaourt ce matin.", "log_meal"),
-    Case("J'ai pris un café après le déjeuner, note-le aussi.", "log_meal"),
-    Case("Ce soir j'ai mangé du riz, du poulet et une salade.", "log_meal"),
-    Case("Supprime mon dernier repas saisi aujourd'hui.", "undo_last_meal_entry"),
     Case("Quel est mon programme ce week-end ?", "get_upcoming_sessions"),
     Case("Je veux une séance moins intense que celle proposée.",
          "get_freestyle_session_suggestion", "freestyle"),

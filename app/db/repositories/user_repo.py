@@ -100,11 +100,6 @@ async def ack_disclaimer(session: AsyncSession, user: User) -> None:
 # Every per-athlete row `/reset` deletes. `coach_voice` and `disclaimer_acknowledged_at`
 # live on `users` and are deliberately NOT here — they are identity, not training data
 # (FR-020: a reset athlete keeps their chosen voice and is not re-shown the disclaimer).
-#
-# `MealEntry` (spec 008) is ALSO deliberately not here — a third category, distinct from
-# both: not training data and not identity, but a personal record the athlete explicitly
-# asked to survive a training reset (spec 008 research R5). Nutrition history is kept
-# indefinitely regardless of what happens to the coaching relationship.
 _PURGE_MODELS = (
     ResponseCheckFailure,
     GuardrailAcknowledgement,
@@ -117,10 +112,8 @@ _PURGE_MODELS = (
     TrainingPlan,
     AthleteProfile,
     # Enduragent parity review (2026-09-20): the dated journal is an extension of
-    # coach_memory/athlete_notes (both purged above via AthleteProfile) — unlike
-    # MealEntry, it IS coaching-relationship data (goal changes, injuries, durable
-    # notes), not a personal record the athlete asked to survive independently of the
-    # relationship. Leaving it behind would let a "reset" coach still answer
+    # coach_memory/athlete_notes (both purged above via AthleteProfile) — it IS
+    # coaching-relationship data (goal changes, injuries, durable notes). Leaving it behind would let a "reset" coach still answer
     # memory_query about the pre-reset athlete, defeating the point of /reset.
     CoachJournalEntry,
     # Without this, history_import_complete stays True after Activity rows are wiped

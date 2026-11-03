@@ -85,7 +85,7 @@ async def _run(spans: list[dict], models: tuple[str, ...], max_usd: float) -> No
             reserved += allowance
             row = {
                 "span_id": span["id"], "model": model, "finish": choice.finish_reason,
-                "selected": names, "meal_selected": "log_meal" in names,
+                "selected": names, "nutrition_selected": "get_nutrition_summary" in names,
                 "latency_s": round(time.monotonic() - started, 2),
                 "generation_id": response.id,
             }
@@ -93,8 +93,8 @@ async def _run(spans: list[dict], models: tuple[str, ...], max_usd: float) -> No
             print(json.dumps(row, ensure_ascii=False), flush=True)
     for model in models:
         sample = [row for row in results if row["model"] == model]
-        count = sum(row["meal_selected"] for row in sample)
-        print(f"{model}: log_meal selected {count}/{len(sample)}")
+        count = sum(row["nutrition_selected"] for row in sample)
+        print(f"{model}: get_nutrition_summary selected {count}/{len(sample)}")
     print(f"Reserved ${reserved:.3f} of ${max_usd:.3f}; no tool executed")
 
 

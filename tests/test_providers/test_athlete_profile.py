@@ -68,3 +68,8 @@ def test_a_missing_field_is_absent_never_defaulted():
     p = map_athlete_profile({"id": "iX", "sportSettings": []})
     for rv in (p.ftp, p.lthr, p.max_hr, p.weight_kg, p.sex, p.age):
         assert not rv.present           # FR-008: no silent default
+
+
+def test_height_is_read_in_centimetres_and_absent_stays_absent():
+    assert map_athlete_profile({"height": 1.7}).height_cm.value == 170
+    assert map_athlete_profile({}).height_cm.value is None

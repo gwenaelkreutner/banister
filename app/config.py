@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     # the Hermes mobility coach. Empty (default) disables the endpoint entirely.
     internal_api_token: SecretStr = SecretStr("")
 
+    # Optional read-only nutrition source (docs/NUTRITION_INTEGRATION.md). Empty = intervals.icu
+    # wellness fields only.
+    nutrition_api_url: str = ""
+    nutrition_api_token: SecretStr = SecretStr("")
+
     # Persona — filename in personas/ without .yaml. Deployer default; per-athlete
     # override lives in users.coach_voice (spec 007). "coach-default" is both the
     # deployer default and guaranteed-present fallback target (FR-026).

@@ -61,7 +61,9 @@ and workouts are sent back to its calendar only after the cyclist approves them.
   (`/review`)
 - Free-form coaching chat with real context: your plan, recent load, fitness metrics, and a
   long-term memory of patterns it's noticed about you
-- Natural-language meal logging in the same chat, with a deterministic daily calorie total
+- Reads your recent food intake when it helps the cycling analysis, from intervals.icu or any
+  nutrition app you plug in ([integration guide](docs/NUTRITION_INTEGRATION.md)). Banister itself
+  does not log meals
 - Multiple coach voices (`/voice`) — direct, analytical, or calm — swappable per athlete, no code
   change required
 

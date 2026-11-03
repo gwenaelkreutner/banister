@@ -1,6 +1,6 @@
 """Repository-level tests for the dated coach journal (Enduragent parity review,
 2026-09-20). Covers the deterministic surface — persistence, dedup, date-range query —
-mirroring tests/test_db/test_meal_entries.py's structure. Tool-level dispatch and
+Tool-level dispatch and
 validation live in tests/test_llm/test_memory_query_tool.py.
 """
 from __future__ import annotations

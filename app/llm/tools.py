@@ -280,61 +280,14 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "log_meal",
-            "description": t("llm.tools.log_meal.description"),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "entry_type": {
-                        "type": "string",
-                        "enum": ["meal", "day_recap"],
-                        "description": t("llm.tools.log_meal.entry_type_description"),
-                    },
-                    "meal_slot": {
-                        "type": "string",
-                        "enum": ["breakfast", "lunch", "dinner", "snack", "other"],
-                        "description": t("llm.tools.log_meal.meal_slot_description"),
-                    },
-                    "estimated_calories": {
-                        "type": "integer",
-                        "description": t("llm.tools.log_meal.estimated_calories_description"),
-                        "minimum": 1,
-                        "maximum": 8000,
-                    },
-                    "days_ago": {
-                        "type": "integer",
-                        "description": t("llm.tools.log_meal.days_ago_description"),
-                        "minimum": 0,
-                        "maximum": 2,
-                    },
-                },
-                "required": ["entry_type", "estimated_calories"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "undo_last_meal_entry",
-            "description": t("llm.tools.undo_last_meal_entry.description"),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_calorie_history",
-            "description": t("llm.tools.get_calorie_history.description"),
+            "name": "get_nutrition_summary",
+            "description": t("llm.tools.get_nutrition_summary.description"),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "days": {
                         "type": "integer",
-                        "description": t("llm.tools.get_calorie_history.days_description"),
+                        "description": t("llm.tools.get_nutrition_summary.days_description"),
                         "minimum": 1,
                         "maximum": 30,
                     },

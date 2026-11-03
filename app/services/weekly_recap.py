@@ -214,8 +214,8 @@ async def compute_weekly_recap(
     level_fr: str = level_label(profile_data.get("level", "beginner"))
     goal_obj = profile_data.get("objective") or {}
     goal_fr: str = goal_label(goal_obj.get("type", "fitness") if isinstance(goal_obj, dict) else "fitness")
-    ftp_watts = profile_data.get("ftp", "N/A")
-    hr_max = profile_data.get("hr_max")
+    ftp_watts = (profile_data.get("equipment") or {}).get("ftp") or "N/A"
+    hr_max = (profile_data.get("physio") or {}).get("hr_max")
     hr_line = f"\n- FC max : {hr_max} bpm" if hr_max else ""
 
     # ── Section stats (déterministe) ──────────────────────────────────────────

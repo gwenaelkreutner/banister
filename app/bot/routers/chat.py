@@ -86,18 +86,6 @@ class _ToolTrace:
                 logger.warning("Impossible de mettre à jour la trace des outils", exc_info=True)
 
 
-async def _send_meal_log(message: Message, meal_log: str | None) -> None:
-    """Deuxième message Telegram, séparé de la réponse du coach — confirmation déterministe
-    de ce que `log_meal`/`undo_last_meal_entry` ont réellement écrit en base ce tour (voir
-    app/llm/chat.py::_format_meal_ledger). Texte normal, pas de bloc monospace — format
-    minimaliste (✅/🗑️/❌ + total 🧾) choisi par l'utilisateur, pas une trace technique brute.
-    `None` → rien n'est envoyé, aucun outil nutrition n'a tourné (décision utilisateur
-    2026-09-21 : pas de message sur les tours qui n'ont rien à voir avec la nutrition)."""
-    if not meal_log:
-        return
-    await message.answer(to_telegram_html(meal_log), parse_mode="HTML")
-
-
 # ── Handler principal — tout message libre en mode ACTIVE ─────────────────────
 
 @router.message(StateFilter(PlanStates.ACTIVE, None), F.text)
@@ -125,7 +113,7 @@ async def handle_chat_message(
     tool_trace = _ToolTrace(message)
     try:
         from app.llm.chat import run_chat
-        response_text, intent, tool_used, pending_proposal, usage, meal_log = await run_chat(
+        response_text, intent, tool_used, pending_proposal, usage = await run_chat(
             user_message=message.text,
             user=user,
             session=session,
@@ -173,7 +161,6 @@ async def handle_chat_message(
         ]])
         proposal_text = to_telegram_html(_strip_cjk(response_text)).strip() or _fallback_error()
         await message.answer(proposal_text, reply_markup=kb, parse_mode="HTML")
-        await _send_meal_log(message, meal_log)
         return
 
     # Si une proposition de modification a été faite → stocker en FSM + afficher les boutons
@@ -186,14 +173,12 @@ async def handle_chat_message(
         ]])
         proposal_text = to_telegram_html(_strip_cjk(response_text)).strip() or _fallback_error()
         await message.answer(proposal_text, reply_markup=kb, parse_mode="HTML")
-        await _send_meal_log(message, meal_log)
         return
 
     text = to_telegram_html(_strip_cjk(response_text)).strip()
     if not text:
         text = _fallback_error()
     await message.answer(text, parse_mode="HTML")
-    await _send_meal_log(message, meal_log)
 
 
 # ── Message libre pendant une proposition en attente ───────────────────────────

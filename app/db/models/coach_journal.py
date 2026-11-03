@@ -7,7 +7,7 @@ every chat turn's system prompt): this table is the medium-term store the coach'
 `coach_memory` entry past the cap no longer loses that fact — it stays queryable here
 indefinitely (app/llm/chat.py::_tool_update_coach_memory writes both in one call).
 
-Modeled on `ResponseCheckFailure` (app/db/models/guardrail.py), not `MealEntry`: a record
+Modeled on `ResponseCheckFailure` (app/db/models/guardrail.py): a record
 of something that *happened*, never updated after insert, so no `TimestampMixin` (its
 `updated_at` would be a lie on an append-only row) — a single `occurred_at` instead.
 """

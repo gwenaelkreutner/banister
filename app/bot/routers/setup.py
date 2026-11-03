@@ -192,6 +192,7 @@ def _read_profile_to_fsm(rp: ReadProfile) -> dict:
         "read_resting_hr": rp.resting_hr.value,
         "read_weight": rp.weight_kg.value,
         "read_sex": rp.sex.value,
+        "read_height_cm": rp.height_cm.value,
         "read_age": rp.age.value,
         "read_has_power_meter": rp.has_power_meter,
         "read_coaching_mode": rp.coaching_mode,
@@ -779,6 +780,9 @@ def _build_profile(data: dict, fitness=None) -> AthleteProfileSchema:
         current_ctl=fitness.ctl if fitness else None,
         current_atl=fitness.atl if fitness else None,
         current_tsb=fitness.tsb if fitness else None,
+        weight_kg=data.get("read_weight"),
+        sex=data.get("read_sex"),
+        height_cm=data.get("read_height_cm"),
     )
 
 

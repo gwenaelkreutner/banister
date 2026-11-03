@@ -2,7 +2,7 @@ import asyncio
 import logging
 import logging.config
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 bot = create_bot()
 dp = create_dispatcher()
 
-# Fuseau des rappels athlète (séance du matin, calories du soir) — un vrai fuseau IANA,
+# Fuseau des rappels athlète (séance du matin) — un vrai fuseau IANA,
 # pas un décalage UTC+1 fixe, pour rester correct pendant l'heure d'été (fin mars-fin
 # octobre) sans dériver d'une heure. Athlète unique par instance (principe fondateur),
 # donc un seul fuseau pour toute l'app plutôt qu'une colonne par utilisateur.
@@ -110,7 +110,6 @@ async def lifespan(app: FastAPI):
 
     recap_scheduler_task = asyncio.create_task(_weekly_recap_scheduler(bot))
     reminder_scheduler_task = asyncio.create_task(_session_reminder_scheduler(bot))
-    nutrition_reminder_scheduler_task = asyncio.create_task(_nutrition_reminder_scheduler(bot))
     poller_scheduler_task = asyncio.create_task(_run_intervals_poller())
 
     yield
@@ -124,12 +123,6 @@ async def lifespan(app: FastAPI):
     reminder_scheduler_task.cancel()
     try:
         await reminder_scheduler_task
-    except asyncio.CancelledError:
-        pass
-
-    nutrition_reminder_scheduler_task.cancel()
-    try:
-        await nutrition_reminder_scheduler_task
     except asyncio.CancelledError:
         pass
 
@@ -341,73 +334,6 @@ async def _run_session_reminders(bot):
                 await asyncio.sleep(0.1)  # rate limit entre utilisateurs
         except Exception:
             logger.exception(f"Erreur rappel séance user {telegram_id}")
-
-
-def _format_nutrition_reminder() -> str:
-    return t("main.nutrition_reminder")
-
-
-async def _nutrition_reminder_scheduler(bot):
-    """Envoie un rappel calorique quotidien à 22h00 heure de Paris si rien n'a été
-    loggé ce jour-là (spec 008 US5). Anciennement un décalage UTC+1 fixe (voir
-    research R4 de spec 008) — dérivait d'une heure pendant l'heure d'été (fin
-    mars-fin octobre) ; corrigé ici en même temps que `_run_session_reminders`
-    puisque le fix touche forcément les deux rappels à la fois (backlog)."""
-    while True:
-        now_paris = datetime.now(PARIS_TZ)
-        next_run = now_paris.replace(hour=22, minute=0, second=0, microsecond=0)
-        if next_run <= now_paris:
-            next_run += timedelta(days=1)
-
-        wait_seconds = (next_run - now_paris).total_seconds()
-        logger.info(
-            f"Prochain rappel calories dans {wait_seconds / 3600:.1f}h "
-            f"({next_run.strftime('%Y-%m-%d %H:%M')} {next_run.tzname()})"
-        )
-        await asyncio.sleep(wait_seconds)
-
-        try:
-            await _run_nutrition_reminders(bot)
-        except Exception:
-            logger.exception("Erreur lors des rappels caloriques")
-
-
-async def _run_nutrition_reminders(bot):
-    """Envoie le rappel à chaque utilisateur actif n'ayant rien loggé aujourd'hui."""
-    from sqlalchemy import select
-
-    from app.db.client import AsyncSessionFactory
-    from app.db.models.user import User
-    from app.services.nutrition_reminder import needs_reminder
-
-    today = date.today()
-
-    async with AsyncSessionFactory() as session:
-        result = await session.execute(
-            select(User).where(
-                User.is_active,
-                User.onboarding_completed_at.is_not(None),
-            )
-        )
-        users = list(result.scalars().all())
-
-    pending: list[int] = []
-    for user in users:
-        async with AsyncSessionFactory() as session:
-            if await needs_reminder(session, user.id, today):
-                pending.append(user.telegram_id)
-
-    if not pending:
-        return
-
-    logger.info(f"Rappel calories : {len(pending)} utilisateur(s)")
-    text = _format_nutrition_reminder()
-    for telegram_id in pending:
-        try:
-            await bot.send_message(telegram_id, text, parse_mode="HTML")
-            await asyncio.sleep(0.1)  # rate limit entre utilisateurs
-        except Exception:
-            logger.exception(f"Erreur rappel calories user {telegram_id}")
 
 
 async def run_polling():

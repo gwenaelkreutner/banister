@@ -31,6 +31,7 @@ from app.services.guardrail_service import (
 
 MAX_DAYS = 28
 MAX_AHEAD = 14
+WEIGHT_HISTORY_DAYS = 120
 
 
 def _r(value, digits: int = 1):
@@ -51,6 +52,16 @@ def _finding(f: GuardrailFinding) -> dict:
         "action": f.action,
         "severity": f.severity,
     }
+
+
+async def _weight_history(session: AsyncSession, user_id: uuid.UUID, today: date) -> list[dict]:
+    """Dated weigh-ins from wellness, oldest first: the last one may be weeks old, and says so."""
+    rows = await repo.wellness_repo.get_range(
+        session, user_id, today - timedelta(days=WEIGHT_HISTORY_DAYS), today
+    )
+    return [
+        {"kg": _r(row.weight_kg), "date": row.date.isoformat()} for row in rows if row.weight_kg
+    ]
 
 
 async def _recovery(session: AsyncSession, user_id: uuid.UUID, today: date) -> dict:
@@ -98,6 +109,10 @@ def _planned_from_plan(plan, today: date, end: date) -> list[dict]:
 def _profile(profile_row) -> dict:
     p = (profile_row.profile if profile_row else None) or {}
     return {
+        "ftp": (p.get("equipment") or {}).get("ftp"),
+        "age": (p.get("physio") or {}).get("age"),
+        "sex": p.get("sex"),
+        "height_cm": p.get("height_cm"),
         "level": p.get("level"),
         "objective": (p.get("objective") or {}).get("type"),
         "hours_per_week": (p.get("availability") or {}).get("hours_per_week"),
@@ -130,6 +145,7 @@ async def build_sport_context(
             "type": log.session_type_real,
             "duration_min": log.duration_minutes_actual,
             "tss": _r(log.tss_actual, 0),
+            "kj": _r(log.kilojoules, 0),
             "rpe": log.rpe,
             "planned": log.status == "done",
         }
@@ -158,6 +174,8 @@ async def build_sport_context(
         today=today,
     )
     findings.sort(key=lambda f: f.severity, reverse=True)
+    profile = _profile(await repo.profile_repo.get_by_user_id(session, user_id))
+    weights = await _weight_history(session, user_id, today)
 
     return {
         "date": today.isoformat(),
@@ -177,5 +195,8 @@ async def build_sport_context(
         "recent_days": days,
         "recent_tss": _r(sum(r["tss"] or 0 for r in recent), 0),
         "planned": planned,
-        "profile": _profile(await repo.profile_repo.get_by_user_id(session, user_id)),
+        "profile": profile,
+        "ftp": profile["ftp"],
+        "weight": weights[-1] if weights else None,
+        "weight_history": weights,
     }

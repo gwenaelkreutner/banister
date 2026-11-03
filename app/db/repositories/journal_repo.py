@@ -2,7 +2,7 @@
 
 One write function (`create`, idempotent by content) and one read function (`query`,
 the backing of the `memory_query` LLM tool — app/llm/tools.py / app/llm/chat.py). No
-generic CRUD abstraction, mirrors the size of `guardrail_repo.py`/`meal_entry_repo.py`.
+generic CRUD abstraction, mirrors the size of `guardrail_repo.py`.
 
 Findings/coach_memory itself are NOT duplicated here on every turn — only two write
 paths ever call `create()`: `_tool_update_coach_memory`'s `add_note` action (source="llm")
