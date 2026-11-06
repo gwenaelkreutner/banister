@@ -73,7 +73,8 @@ app/
 ├── main.py                  # FastAPI + lifespan (polling dev / webhook prod)
 ├── config.py                # Settings Pydantic
 ├── api/
-│   └── internal.py          # GET /internal/v1/context — contexte sportif pour services locaux (jeton)
+│   ├── internal.py          # GET /internal/v1/context — contexte sportif pour services locaux (jeton)
+│   └── agent/               # /agent/v1 — interface pour un agent externe (voir § Interfaces)
 ├── core/
 │   ├── persona.py           # load_persona() → Persona depuis personas/*.yaml (câblé spec 007
 │   │                        # via services/coach_voice.py — /voice choisit users.coach_voice)
@@ -1359,33 +1360,50 @@ le coach mobilité Hermes (`/root/mobilite`), qui lisait auparavant la base en `
   obligatoire (comparaison à temps constant) ; `INTERNAL_API_TOKEN` vide = routeur en 404 (fermé par défaut).
 - Bornes : `days` 1–28, `ahead` 1–14. Tests : `tests/test_services/test_sport_context.py`.
 
-## API agent — brancher un agent externe (hors spec — 2026-11-06)
+## Interfaces : Telegram ou agent externe (hors spec — 2026-11-06)
 
-`app/api/agent.py` (préfixe `/agent/v1`, contrat public en anglais : `docs/AGENT_INTEGRATION.md`) laisse un
-agent externe coacher avec Banister : **l'agent comprend et choisit ou compose, Banister calcule et vérifie,
-seul le geste de l'athlète écrit au calendrier.** Le chat Telegram intégré reste le mode par défaut.
+**Un seul cœur, deux interfaces interchangeables.** Toute la logique vit dans `engine/` et `services/` ; `bot/`
+et `api/agent/` ne font que la présenter. Ne jamais mettre de logique métier dans l'un des deux : l'autre ne
+l'aurait pas. Contrat public en anglais : `docs/AGENT_INTEGRATION.md`.
 
-- **Jeton dédié** `AGENT_API_TOKEN`, séparé de `INTERNAL_API_TOKEN` (celui-ci reste en lecture seule) ; vide =
-  routeur en 404, donc rien d'exposé sur une installation par défaut.
-- **`services/session_design.py`** : `session_catalog()` (plusieurs candidats, contrairement à l'outil du chat),
-  `evaluate_session()` (template ajusté ou séance composée → durée, TSS estimé, cibles, avertissements ; n'écrit
-  rien), `create_proposal()` / `approve_proposal()` (`session_proposals`, consentement lié au contenu par
-  `content_hash`, `claim()` atomique contre le double tap). Les constats **signalent, ne bloquent jamais**
-  (« liberté encadrée ») : seule une séance impossible est refusée (structure, zone, date). Les constats décrivent
-  l'état du jour (`evaluated_as_of`), pas une prévision de la date visée.
-- **Pas de seuil par défaut** (Principe IV) : sans FTP ni FC, `publishable: false` et cibles vides, là où le bouton
-  du chat retombe encore sur `ftp or 200`.
-- **`/approve` et `DELETE /publications/{id}` ne doivent jamais devenir des outils du modèle** : ils sont réservés
-  aux boutons gérés par le code de l'intégration.
-- **`services/agent_verification.py`** + `POST /verify-reply` : même garantie que `verify_response()` du chat
-  (Principe I) sur la réponse finale de l'agent, avec les valeurs reçues passées dans `retrieved`.
-- **Extractions sans changement de comportement** : `services/freestyle_suggestion.py` (chat = service +
-  `pick_template`), `services/coach_memory.py`, `publication.publish_and_record_freestyle()`.
-- **Plugin Hermes** : `integrations/hermes/banister/` (client HTTP stdlib, sans dépendance à l'app ; hook
-  `transform_llm_output` pour `/verify-reply`, d'où `display.streaming: false`) ; `integrations/hermes/install.sh`.
-  Tests : `tests/test_api/test_agent_api.py`, `tests/test_integrations/test_hermes_plugin.py`.
-- **Pas encore migré vers l'agent** : notification post-sortie, RPE, rappels, récap hebdo, `/setup`, `/goal`, plans.
-  Ils restent sur le bot Banister. Le bouton de publication du chat publie toujours à la date du jour.
+`COACH_INTERFACE=telegram` (défaut) : le bot Banister et son chat. `COACH_INTERFACE=agent` : un agent externe est
+le coach, le bot se tait (ni polling ni webhook), aucun appel LLM pour le texte de coaching.
+
+```
+                      ┌ bot/ (aiogram)      ← COACH_INTERFACE=telegram
+engine/ ─ services/ ──┤
+                      └ api/agent/ (HTTP)   ← un agent : plugin Hermes (integrations/hermes/), MCP…
+poller, rappels, récap ─ messenger ─ Bot aiogram | OutboxMessenger (app/main.py)
+```
+
+- **`api/agent/`** : `athlete.py` (lecture, mémoire, blessure, rappels), `sessions.py` (trouver, évaluer, proposer),
+  `plan.py` (plan et propositions), `messages.py` (réservé au code de l'intégration : outbox, actions, vérification),
+  `deps.py`. Jeton dédié `AGENT_API_TOKEN`, séparé de `INTERNAL_API_TOKEN` (lecture seule) ; vide = 404.
+- **Messages** (`services/outbox.py`) : `OutboxMessenger` a la partie de `Bot` utilisée par le notifier et les
+  schedulers, qui écrivent donc un seul message quelle que soit l'interface. Il écrit dans sa propre transaction :
+  l'appelant commite d'abord (d'où le commit avant envoi dans `notifier.py`). Non livré après 3 jours = expiré.
+- **Actions** (`services/agent_actions.py`) : chaque bouton porte une chaîne opaque (`proposal:approve:…`,
+  `log:rpe:…`, `change:apply:…`, `calendar:approve:…`) et `dispatch()` est le **seul** endroit où elle prend effet.
+  `/actions` ne doit jamais devenir un outil du modèle : l'agent propose, seul le geste de l'athlète agit.
+- **Liberté encadrée** (`services/session_design.py`) : l'agent choisit ou compose, Banister calcule. Les constats
+  signalent, ne bloquent jamais ; seule une séance impossible est refusée. `above_reference_load` tient compte de
+  `recent_peak_day` (plus grosse journée sur 42 j) : la référence du moteur vaut pour un jour ordinaire. Sans FTP
+  ni FC, `publishable: false`, là où le bouton du chat retombe encore sur `ftp or 200`.
+- **Plan** (`services/plan_management.py`, partagé avec `/goal`) : `plan_change_proposals` lie chaque proposition au
+  plan dont elle est calculée ; plan modifié entre-temps = proposition périmée.
+- **Passage de relais** : un message ou un résultat d'action peut porter un `agent_prompt` (revue après le RPE,
+  analyse du dimanche) qui démarre un tour de l'agent. `compute_weekly_recap(narrate=False)` ne fait aucun appel LLM.
+- **Vérification** (`services/agent_verification.py`, `/verify-reply`) : même garantie que le chat (Principe I) sur la
+  réponse finale de l'agent. Fourchettes (« 5-6 relances ») exclues des affirmations.
+- **Plugin Hermes** (`integrations/hermes/banister/`) : `tools.py` = ce que le modèle peut faire, `messaging.py` = ce
+  que seul le code fait (outbox, boutons, relais), `client.py` = HTTP stdlib. `display.streaming: false` obligatoire
+  pour que la vérification passe avant l'envoi ; `allow_gateway_injection: true` pour le relais. Le skill est dans
+  `integrations/hermes/skills/banister-coach/`, hors du plugin, pour que l'agent le corrige lui-même (`skill_manage`) :
+  ses corrections apparaissent en `git diff` dans ce dépôt public, à relire avant tout commit (rien de personnel).
+  Les règles de sécurité restent dans le code, jamais dans le skill.
+- **Pas d'équivalent agent** : premier `/setup` et `/reset` (repasser en `telegram`). Le bouton du chat intégré
+  publie toujours à la date du jour.
+- Tests : `tests/test_api/test_agent_api.py`, `tests/test_integrations/test_hermes_plugin.py`.
 
 ## Variables d'environnement
 

@@ -10,12 +10,15 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Date,
     Float,
     ForeignKey,
     Index,
+    Integer,
     SmallInteger,
     String,
+    Text,
     UniqueConstraint,
     Uuid,
 )
@@ -171,3 +174,40 @@ class SessionProposal(Base):
     publication_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     decided_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
+class PlanChangeProposal(Base):
+    """A change to the training plan an external agent proposed: a new plan, leaving the plan,
+    or an adjustment. Bound to the plan it was computed from, and applied only by the athlete's
+    own gesture (`app/services/plan_management.py`). Kept after use, like SessionProposal."""
+
+    __tablename__ = "plan_change_proposals"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    based_on_plan_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
+class OutboxMessage(Base):
+    """A message waiting for the external agent to deliver (`COACH_INTERFACE=agent`). The same
+    text and buttons the Telegram bot would have sent. `agent_prompt`, when set, asks the agent
+    to continue in its own words after delivering."""
+
+    __tablename__ = "outbox_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    parse_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    silent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    buttons: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    agent_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    delivered_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)

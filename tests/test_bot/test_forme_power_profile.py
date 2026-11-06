@@ -6,7 +6,8 @@ même convention `_client()` que `app/bot/routers/review.py`) et `_format_power_
 """
 from __future__ import annotations
 
-from app.bot.routers.forme import _fetch_power_profile, _format_power_profile
+from app.bot.routers.forme import _fetch_power_profile
+from app.services.power_profile import format_power_profile as _format_power_profile
 from app.engine.power_curve import (
     AnchorDelta,
     PowerCurveDelta,

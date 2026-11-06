@@ -27,13 +27,16 @@ from app.db import repositories as repo
 from app.db.models.session_log import SessionLog
 from app.db.models.user import User
 from app.providers.intervals.client import IntervalsClient
-from app.services.session_review import assemble_review_context
+from app.services.session_review import (
+    assemble_review_context,
+    backfill_rpe_from_source,
+    fetch_dfa,
+)
 
 logger = logging.getLogger(__name__)
 router = Router(name="review")
 
 _RECENT_LIMIT = 5
-_DFA_STREAM_TYPES = ["dfa_a1", "artifacts", "heartrate", "watts"]
 
 
 def _client() -> IntervalsClient:
@@ -44,42 +47,13 @@ def _client() -> IntervalsClient:
 
 
 async def _backfill_rpe_from_source(log: SessionLog) -> None:
-    """Rattrapage pour les séances déjà loguées avant que `icu_rpe` soit mappé à
-    l'ingestion (2026-09-21) — ou pour un ressenti ajouté sur intervals.icu après coup.
-    Le clavier Telegram (`cb_rpe`) reste prioritaire : ne touche `log.rpe` que s'il est
-    encore vide (décision owner). Consommé tel quel (échelle standard 1-10, Principe IV,
-    app/engine/rpe.py) — plus de bucketing depuis que le stockage est numérique. Mute
-    `log` en place — même transaction que le reste du handler, committée par le
-    middleware (`session.begin()`), donc persisté."""
-    if log.rpe is not None or not log.source_activity_id:
-        return
-    try:
-        activity = await _client().get_activity(log.source_activity_id)
-        rpe = activity.get("icu_rpe")
-        if rpe is not None:
-            log.rpe = rpe
-    except Exception:
-        logger.warning("Impossible de rattraper le RPE depuis intervals.icu pour /review")
+    await backfill_rpe_from_source(log, _client())
 
 
 async def _fetch_dfa(log: SessionLog):
-    """Best-effort : un appel réseau intervals.icu en plus, séparé du reste de /review
-    (DB uniquement) — jamais bloquant. `None` si pas d'activité source (log manuel), si
-    l'appel échoue, ou si l'athlète n'a pas d'AlphaHRV (dfa_a1 absent des streams — état
-    normal pour la plupart des comptes tant que le champ Garmin n'est pas installé)."""
     if not log.source_activity_id:
         return None
-    try:
-        from app.engine.dfa import compute_dfa_block
-        from app.providers.intervals.streams import streams_to_dict
-
-        raw_streams = await _client().get_activity_streams(
-            log.source_activity_id, types=_DFA_STREAM_TYPES
-        )
-        return compute_dfa_block(streams_to_dict(raw_streams))
-    except Exception:
-        logger.warning("Impossible de récupérer les streams DFA pour /review")
-        return None
+    return await fetch_dfa(log, _client())
 
 
 @router.message(Command("review"))

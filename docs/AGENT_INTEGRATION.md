@@ -1,27 +1,43 @@
 # Plugging an agent into Banister
 
 Banister ships with its own Telegram coach, and that remains the default: nothing here is needed to
-use it. If you already run an AI agent, the agent API lets it coach with Banister instead, with
-your agent's model, memory and channels.
+use it. If you already run an AI agent, it can become the coach instead, with its own model, memory
+and channels.
 
-**The split:** your agent understands the athlete and chooses or composes sessions. Banister computes
-every number and reports risks. Only the athlete's own gesture writes to their calendar.
+**The split:** your agent understands the athlete, chooses or composes sessions and writes the
+coaching. Banister computes every number, reports risks and keeps the data. Only the athlete's own
+gesture changes their calendar or their plan.
+
+## Two interfaces, one core
+
+| | `COACH_INTERFACE=telegram` (default) | `COACH_INTERFACE=agent` |
+|---|---|---|
+| Who talks to the athlete | Banister's bot | Your agent |
+| Ride notifications, reminders, weekly figures | Sent by the bot | Same messages, delivered by your agent from the outbox |
+| Coaching text | Banister's LLM settings | Your agent. Banister makes no LLM call for it |
+| Banister's bot | Polling | Silent |
+
+The agent API works in both modes, for an agent that only reads or proposes next to the bot. Set the
+athlete up first with `/setup` on the bot, then switch: `/setup` has no agent equivalent yet.
 
 ## Enabling it
 
-Set a token in `.env` and restart. Without one the API answers `404`.
+Set these in `.env` and restart. Without a token the API answers `404`.
 
 ```bash
 AGENT_API_TOKEN=$(openssl rand -hex 32)
+COACH_INTERFACE=agent   # optional: let the agent take over from the bot
 ```
 
 The port is bound to `127.0.0.1`. Do not route `/agent/v1` publicly. Banister is single-athlete, so
 every call concerns that athlete. Send `Authorization: Bearer <AGENT_API_TOKEN>` on each request.
 
+To go back, set `COACH_INTERFACE=telegram` and restart: nothing else changes, all data is shared.
+
 ## Hermes Agent
 
-A ready-made plugin lives in `integrations/hermes/`, with tools, approval buttons, a coaching skill
-and a check of the agent's final reply:
+A ready-made plugin lives in `integrations/hermes/`: tools, delivery of messages, buttons, a coaching
+skill and a check of the agent's final reply.
 
 ```bash
 BANISTER_AGENT_TOKEN=... OWNER_CHAT_ID=<your Telegram user id> ./integrations/hermes/install.sh
@@ -29,17 +45,29 @@ BANISTER_AGENT_TOKEN=... OWNER_CHAT_ID=<your Telegram user id> ./integrations/he
 hermes gateway restart
 ```
 
-Give the profile its **own** Telegram bot: one bot token cannot be polled by two programs, and
-Banister keeps sending ride notifications, reminders and recaps through its own bot.
+Use a Telegram bot other than Banister's, so going back to `telegram` stays a one-line change.
 
 ## Writing your own integration
 
-Any agent works (an MCP server, for instance): it is plain HTTP. Three rules keep the guarantees:
+Any agent works (an MCP server, for instance): it is plain HTTP. Your integration has two sides.
 
-1. **Do not expose `/approve` or `DELETE /publications/{id}` as tools.** Call them from code, in
-   response to the athlete's tap or confirmation. Otherwise a model can write to their calendar.
-2. **Show `card_text` as is** when asking for approval. It only states computed values.
-3. **Pass the final reply through `/verify-reply`**, with the results your agent received.
+**What the model may call** is everything below except `/actions`, `/messages` and `/verify-reply`.
+
+**What only your code does:**
+
+1. **Deliver messages.** Poll `GET /messages/pending`, send each one in order, then
+   `POST /messages/{id}/delivered`. Each has `text`, `parse_mode`, `silent` and `buttons`.
+2. **Show cards.** A proposal returns a `card` (`text`, `parse_mode`, `buttons`). Show it as is: it
+   only states computed values.
+3. **Carry taps.** A button has a `label` and an opaque `action`. Send it to `POST /actions`. Replace
+   the card with the returned `text`. On an error, show `detail` and keep the card.
+   **Never expose `/actions` to a model**, or it can write to the athlete's calendar.
+4. **Hand over to the agent.** When a message or an action result has an `agent_prompt`, start a turn
+   of your agent with it. That is how a ride review or the weekly analysis gets written. If your
+   agent cannot start a turn right now, show `handover_hint` instead of losing it silently.
+5. **Check the final reply** with `/verify-reply`, before anything reaches the athlete.
+
+Actions fit Telegram's 64-byte limit with a prefix of up to 4 bytes.
 
 ## Endpoints
 
@@ -51,20 +79,30 @@ All under `/agent/v1`.
 | `GET /fitness?days=&granularity=` | CTL/ATL/TSB history |
 | `GET /trend?days=` | Weekly totals |
 | `GET /wellness?metrics=&days=&granularity=` | HRV, resting heart rate, sleep... |
-| `GET /rides/{date}` | The rides of a past day |
+| `GET /rides/{date}` | The rides of a past day, with `reviews`: everything measured |
+| `GET /recap` | The week's figures |
+| `GET /power-profile` | Power curve changes and what can be sustained |
 | `GET /memory?keyword=&category=&days=` | Durable notes and dated journal |
 | `POST /memory/notes` | `{"category", "note"}` adds a note |
+| `PUT /injury` | `{"location", "severity", "estimated_recovery_days"}` |
+| `GET`, `PUT /reminders` | `{"enabled", "hour", "minute"}` |
 | `GET /sessions/catalog?workout_type=&family=&phase=&q=&max_minutes=&detail=` | Search the library, several results |
 | `GET /sessions/recommendation?workout_type=&max_minutes=&duration_minutes=` | The engine's pick from today's state |
 | `POST /sessions/evaluate` | Compute a session, writes nothing |
-| `POST /proposals` | Record a session to approve, writes nothing to the calendar |
+| `POST /proposals` | A session to approve: returns a `card` |
 | `GET /proposals/{id}` | Its status |
-| `POST /proposals/{id}/approve` | **Athlete only.** Publishes, at most once. A failed write can be retried |
-| `POST /proposals/{id}/decline` | Closes it |
 | `GET /publications` | Published sessions not withdrawn |
-| `GET /publications/{id}/withdrawal-card` | Text and buttons to confirm a withdrawal |
-| `DELETE /publications/{id}` | **Athlete only.** Removes it from the calendar |
-| `POST /verify-reply` | `{"text", "retrieved"}` returns the text to send |
+| `GET /publications/{id}/withdrawal-card` | A `card` to confirm removing one |
+| `GET /plan?week=` | The active plan, one week in detail. `mode: freestyle` means none |
+| `POST /plan/proposals/new` | `{"goal", "target_date"}` computes a plan: returns a `card` |
+| `POST /plan/proposals/leave` | A `card` to go back to freestyle |
+| `POST /plan/proposals/week` | `{"reason", "modification_type", "week_offset"}`: returns a `card` |
+| `POST /plan/proposals/session` | `{"constraint_type", "day_offset", "action"}`: returns a `card` |
+| `POST /plan/calendar/publish-request` | A `card` to publish the plan's coming sessions |
+| `POST /plan/calendar/withdraw-request` | A `card` to remove them |
+| `GET /messages/pending`, `POST /messages/{id}/delivered` | **Code only.** The outbox |
+| `POST /actions` | **Code only, on the athlete's tap.** `{"action"}` |
+| `POST /verify-reply` | **Code only.** `{"text", "retrieved"}` returns the text to send |
 
 ## Describing a session
 
@@ -92,6 +130,10 @@ duration, or a structure you compose:
 The answer gives `duration_minutes`, `tss_estimate`, `zone_targets`, `engine_reference`, `fitness`,
 `guardrails`, `warnings`, `scheduled_that_day` and `publishable`.
 
+`engine_reference` is a modest target for one ordinary day, derived from chronic load, with
+`recent_peak_day`, the biggest day of the last six weeks. `above_reference_load` only fires for a
+session beyond both.
+
 **Findings report, they do not block.** A session above the recommended load is evaluated and can be
 proposed, with warnings: the athlete decides. `422` is only for a session that cannot exist, such as
 a bad structure or a date outside today to +28 days.
@@ -110,11 +152,10 @@ guardrail metrics are read by Banister. Pass what else your agent received:
 {"text": "...", "retrieved": [{"kind": "session", "result": {"tss_estimate": 140.0}}]}
 ```
 
-`kind` is one of `context`, `fitness`, `trend`, `wellness`, `ride`, `session` (evaluate or proposal
-answers) or `recommendation`, and `result` is the answer as received. Check before anything reaches
+`kind` is one of `context`, `fitness`, `trend`, `wellness`, `ride`, `recap`, `plan`, `plan_proposal`,
+`session` (evaluate or proposal answers) or `recommendation`, and `result` is the answer as received. Check before anything reaches
 the athlete: with a streaming display, the text would already be out.
 
 ## Not available through this API yet
 
-Ride notifications, RPE, reminders, the weekly recap, setup and training plans remain in Banister's
-own bot.
+First-time `/setup`, and `/reset`: use the bot for those, with `COACH_INTERFACE=telegram`.

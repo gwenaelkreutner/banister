@@ -36,6 +36,7 @@ class WeeklyRecapResult:
     next_week_section: str    # LLM ou fallback déterministe
     has_data: bool            # False si aucun log/activité
     next_week_number: int | None = None  # Numéro de semaine S+1 dans le plan (pour /week N)
+    tss_7d: float | None = None  # pour vérifier ce qu'un agent externe en dira
 
 
 # ── Helpers internes ──────────────────────────────────────────────────────────
@@ -140,12 +141,14 @@ async def compute_weekly_recap(
     session: AsyncSession,
     user: User,
     today: date | None = None,
+    narrate: bool = True,
 ) -> WeeklyRecapResult:
     """
     Calcule le bilan hebdomadaire complet pour un utilisateur.
 
     Utilisable depuis le handler /recap (session injectée par middleware)
-    ou depuis le scheduler (session ouverte par le broadcast).
+    ou depuis le scheduler (session ouverte par le broadcast). `narrate=False` : les chiffres
+    seuls, sans appel LLM, pour un coach externe qui écrit lui-même son analyse.
     """
     today = today or date.today()
 
@@ -258,7 +261,7 @@ async def compute_weekly_recap(
         next_sessions_detail = t("llm.recap_no_next_sessions")
 
     # ── Appels LLM ────────────────────────────────────────────────────────────
-    coach_section = await _generate_coach_section(
+    coach_section = "" if not narrate else await _generate_coach_section(
         tss_7d=snapshot.tss_7d,
         tss_6w_avg=snapshot.tss_6w_avg,
         load_trend_pct=snapshot.load_trend_pct,
@@ -277,7 +280,7 @@ async def compute_weekly_recap(
         user_level=user_level,
     )
 
-    next_week_section = await _generate_nextweek_section(
+    next_week_section = "" if not narrate else await _generate_nextweek_section(
         tss_7d=snapshot.tss_7d,
         load_trend_pct=snapshot.load_trend_pct,
         compliance_pct=compliance_display,
@@ -312,6 +315,7 @@ async def compute_weekly_recap(
         next_week_section=next_week_section,
         has_data=True,
         next_week_number=next_week_number,
+        tss_7d=snapshot.tss_7d,
     )
 
 

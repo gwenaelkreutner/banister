@@ -181,6 +181,9 @@ async def notify_detected_activity(
     context = await process_detected_activity(
         session, user, client, activity_summary, announce=announce
     )
+    # The ride is kept whatever happens to its notification, which may also need the database
+    # for itself (outbox). `reported` below is what makes the next tick retry a failed send.
+    await session.commit()
 
     delivered = True
     if announce:
@@ -201,8 +204,6 @@ async def notify_detected_activity(
             delivered = await _notify_simple(
                 bot, user.telegram_id, t("notifier.unplanned_title"), context
             )
-
-    await session.commit()
 
     if delivered:
         await sync_state_repo.mark_reported(

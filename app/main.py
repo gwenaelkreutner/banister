@@ -12,6 +12,7 @@ from app.api.agent import router as agent_router
 from app.api.internal import router as internal_router
 from app.bot.setup import create_bot, create_dispatcher, register_bot_commands
 from app.bot.text_format import to_telegram_html
+from app.services.outbox import OutboxMessenger
 from app.config import settings
 from app.core.localization import t
 from app.db.client import get_session
@@ -52,6 +53,8 @@ logger = logging.getLogger(__name__)
 
 bot = create_bot()
 dp = create_dispatcher()
+# Who carries Banister's messages: its own bot, or the outbox an external agent delivers from.
+messenger = OutboxMessenger() if settings.uses_agent_interface else bot
 
 # Fuseau des rappels athlète (séance du matin) — un vrai fuseau IANA,
 # pas un décalage UTC+1 fixe, pour rester correct pendant l'heure d'été (fin mars-fin
@@ -93,24 +96,28 @@ async def lifespan(app: FastAPI):
     # mysterious empty result the first time the poller tries to use it.
     await verify_intervals_credential()
 
-    await register_bot_commands(bot)
-
-    if settings.use_webhook:
-        webhook_url = f"{settings.telegram_webhook_url}"
-        await bot.set_webhook(
-            url=webhook_url,
-            secret_token=settings.telegram_webhook_secret,
-            drop_pending_updates=True,
-        )
-        logger.info(f"Webhook configuré : {webhook_url}")
+    if settings.uses_agent_interface:
+        # The agent talks to the athlete. Banister's bot must not answer, or take updates.
+        logger.info("Interface agent : bot Telegram inactif, messages via l'outbox")
     else:
-        # Mode polling (développement) — démarre en tâche background
-        await bot.delete_webhook(drop_pending_updates=True)
-        polling_task = asyncio.create_task(dp.start_polling(bot))
-        logger.info("Mode polling activé (développement)")
+        await register_bot_commands(bot)
 
-    recap_scheduler_task = asyncio.create_task(_weekly_recap_scheduler(bot))
-    reminder_scheduler_task = asyncio.create_task(_session_reminder_scheduler(bot))
+        if settings.use_webhook:
+            webhook_url = f"{settings.telegram_webhook_url}"
+            await bot.set_webhook(
+                url=webhook_url,
+                secret_token=settings.telegram_webhook_secret,
+                drop_pending_updates=True,
+            )
+            logger.info(f"Webhook configuré : {webhook_url}")
+        else:
+            # Mode polling (développement) — démarre en tâche background
+            await bot.delete_webhook(drop_pending_updates=True)
+            polling_task = asyncio.create_task(dp.start_polling(bot))
+            logger.info("Mode polling activé (développement)")
+
+    recap_scheduler_task = asyncio.create_task(_weekly_recap_scheduler(messenger))
+    reminder_scheduler_task = asyncio.create_task(_session_reminder_scheduler(messenger))
     poller_scheduler_task = asyncio.create_task(_run_intervals_poller())
 
     yield
@@ -154,6 +161,8 @@ async def health():
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
     """Endpoint webhook Telegram."""
+    if settings.uses_agent_interface:
+        return JSONResponse({"error": "not found"}, status_code=404)
     secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     if secret != settings.telegram_webhook_secret:
         return JSONResponse({"error": "unauthorized"}, status_code=403)
@@ -180,7 +189,7 @@ async def _run_intervals_poller() -> None:
             athlete_id=settings.intervals_athlete_id,
         )
 
-    await run_poller_scheduler(AsyncSessionFactory, _client_factory, bot=bot)
+    await run_poller_scheduler(AsyncSessionFactory, _client_factory, bot=messenger)
 
 
 async def _weekly_recap_scheduler(bot):
@@ -208,6 +217,7 @@ async def _run_weekly_recap_broadcast(bot):
 
     from app.db.client import AsyncSessionFactory
     from app.db.models.user import User
+    from app.services.agent_actions import WEEKLY_RECAP_PROMPT
     from app.services.weekly_recap import compute_weekly_recap
 
     async with AsyncSessionFactory() as session:
@@ -225,9 +235,21 @@ async def _run_weekly_recap_broadcast(bot):
         try:
             async with AsyncSessionFactory() as session:
                 async with session.begin():
-                    recap = await compute_weekly_recap(session, user)
+                    recap = await compute_weekly_recap(
+                        session, user, narrate=not settings.uses_agent_interface
+                    )
 
             if not recap.has_data:
+                continue
+
+            if settings.uses_agent_interface:
+                # The figures from here; the analysis in the agent's own words.
+                await bot.send_message(
+                    user.telegram_id,
+                    recap.stats_section,
+                    parse_mode="HTML",
+                    agent_prompt=WEEKLY_RECAP_PROMPT,
+                )
                 continue
 
             await bot.send_message(user.telegram_id, recap.stats_section, parse_mode="HTML")

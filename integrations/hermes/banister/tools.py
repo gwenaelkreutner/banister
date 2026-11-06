@@ -1,7 +1,7 @@
 """Tools offered to the agent (toolset `banister`). No training logic here: Banister computes.
 
-Approving a proposal and withdrawing a publication are deliberately NOT tools. They only exist
-as buttons handled in `__init__.py`, so the model can never write to the calendar by itself.
+Anything that changes the calendar or the plan is deliberately NOT a tool: the model can only
+show a card, whose buttons are handled in `messaging.py`, on the athlete's tap.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from collections import deque
 
 from .client import BanisterError, call
 
-send_card = None  # set by register(): approval card sent by code, buttons included
+send_card = None  # set by register(): sends a card from Banister, buttons included
 
 # What the agent received lately, so the final reply can be checked against it.
 _RETRIEVED_MAX_AGE_SECONDS = 6 * 3600
@@ -95,15 +95,15 @@ def _evaluate(a):
     return _remember("session", call("POST", "/sessions/evaluate", _draft(a)))
 
 
+def _with_card(result: dict) -> dict:
+    """Show the card and keep it out of what the model reads."""
+    card = result.get("card")
+    sent = bool(card and send_card and send_card(card))
+    return {**{k: v for k, v in result.items() if k not in ("card", "steps")}, "card_sent": sent}
+
+
 def _propose(a):
-    result = _remember("session", call("POST", "/proposals", _draft(a)))
-    sent = bool(send_card and send_card(
-        result["card_text"],
-        [(result["card_buttons"]["approve"], f"ok:{result['proposal_id']}"),
-         (result["card_buttons"]["decline"], f"no:{result['proposal_id']}")],
-    ))
-    light = {k: v for k, v in result.items() if k not in ("card_text", "card_buttons", "steps")}
-    return {**light, "card_sent": sent}
+    return _with_card(_remember("session", call("POST", "/proposals", _draft(a))))
 
 
 def _publications(_a):
@@ -112,13 +112,59 @@ def _publications(_a):
 
 def _request_withdrawal(a):
     publication_id = urllib.parse.quote(str(a["publication_id"]).strip(), safe="")
-    card = call("GET", f"/publications/{publication_id}/withdrawal-card")
-    sent = bool(send_card and send_card(
-        card["card_text"],
-        [(card["card_buttons"]["withdraw"], f"wd:{card['publication_id']}"),
-         (card["card_buttons"]["keep"], f"keep:{card['publication_id']}")],
-    ))
-    return {"publication_id": card["publication_id"], "card_sent": sent}
+    return _with_card(call("GET", f"/publications/{publication_id}/withdrawal-card"))
+
+
+def _plan(a):
+    return _remember("plan", call("GET", "/plan", params={"week": a.get("week")}))
+
+
+def _propose_plan(a):
+    body = {"goal": a["goal"], "target_date": a.get("target_date")}
+    return _with_card(_remember("plan_proposal", call("POST", "/plan/proposals/new", body)))
+
+
+def _propose_leaving_plan(_a):
+    return _with_card(call("POST", "/plan/proposals/leave"))
+
+
+def _propose_week_change(a):
+    keys = ("reason", "modification_type", "week_offset")
+    body = {k: a[k] for k in keys}
+    return _with_card(call("POST", "/plan/proposals/week", body))
+
+
+def _propose_session_change(a):
+    keys = ("constraint_type", "day_offset", "action")
+    body = {k: a[k] for k in keys}
+    return _with_card(call("POST", "/plan/proposals/session", body))
+
+
+def _request_plan_publication(_a):
+    return _with_card(call("POST", "/plan/calendar/publish-request"))
+
+
+def _request_plan_withdrawal(_a):
+    return _with_card(call("POST", "/plan/calendar/withdraw-request"))
+
+
+def _recap(_a):
+    return _remember("recap", call("GET", "/recap"))
+
+
+def _power_profile(_a):
+    return call("GET", "/power-profile")
+
+
+def _injury(a):
+    keys = ("location", "severity", "estimated_recovery_days")
+    return call("PUT", "/injury", {k: a[k] for k in keys})
+
+
+def _reminders(a):
+    keys = ("enabled", "hour", "minute")
+    body = {k: a[k] for k in keys if a.get(k) is not None}
+    return call("PUT", "/reminders", body) if body else call("GET", "/reminders")
 
 
 _STEP = {
@@ -225,6 +271,58 @@ TOOLS = [
         "banister_propose_session", "Show the athlete an approval card for a session. Only the athlete's tap on the card adds it to the calendar: you cannot publish, and must not say it is published. card_sent=false means no card could be shown here.",
         _DRAFT["properties"], ["date"],
     ), _tool(_propose)),
+    (_schema(
+        "banister_week_recap", "This week's figures: load, sessions, trend, intensity distribution.",
+    ), _tool(_recap)),
+    (_schema(
+        "banister_power_profile", "How the power curve moved over recent weeks, and what the athlete can sustain. Slower: several calls to the data source.",
+    ), _tool(_power_profile)),
+    (_schema(
+        "banister_report_injury", "Record an injury the athlete reports. Banister restricts zones accordingly.",
+        {"location": {"type": "string", "enum": ["knee", "back", "shoulder", "hip", "ankle", "other"]},
+         "severity": {"type": "string", "enum": ["mild", "moderate", "severe"]},
+         "estimated_recovery_days": {"type": "integer", "minimum": 1, "maximum": 90}},
+        ["location", "severity", "estimated_recovery_days"],
+    ), _tool(_injury)),
+    (_schema(
+        "banister_reminders", "Read the morning session reminder settings, or change them. They apply when a plan is active.",
+        {"enabled": {"type": "boolean"},
+         "hour": {"type": "integer", "minimum": 0, "maximum": 23},
+         "minute": {"type": "integer", "minimum": 0, "maximum": 59}},
+    ), _tool(_reminders)),
+    (_schema(
+        "banister_plan", "The active training plan: every week's outline, and one week in detail with its sessions by date. mode=freestyle means no plan.",
+        {"week": {"type": "integer", "minimum": 1, "description": "Week to detail. Default: the current one."}},
+    ), _tool(_plan)),
+    (_schema(
+        "banister_propose_plan", "Compute a new plan for a goal and show the athlete a card to start it. It replaces the active plan if any. Only their tap starts it.",
+        {"goal": {"type": "string", "enum": ["event", "fitness", "performance", "other"]},
+         "target_date": {"type": "string", "description": "YYYY-MM-DD, for an event."}},
+        ["goal"],
+    ), _tool(_propose_plan)),
+    (_schema(
+        "banister_propose_leaving_plan", "Show the athlete a card to leave the plan and switch to freestyle coaching.",
+    ), _tool(_propose_leaving_plan)),
+    (_schema(
+        "banister_propose_week_change", "Compute a lighter version of a plan week and show the athlete a card to apply it.",
+        {"reason": {"type": "string", "enum": ["fatigue", "injury", "event", "preference", "illness"]},
+         "modification_type": {"type": "string", "enum": ["reduce_intensity", "reduce_volume", "skip_session", "swap_to_recovery"]},
+         "week_offset": {"type": "integer", "minimum": 0, "maximum": 2, "description": "0 = this week."}},
+        ["reason", "modification_type", "week_offset"],
+    ), _tool(_propose_week_change)),
+    (_schema(
+        "banister_propose_session_change", "Adjust one planned session of the coming days and show the athlete a card to apply it.",
+        {"constraint_type": {"type": "string", "enum": ["meeting", "weather_bad", "tired_today", "personal"]},
+         "day_offset": {"type": "integer", "minimum": 0, "maximum": 6, "description": "0 = today."},
+         "action": {"type": "string", "enum": ["skip", "shift", "reduce_50", "indoor"]}},
+        ["constraint_type", "day_offset", "action"],
+    ), _tool(_propose_session_change)),
+    (_schema(
+        "banister_request_plan_publication", "Show the athlete a card to add the plan's coming sessions to their calendar.",
+    ), _tool(_request_plan_publication)),
+    (_schema(
+        "banister_request_plan_withdrawal", "Show the athlete a card to remove the plan's published sessions from their calendar.",
+    ), _tool(_request_plan_withdrawal)),
     (_schema("banister_publications", "Sessions published through Banister and not withdrawn."), _tool(_publications)),
     (_schema(
         "banister_request_withdrawal", "Ask the athlete, with a card, to confirm removing a published session. Only their tap removes it.",

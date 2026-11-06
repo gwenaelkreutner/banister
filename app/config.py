@@ -1,6 +1,7 @@
 from pathlib import Path
+from typing import Literal
 
-from pydantic import SecretStr, field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -121,6 +122,10 @@ class Settings(BaseSettings):
     # Agent API (app/api/agent.py, docs/AGENT_INTEGRATION.md) — bearer token for an external
     # agent that reads, evaluates and proposes sessions. Empty (default) disables it.
     agent_api_token: SecretStr = SecretStr("")
+    # Who talks to the athlete. "telegram" (default): Banister's own bot and chat. "agent": an
+    # external agent does, through the agent API; the bot stays silent and every message goes
+    # to the outbox. Needs agent_api_token, and an athlete already set up.
+    coach_interface: Literal["telegram", "agent"] = "telegram"
 
     # Optional read-only nutrition source (docs/NUTRITION_INTEGRATION.md). Empty = intervals.icu
     # wellness fields only.
@@ -131,6 +136,16 @@ class Settings(BaseSettings):
     # override lives in users.coach_voice (spec 007). "coach-default" is both the
     # deployer default and guaranteed-present fallback target (FR-026).
     persona: str = "coach-default"
+
+    @model_validator(mode="after")
+    def _agent_interface_needs_a_token(self) -> "Settings":
+        if self.coach_interface == "agent" and not self.agent_api_token.get_secret_value():
+            raise ValueError("COACH_INTERFACE=agent needs AGENT_API_TOKEN")
+        return self
+
+    @property
+    def uses_agent_interface(self) -> bool:
+        return self.coach_interface == "agent"
 
     @property
     def is_dev(self) -> bool:

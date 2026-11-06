@@ -2053,3 +2053,42 @@ msgstr "Keep it"
 
 msgid "agent.card.kept"
 msgstr "Session kept on your calendar."
+
+msgid "agent.card.plan_new"
+msgstr "New training plan: {goal}, {weeks} weeks{date_part}.\n{preview}"
+
+msgid "agent.card.plan_new_date"
+msgstr " until {date}"
+
+msgid "agent.card.plan_apply"
+msgstr "✅ Start this plan"
+
+msgid "agent.card.leave_plan"
+msgstr "Leave your plan and switch to freestyle coaching? Sessions published from the plan will be removed from your calendar. Your history is kept."
+
+msgid "agent.card.leave_plan_apply"
+msgstr "✅ Switch to freestyle"
+
+msgid "agent.card.change_apply"
+msgstr "✅ Apply"
+
+msgid "agent.card.change_cancel"
+msgstr "❌ Leave as is"
+
+msgid "agent.card.change_cancelled"
+msgstr "Nothing changed."
+
+msgid "agent.card.change_stale"
+msgstr "The plan changed since this proposal: ask again."
+
+msgid "agent.card.publish_plan"
+msgstr "✅ Add to calendar"
+
+msgid "agent.card.withdraw_all"
+msgstr "🗑 Remove them"
+
+msgid "agent.card.calendar_declined"
+msgstr "Nothing added to your calendar."
+
+msgid "agent.handover_hint"
+msgstr "For my analysis, just write « analysis »."

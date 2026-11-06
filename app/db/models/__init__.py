@@ -6,6 +6,8 @@ from app.db.models.guardrail import GuardrailAcknowledgement, ResponseCheckFailu
 from app.db.models.profile import AthleteProfile
 from app.db.models.publication import (
     FreestylePublishedEntry,
+    OutboxMessage,
+    PlanChangeProposal,
     PublicationApproval,
     PublishedEntry,
     SessionProposal,
@@ -25,6 +27,8 @@ __all__ = [
     "PublishedEntry",
     "FreestylePublishedEntry",
     "SessionProposal",
+    "PlanChangeProposal",
+    "OutboxMessage",
     "TrainingPlan",
     "SessionLog",
     "ChatMessage",

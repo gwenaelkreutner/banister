@@ -31,6 +31,7 @@ from app.engine.schemas import TrainingPlanSchema
 from app.engine.tss import detect_fatigue_anomaly_scalar, tss_from_weekly_hours
 from app.engine.weekly_snapshot import compute_weekly_snapshot
 from app.providers.intervals.client import IntervalsClient
+from app.services.ride_feedback import sync_rpe_to_source
 from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
@@ -312,11 +313,10 @@ async def _sync_rpe_to_intervals(activity_id: str, rpe: float) -> bool:
             settings.intervals_api_key.get_secret_value(),
             athlete_id=settings.intervals_athlete_id,
         )
-        await client.update_activity_rpe(activity_id, int(rpe))
     except Exception:
         logger.exception("Impossible de synchroniser le RPE vers intervals.icu")
         return False
-    return True
+    return await sync_rpe_to_source(client, activity_id, rpe)
 
 
 @router.callback_query(F.data.startswith("log:rpe:"))

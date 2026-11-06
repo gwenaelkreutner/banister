@@ -681,62 +681,9 @@ async def _tool_update_injury_status(
     plan,
     profile: AthleteProfileSchema | None,
 ) -> dict:
-    location = args.get("location", "other")
-    severity = args.get("severity", "mild")
-    recovery_days = args.get("estimated_recovery_days", 7)
+    from app.services.athlete_status import update_injury_status
 
-    # Définir les restrictions de zones selon la sévérité
-    zone_restrictions = _compute_zone_restrictions(severity)
-
-    injury_data = {
-        "is_injured": True,
-        "location": location,
-        "severity": severity,
-        "zone_restrictions": zone_restrictions,
-        "start_date": str(date.today()),
-        "estimated_recovery_date": str(date.today() + timedelta(days=recovery_days)),
-    }
-
-    # Mettre à jour le profil en DB
-    await repo.profile_repo.update_injury_status(session, user.id, injury_data)
-
-    # Journal daté (Enduragent parity review, 2026-09-20) — texte templaté depuis les
-    # arguments déjà contraints par les enum JSON-Schema de l'outil (location, severity),
-    # jamais de prose libre du LLM (source="deterministic").
-    from app.core.localization import t
-    from app.db.repositories import journal_repo
-    from app.llm.tools import _body_location_label, _severity_label
-
-    loc_label = _body_location_label(location)
-    sev_label = _severity_label(severity)
-    await journal_repo.create(
-        session,
-        user_id=user.id,
-        entry_date=date.today(),
-        category="injury",
-        source="deterministic",
-        text=t(
-            "llm.injury_journal_entry", location=loc_label, severity=sev_label, days=recovery_days,
-        ),
-    )
-
-    # Adapter le plan si disponible
-    adapted_weeks = []
-    if plan and plan.start_date:
-        from app.engine.plan_modifier import adapt_plan_for_injury
-        adapted = adapt_plan_for_injury(plan, injury_data)
-        adapted_weeks = adapted.get("modified_weeks", [])
-
-    return {
-        "success": True,
-        "injury_recorded": injury_data,
-        "zone_restrictions": zone_restrictions,
-        "adapted_weeks": adapted_weeks,
-        "message": t(
-            "llm.tools.injury_recorded",
-            location=location, severity=severity, days=min(recovery_days, 21),
-        ),
-    }
+    return await update_injury_status(args, user, session, plan)
 
 
 def _tool_propose_session_adjustment(
@@ -818,16 +765,6 @@ async def _tool_get_nutrition_summary(args: dict, user: User, session: AsyncSess
     except (TypeError, ValueError):
         days = 7
     return await nutrition_source.daily_summary(session, user.id, days)
-
-
-def _compute_zone_restrictions(severity: str) -> dict:
-    """Retourne les restrictions de zones selon la sévérité."""
-    if severity == "severe":
-        return {"Z3": "Z1", "Z4": "Z1", "Z5": "Z1", "Z6": "Z1"}
-    elif severity == "moderate":
-        return {"Z4": "Z2", "Z5": "Z2", "Z6": "Z2"}
-    else:  # mild
-        return {"Z5": "Z3", "Z6": "Z3"}
 
 
 def _intent_from_tool(tool_used: str | None) -> str:

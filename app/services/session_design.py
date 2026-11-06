@@ -37,6 +37,7 @@ from app.engine.schemas import (
 )
 from app.engine.session_library import SessionTemplate, load_library
 from app.engine.session_render import render_description
+from app.engine.training_history import daily_training_tss
 from app.engine.tss import estimate_structured_session_tss
 from app.engine.zones import compute_hr_zones, compute_power_zones
 from app.providers.intervals.client import IntervalsClient
@@ -48,6 +49,7 @@ from app.services.sport_context import _finding
 MAX_SESSION_MINUTES = 600
 MAX_DAYS_AHEAD = 28
 HISTORY_DAYS = 89
+RECENT_PEAK_DAYS = 42
 # Same margin the freestyle selector already warns at (spec 011).
 REFERENCE_LOAD_MARGIN = 1.15
 _ZONE_CODE = re.compile(r"^Z[1-6]$")
@@ -204,6 +206,15 @@ def _targets(steps: list[Step | RepeatGroup], zones: dict | None) -> dict:
     return out
 
 
+def _recent_peak_day(items: list, today: date) -> dict | None:
+    daily = daily_training_tss(items, start=today - timedelta(days=RECENT_PEAK_DAYS), end=today)
+    daily = {day: tss for day, tss in daily.items() if tss}
+    if not daily:
+        return None
+    day = max(daily, key=daily.get)
+    return {"date": day.isoformat(), "tss": round(daily[day], 1)}
+
+
 def _content_hash(session_date: date, workout_type: str, name: str, steps_json: list) -> str:
     raw = json.dumps(
         [session_date.isoformat(), workout_type, name, steps_json],
@@ -299,7 +310,12 @@ async def evaluate_session(
         }
         if current is None or current.is_stale:
             warnings.append({"code": "fitness_not_current"})
-        if tss > choice.target_tss * REFERENCE_LOAD_MARGIN:
+        recent_peak = _recent_peak_day(inputs.all_items, today)
+        reference["recent_peak_day"] = recent_peak
+        # What the athlete has handled lately counts too: the reference is one ordinary day,
+        # and a big ride is not a risk signal for someone who rides like that every week.
+        within_habits = recent_peak is not None and tss <= recent_peak["tss"]
+        if tss > choice.target_tss * REFERENCE_LOAD_MARGIN and not within_habits:
             warnings.append(
                 {
                     "code": "above_reference_load",
@@ -426,8 +442,13 @@ async def create_proposal(
     return {
         **evaluation,
         "proposal_id": proposal.id,
-        "card_text": proposal_card(evaluation),
-        "card_buttons": {"approve": t("agent.card.approve"), "decline": t("agent.card.decline")},
+        "card": {
+            "text": proposal_card(evaluation),
+            "buttons": [[
+                {"label": t("agent.card.approve"), "action": f"proposal:approve:{proposal.id}"},
+                {"label": t("agent.card.decline"), "action": f"proposal:decline:{proposal.id}"},
+            ]],
+        },
     }
 
 
@@ -569,14 +590,15 @@ async def withdrawal_card(session: AsyncSession, user: User, publication_id: uui
         raise SessionDesignError("no active publication with this id", status=404)
     return {
         "publication_id": str(entry.id),
-        "card_text": t(
-            "agent.card.withdraw_question",
-            date=entry.session_date.strftime("%d/%m/%Y"),
-            workout=t(f"session.workout.{entry.workout_type}"),
-        ),
-        "card_buttons": {
-            "withdraw": t("agent.card.withdraw"),
-            "keep": t("agent.card.keep"),
+        "card": {
+            "text": t(
+                "agent.card.withdraw_question",
+                date=entry.session_date.strftime("%d/%m/%Y"),
+                workout=t(f"session.workout.{entry.workout_type}"),
+            ),
+            "buttons": [[
+                {"label": t("agent.card.withdraw"), "action": f"publication:withdraw:{entry.id}"},
+                {"label": t("agent.card.keep"), "action": "dismiss:agent.card.kept"},
+            ]],
         },
-        "kept_text": t("agent.card.kept"),
     }

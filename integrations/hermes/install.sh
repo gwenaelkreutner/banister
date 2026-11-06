@@ -10,7 +10,8 @@
 # HERMES_CLONE_FROM     optional profile to clone model and provider settings from
 # HERMES_HOME           default ~/.hermes
 #
-# Afterwards: put the bot's TELEGRAM_BOT_TOKEN in the profile's .env and restart the gateway.
+# Afterwards: put the bot's TELEGRAM_BOT_TOKEN in the profile's .env, set COACH_INTERFACE=agent in
+# Banister's .env and restart both.
 set -euo pipefail
 PROFILE=${HERMES_PROFILE:-banister}
 HERMES_ROOT=${HERMES_HOME:-$HOME/.hermes}
@@ -35,6 +36,10 @@ mkdir -p "$PLUGIN_DIR" "$PROFILE_DIR/backups"
 cp -p "$PROFILE_DIR/config.yaml" "$PROFILE_DIR/backups/config.yaml.$(date +%Y%m%d-%H%M%S)"
 rsync -a --delete --exclude __pycache__ --exclude settings.json "$HERE/banister/" "$PLUGIN_DIR/"
 
+# The skill lives in this repository, outside the plugin: the agent cannot edit a plugin's skill.
+# Its corrections show up in `git diff` here: read them before committing to a public repository.
+hermes -p "$PROFILE" config set skills.external_dirs "[\"$HERE/skills\"]" >/dev/null
+
 if [ ! -f "$PLUGIN_DIR/settings.json" ]; then
   : "${BANISTER_AGENT_TOKEN:?set BANISTER_AGENT_TOKEN for the first install}"
   : "${OWNER_CHAT_ID:?set OWNER_CHAT_ID for the first install}"
@@ -54,7 +59,8 @@ config = yaml.safe_load(open(path)) or {}
 plugins = config.setdefault("plugins", {})
 plugins["enabled"] = ["banister"]
 plugins["disabled"] = []
-plugins["entries"] = {"banister": {"allow_tool_override": False, "allow_gateway_injection": False}}
+# Injection lets Banister ask the coach to follow up: a ride review, the weekly analysis.
+plugins["entries"] = {"banister": {"allow_tool_override": False, "allow_gateway_injection": True}}
 toolsets = ["skills", "session_search", "clarify", "todo", "vision", "tts", "banister"]
 platforms = config.setdefault("platform_toolsets", {})
 for platform in ("cli", "telegram", "cron"):
@@ -66,7 +72,9 @@ PY
 
 if [ ! -s "$PROFILE_DIR/SOUL.md" ]; then
   cat > "$PROFILE_DIR/SOUL.md" <<'SOUL'
-You are a cycling coach working with Banister. Load the skill banister:coach as soon as training comes up, and rely on the banister_* tools: Banister computes every number, you never do. Be direct and short, and reply in the athlete's language.
+You are a cycling coach working with Banister. Load the skill banister-coach as soon as training comes up, and rely on the banister_* tools: Banister computes every number, you never do. Be direct and short, and reply in the athlete's language.
+
+You can improve: when the athlete corrects you or you spot a mistake in your method, update your skill banister-coach with skill_manage (action patch) in the same turn, then say in one line what changed. Do not create another skill to work around it.
 SOUL
 fi
 

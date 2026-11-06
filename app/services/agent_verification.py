@@ -64,6 +64,20 @@ def register_retrieved(registry: MetricRegistry, kind: str, result: dict) -> Non
         registry.register_also("tss", (result.get("engine_reference") or {}).get("target_tss"))
     elif kind == "recommendation":
         registry.register_also("tss", result.get("target_tss"))
+    elif kind == "recap":
+        registry.register_also("tss", result.get("tss_7d"))
+    elif kind == "plan_proposal":
+        registry.register_also("tss", result.get("first_week_tss"))
+        registry.register_also("tss", result.get("peak_weekly_tss"))
+    elif kind == "plan":
+        plan = result.get("plan") or {}
+        week = result.get("week") or {}
+        registry.register_also("tss", plan.get("peak_weekly_tss"))
+        registry.register_also("tss", week.get("total_tss_target"))
+        for item in plan.get("weeks") or []:
+            registry.register_also("tss", item.get("total_tss_target"))
+        for item in (week.get("sessions_by_date") or {}).values():
+            registry.register_also("tss", item.get("tss_target"))
 
 
 async def verify_agent_reply(

@@ -16,3 +16,14 @@ provides_tools:
   - banister_propose_session
   - banister_publications
   - banister_request_withdrawal
+  - banister_week_recap
+  - banister_power_profile
+  - banister_report_injury
+  - banister_reminders
+  - banister_plan
+  - banister_propose_plan
+  - banister_propose_leaving_plan
+  - banister_propose_week_change
+  - banister_propose_session_change
+  - banister_request_plan_publication
+  - banister_request_plan_withdrawal

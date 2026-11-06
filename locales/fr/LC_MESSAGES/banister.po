@@ -2054,3 +2054,42 @@ msgstr "La garder"
 
 msgid "agent.card.kept"
 msgstr "Séance gardée dans ton calendrier."
+
+msgid "agent.card.plan_new"
+msgstr "Nouveau plan : {goal}, {weeks} semaines{date_part}.\n{preview}"
+
+msgid "agent.card.plan_new_date"
+msgstr " jusqu'au {date}"
+
+msgid "agent.card.plan_apply"
+msgstr "✅ Démarrer ce plan"
+
+msgid "agent.card.leave_plan"
+msgstr "Quitter ton plan et passer en mode libre ? Les séances publiées depuis le plan seront retirées de ton calendrier. Ton historique est gardé."
+
+msgid "agent.card.leave_plan_apply"
+msgstr "✅ Passer en mode libre"
+
+msgid "agent.card.change_apply"
+msgstr "✅ Appliquer"
+
+msgid "agent.card.change_cancel"
+msgstr "❌ Ne rien changer"
+
+msgid "agent.card.change_cancelled"
+msgstr "Rien n'a changé."
+
+msgid "agent.card.change_stale"
+msgstr "Le plan a changé depuis cette proposition : redemande."
+
+msgid "agent.card.publish_plan"
+msgstr "✅ Ajouter au calendrier"
+
+msgid "agent.card.withdraw_all"
+msgstr "🗑 Les retirer"
+
+msgid "agent.card.calendar_declined"
+msgstr "Rien n'a été ajouté à ton calendrier."
+
+msgid "agent.handover_hint"
+msgstr "Pour avoir mon analyse, écris-moi simplement « analyse »."

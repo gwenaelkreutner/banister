@@ -14,6 +14,8 @@ même lookup semaine/jour ailleurs dans le repo — voir app/engine/schemas.py).
 """
 from __future__ import annotations
 
+import dataclasses
+import logging
 from dataclasses import dataclass
 from typing import Literal
 
@@ -28,6 +30,8 @@ from app.engine.schemas import AthleteProfileSchema, SessionSpec, TrainingPlanSc
 from app.engine.tid import TIDResult, compute_tid
 from app.engine.weekly_snapshot import WeeklySnapshot, compute_weekly_snapshot
 from app.services.guardrail_service import collect_registry_metrics
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -125,3 +129,81 @@ async def assemble_review_context(
         hydration_volume_l=hydration_volume_l,
         kcal_consumed=kcal_consumed,
     )
+
+
+# ── Lectures best-effort à la source (partagées par /review et l'API agent) ───
+
+_DFA_STREAM_TYPES = ["dfa_a1", "artifacts", "heartrate", "watts"]
+
+
+async def backfill_rpe_from_source(log: SessionLog, client) -> None:
+    """Rattrapage pour les séances déjà loguées avant que `icu_rpe` soit mappé à
+    l'ingestion (2026-09-21) — ou pour un ressenti ajouté sur intervals.icu après coup.
+    Le ressenti saisi par l'athlète reste prioritaire : ne touche `log.rpe` que s'il est
+    encore vide. Consommé tel quel (échelle standard 1-10, Principe IV). Mute `log` en
+    place, dans la transaction de l'appelant."""
+    if log.rpe is not None or not log.source_activity_id:
+        return
+    try:
+        activity = await client.get_activity(log.source_activity_id)
+        rpe = activity.get("icu_rpe")
+        if rpe is not None:
+            log.rpe = rpe
+    except Exception:
+        logger.warning("Impossible de rattraper le RPE depuis intervals.icu pour /review")
+
+
+async def fetch_dfa(log: SessionLog, client):
+    """Best-effort : un appel réseau de plus, jamais bloquant. `None` si pas d'activité source,
+    si l'appel échoue, ou si l'athlète n'a pas d'AlphaHRV (dfa_a1 absent des streams, normal
+    pour la plupart des comptes tant que le champ Garmin n'est pas installé)."""
+    if not log.source_activity_id:
+        return None
+    try:
+        from app.engine.dfa import compute_dfa_block
+        from app.providers.intervals.streams import streams_to_dict
+
+        raw_streams = await client.get_activity_streams(
+            log.source_activity_id, types=_DFA_STREAM_TYPES
+        )
+        return compute_dfa_block(streams_to_dict(raw_streams))
+    except Exception:
+        logger.warning("Impossible de récupérer les streams DFA pour /review")
+        return None
+
+
+_REVIEW_LOG_FIELDS = (
+    "logged_date", "status", "duration_minutes_actual", "tss_actual", "environment",
+    "avg_heart_rate", "avg_power", "normalized_power", "kilojoules", "time_in_zones_s",
+    "cardiac_drift_index", "intervals_consistency_index", "respect_zones_score",
+    "session_type_real", "variability_index", "intensity_factor", "dominant_zone",
+    "elevation_gain_m", "average_temp_c", "athlete_count", "efficiency_factor", "hrr", "rpe",
+)
+
+
+def _plain(value):
+    if value is None:
+        return None
+    if dataclasses.is_dataclass(value):
+        return dataclasses.asdict(value)
+    return value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+
+
+def review_facts(ctx: ReviewContext, dfa=None) -> dict:
+    """What the review knows, as data: for a coach that writes its own words. A value the
+    source never measured stays `None`."""
+    log = {name: getattr(ctx.log, name, None) for name in _REVIEW_LOG_FIELDS}
+    log["logged_date"] = ctx.log.logged_date.isoformat()
+    return {
+        "ride": log,
+        "planned_session": _plain(ctx.session_spec),
+        "coaching_mode": ctx.coaching_mode,
+        "fitness_at_session": _plain(ctx.fitness_at_session),
+        "weekly_snapshot": _plain(ctx.weekly_snapshot),
+        "intensity_distribution": _plain(ctx.tid),
+        "recovery_index": ctx.recovery_index,
+        "detected_phase": _plain(ctx.detected_phase),
+        "hydration_volume_l": ctx.hydration_volume_l,
+        "kcal_consumed": ctx.kcal_consumed,
+        "dfa": _plain(dfa),
+    }
