@@ -36,6 +36,7 @@ class MetricRegistry:
 
     _values: dict[str, float] = field(default_factory=dict)
     _history: dict[str, dict[str, set[float]]] = field(default_factory=dict)
+    _undated: dict[str, set[float]] = field(default_factory=dict)
 
     def register(self, name: str, value: float | int | None) -> None:
         if value is None:
@@ -53,12 +54,19 @@ class MetricRegistry:
             if value is not None:
                 history.setdefault(as_of, set()).add(float(value))
 
+    def register_also(self, name: str, value: float | int | None) -> None:
+        """A value retrieved alongside others with no date to anchor it, such as the
+        estimated TSS of each session compared in one conversation."""
+        if value is not None:
+            self._undated.setdefault(name.lower(), set()).add(float(value))
+
     def values_for(self, name: str, *, sentence: str = "") -> set[float]:
         """Current value always applies. Historical values require their date in prose."""
         canonical = name.lower()
         values: set[float] = set()
         if canonical in self._values:
             values.add(self._values[canonical])
+        values.update(self._undated.get(canonical, ()))
         for as_of, dated_values in self._history.get(canonical, {}).items():
             short_date = f"{as_of[8:10]}/{as_of[5:7]}"
             if as_of in sentence or short_date in sentence:
@@ -120,6 +128,8 @@ _NON_CLAIM_AFTER = re.compile(
     re.IGNORECASE,
 )
 _ZONE = re.compile(r"\bZ[1-7]\b", re.IGNORECASE)
+# "5-6 relances": a loose count, not two values, and never a negative number.
+_NUMBER_RANGE = re.compile(r"(?<![\d.,])\d+(?:[.,]\d+)?\s*[-–]\s*\d+(?:[.,]\d+)?")
 # A daily workload expressed as a multiple of CTL/ATL is relative, like a percent;
 # it is not the absolute CTL/ATL value registered for the athlete.
 _RELATIVE_LOAD_MULTIPLE = re.compile(
@@ -178,6 +188,7 @@ def _extract_claims(text: str) -> list[Claim]:
             if not anchors_here:
                 continue
             date_spans = [match.span() for match in _DATE_TOKEN.finditer(clause)]
+            date_spans += [match.span() for match in _NUMBER_RANGE.finditer(clause)]
             seen: set[str] = set()
             for num_m in re.finditer(_NUMBER, clause):
                 start, end = num_m.span()

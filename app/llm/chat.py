@@ -11,7 +11,6 @@ Flux :
 
 import logging
 import re
-import uuid
 from datetime import date, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,10 +21,17 @@ from app.db import repositories as repo
 from app.db.models.user import User
 from app.engine.atl_ctl import FitnessMetrics, compute_fitness_from_any
 from app.engine.schemas import AthleteProfileSchema, TrainingPlanSchema
-from app.engine.training_history import completed_training_items, daily_training_tss
+from app.engine.training_history import completed_training_items
 from app.llm.chat_client import run_agentic_loop
 from app.llm.tools import PARALLEL_READ_TOOLS, build_context_messages, build_system_prompt
 from app.services import nutrition_source
+from app.services.coach_memory import (
+    _MEMORY_QUERY_LIMIT,  # noqa: F401 — re-exported for tests
+    _MEMORY_QUERY_MAX_RANGE_DAYS,  # noqa: F401
+    _MEMORY_QUERY_MAX_RESULT_CHARS,  # noqa: F401
+)
+from app.services.coach_memory import memory_query as _tool_memory_query
+from app.services.coach_memory import update_coach_memory as _tool_update_coach_memory
 from app.services.fitness import get_current_fitness
 
 logger = logging.getLogger(__name__)
@@ -771,64 +777,6 @@ def _tool_propose_plan_modification(args: dict, plan) -> dict:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-async def _tool_update_coach_memory(args: dict, user: User, session: AsyncSession) -> dict:
-    """Mémorise une observation durable dans coach_memory ou athlete_notes.
-
-    add_note écrit à DEUX endroits en une seule opération (Enduragent parity review,
-    2026-09-20, décision owner actée) : coach_memory (JSON capé à 15, court/moyen terme
-    toujours injecté dans le system prompt — inchangé) ET coach_journal_entries
-    (append-only, source="llm") — une note évincée au-delà de 15 reste queryable
-    indéfiniment via l'outil memory_query au lieu d'être perdue. Le LLM ne décide
-    toujours que du texte/catégorie, jamais de la mécanique de double écriture
-    (Principe III)."""
-    from datetime import date as _date
-
-    from app.db.repositories import journal_repo, profile_repo
-
-    action = args.get("action")
-    profile_orm = await profile_repo.get_by_user_id(session, user.id)
-    if profile_orm is None:
-        return {"ok": False, "error": t("llm.tools.profile_not_found")}
-
-    if action == "add_note":
-        category = args.get("category", "preference")
-        note_text = (args.get("note") or "")[:120]
-        memory: list = list(profile_orm.coach_memory or [])
-
-        if len(memory) >= 15:
-            same_cat = [i for i, n in enumerate(memory) if n.get("category") == category]
-            if same_cat:
-                idx = min(same_cat, key=lambda i: memory[i].get("date", ""))
-            else:
-                idx = min(range(len(memory)), key=lambda i: memory[i].get("date", ""))
-            memory[idx] = {"date": str(_date.today()), "category": category, "note": note_text}
-        else:
-            memory.append({"date": str(_date.today()), "category": category, "note": note_text})
-
-        await profile_repo.update_coach_memory(session, profile_orm, memory)
-        await journal_repo.create(
-            session,
-            user_id=user.id,
-            entry_date=_date.today(),
-            category=category,
-            source="llm",
-            text=note_text,
-        )
-        return {"ok": True, "action": "add_note", "category": category}
-
-    elif action == "update_athlete_notes":
-        key = args.get("key", "")
-        value = args.get("value", "")
-        if not key:
-            return {"ok": False, "error": t("llm.tools.missing_key")}
-        notes: dict = dict(profile_orm.athlete_notes or {})
-        notes[key] = value
-        await profile_repo.update_athlete_notes(session, profile_orm, notes)
-        return {"ok": True, "action": "update_athlete_notes", "key": key}
-
-    return {"ok": False, "error": t("llm.tools.unknown_action", action=action)}
-
-
 # ── Outil mode libre (spec 009) ─────────────────────────────────────────────────
 
 async def _tool_get_freestyle_session_suggestion(
@@ -841,164 +789,22 @@ async def _tool_get_freestyle_session_suggestion(
     activities: list,
     today: date | None = None,
 ) -> dict:
-    """Propose une séance sans référence à un plan (contracts/llm-tool-session-suggestion.md).
-    Tout le calcul est déterministe (app/engine/freestyle_selector.py, Constitution
-    Principe I) — cette fonction ne fait que rassembler ce que l'outil a besoin de lire
-    en DB et traduit le résultat dans les deux formes du contrat.
-
-    `args` (spec 011) porte les signaux extraits du message de l'athlète —
-    `requested_workout_type`/`max_duration_minutes`/`requested_duration_minutes`/
-    `style_preference`, tous optionnels. Les trois premiers sont transmis tels quels à
-    `build_freestyle_suggestion()`. Le
-    troisième (texte libre) est résolu en `template_id` par un second appel LLM isolé
-    (`app/llm/template_picker.py`) qui ne voit que les candidats du type déjà retenu — le
-    catalogue complet ne transite plus par le schéma de l'outil. Aucun calcul de charge
-    n'a lieu ici (Constitution Principe III : llm/ ne calcule jamais)."""
-    from app.db.repositories import profile_repo
-    from app.engine.atl_ctl import compute_fitness_from_any
-    from app.engine.freestyle_selector import (
-        NoSuitableTemplateError,
-        build_freestyle_suggestion,
-        candidates_for,
-        choose_workout_type,
-        days_since_hard_effort,
-        days_since_return_from_break,
-    )
-    from app.engine.session_library import SessionLibraryError
-    from app.engine.weekly_snapshot import compute_weekly_snapshot
+    """Same-turn suggestion for the chat. The logic lives in
+    `app/services/freestyle_suggestion.py`; only the LLM style picker is added here, which
+    is why it stays out of the service (Constitution Principle III)."""
     from app.llm.template_picker import pick_template
-    from app.services.fitness import get_current_fitness
-    from app.services.guardrail_service import (
-        assemble_recovery_findings,
-        assemble_workload_findings,
-        recovery_insufficiency,
+    from app.services.freestyle_suggestion import suggest_freestyle_session
+
+    return await suggest_freestyle_session(
+        args,
+        user=user,
+        session=session,
+        profile=profile,
+        logs=logs,
+        activities=activities,
+        today=today or paris_today(),
+        resolve_style=pick_template,
     )
-
-    today = today or paris_today()
-    all_items = completed_training_items([*logs, *activities], end=today)
-
-    current = await get_current_fitness(session, user.id, today=today)
-    fitness = (
-        current.metrics if current is not None
-        else (compute_fitness_from_any(all_items, target_date=today) if all_items else None)
-    )
-    if fitness is None:
-        return {"available": False, "reason": t("llm.tools.freestyle_not_enough_data")}
-    if profile is None:
-        return {"available": False, "reason": t("llm.tools.freestyle_no_profile")}
-
-    snapshot = compute_weekly_snapshot(all_items, today)
-    hard_gap = days_since_hard_effort(all_items, today)
-    return_gap = days_since_return_from_break(all_items, today)
-    daily_tss = daily_training_tss(all_items, start=today - timedelta(days=1), end=today)
-    recent_daily_tss = max(daily_tss.values(), default=None)
-    # Rendu contraignant côté freestyle (2026-09-21) — jusqu'ici l'ACWR n'existait que
-    # comme texte consultatif dans le prompt (GUARDRAIL_LOAD_REDUCTION_RULE), sans
-    # garantie que le modèle le respecte. Ici c'est une exclusion dure dans le sélecteur
-    # déterministe lui-même — voir choose_workout_type().
-    acwr_finding_kind: str | None = None
-    try:
-        workload_findings = await assemble_workload_findings(session, user.id, today=today)
-        acwr_finding_kind = next(
-            (f.kind for f in workload_findings if f.kind.startswith("acwr_")), None
-        )
-    except Exception:
-        logger.warning("Impossible de calculer l'ACWR pour la suggestion freestyle")
-
-    recovery_finding_kind = None
-    recovery_gap = None
-    try:
-        recovery_findings = await assemble_recovery_findings(session, user.id, today=today)
-        recovery_finding_kind = next((f.kind for f in recovery_findings), None)
-        if not recovery_findings:
-            recovery_gap = await recovery_insufficiency(session, user.id, today=today)
-    except Exception:
-        logger.warning("Impossible de calculer la récupération pour la suggestion freestyle")
-        recovery_gap = "Signaux de récupération indisponibles."
-
-    profile_orm = await profile_repo.get_by_user_id(session, user.id)
-    avoid_raw = (
-        (profile_orm.athlete_notes or {}).get("disliked_workout_types", "")
-        if profile_orm else ""
-    )
-    avoid_workout_types = frozenset(t.strip() for t in avoid_raw.split(",") if t.strip())
-    requested_workout_type = args.get("requested_workout_type")
-
-    template_id: str | None = None
-    style_preference = (args.get("style_preference") or "").strip()
-    if style_preference:
-        # Resolve the workout type first so the picker only sees that type's candidates.
-        # choose_workout_type() is pure and cheap; build_freestyle_suggestion() below
-        # recomputes the same answer from the same inputs.
-        try:
-            choice = choose_workout_type(
-                fitness, snapshot,
-                days_since_hard_effort=hard_gap,
-                avoid_workout_types=avoid_workout_types,
-                requested_workout_type=requested_workout_type,
-                days_since_return_from_break=return_gap,
-                acwr_finding_kind=acwr_finding_kind,
-                recent_daily_tss=recent_daily_tss,
-                recovery_finding_kind=recovery_finding_kind,
-            )
-            template_id = await pick_template(style_preference, candidates_for(choice.workout_type))
-        except SessionLibraryError as exc:
-            logger.warning("Préférence de style ignorée (bibliothèque) : %s", exc)
-
-    try:
-        suggestion = build_freestyle_suggestion(
-            fitness,
-            snapshot,
-            coaching_mode=profile.coaching_mode,
-            ftp=profile.equipment.ftp,
-            days_since_hard_effort=hard_gap,
-            avoid_workout_types=avoid_workout_types,
-            day_ordinal=today.toordinal(),
-            available_minutes=args.get("max_duration_minutes"),
-            requested_duration_minutes=args.get("requested_duration_minutes"),
-            requested_workout_type=requested_workout_type,
-            requested_template_id=template_id,
-            days_since_return_from_break=return_gap,
-            acwr_finding_kind=acwr_finding_kind,
-            recent_daily_tss=recent_daily_tss,
-            recovery_finding_kind=recovery_finding_kind,
-        )
-    except (SessionLibraryError, NoSuitableTemplateError) as exc:
-        logger.warning("Suggestion mode libre indisponible : %s", exc)
-        return {"available": False, "reason": t("llm.tools.freestyle_no_suitable_session")}
-
-    # spec 010: tagged so app/bot/routers/chat.py can offer a "publish this" button —
-    # "id" identifies exactly this suggestion so a later, superseded button can be told
-    # apart from the current one (contracts/confirmation-button.md).
-    reasoning = suggestion.reasoning_summary
-    if current is not None:
-        reasoning += f" Forme source intervals.icu datée du {current.as_of.isoformat()}."
-        if current.is_stale:
-            reasoning += " Données de forme anciennes, pas une mesure actuelle."
-    else:
-        reasoning += " Forme estimée localement, faute de mesure source disponible."
-    if recovery_gap:
-        reasoning += f" Récupération non évaluable : {recovery_gap}"
-    missing_tss = sum(1 for item in all_items if (
-        getattr(item, "tss_actual", None) is None and getattr(item, "tss", None) is None
-    ))
-    if missing_tss:
-        reasoning += f" Charge incomplète : {missing_tss} sortie(s) sans TSS renseigné."
-    return {
-        "available": True,
-        "type": "freestyle_publish",
-        "id": uuid.uuid4().hex[:8],
-        "workout_type": suggestion.workout_type,
-        "duration_minutes": suggestion.duration_minutes,
-        "target_tss": suggestion.target_tss,
-        "zone_code": suggestion.zone_code,
-        "reasoning_summary": reasoning,
-        "fitness_as_of": current.as_of.isoformat() if current is not None else None,
-        "fitness_is_stale": current.is_stale if current is not None else False,
-        "fitness_source": "intervals.icu" if current is not None else "local_estimate",
-        "duration_warning": suggestion.duration_warning,
-        "steps": [step.model_dump(mode="json") for step in suggestion.steps],
-    }
 
 
 # ── Nutrition : lecture seule d'une source externe (docs/NUTRITION_INTEGRATION.md) ──
@@ -1012,75 +818,6 @@ async def _tool_get_nutrition_summary(args: dict, user: User, session: AsyncSess
     except (TypeError, ValueError):
         days = 7
     return await nutrition_source.daily_summary(session, user.id, days)
-
-
-# ── Journal daté / memory_query (Enduragent parity review, 2026-09-20) ──────────
-
-_MEMORY_QUERY_MAX_RANGE_DAYS = 400
-_MEMORY_QUERY_LIMIT = 30
-_MEMORY_QUERY_MAX_RESULT_CHARS = 3000
-
-
-async def _tool_memory_query(args: dict, user: User, session: AsyncSession) -> dict:
-    """Recherche dans le journal daté (app/db/models/coach_journal.py) — l'équivalent
-    banister du memory_query d'Enduragent (packages/engine/src/sport/memory-tools.ts,
-    vérifié sur le vrai source). Plafonds validés par l'owner : 400 jours de plage max,
-    30 entrées / 3000 caractères de résultat avec `truncated: true` au-delà.
-
-    Fencing DIFFÉRÉ par décision owner (2026-09-20) : seul sanitize_untrusted_text() est
-    appliqué ici (niveau standard minimal, cohérent avec les autres outils du projet qui
-    ne wrappent pas leurs résultats). TODO : réévaluer si un fencing complet
-    (wrap_untrusted_block, comme build_system_prompt() l'applique à coach_memory) est
-    nécessaire pour ce canal — une partie des entrées est écrite par le LLM lui-même
-    (voie add_note) donc potentiellement adversariale, mais le canal `role="tool"` de la
-    boucle agentique est structurellement distinct du system prompt.
-    """
-    from app.db.repositories import journal_repo
-    from app.llm.prompt_fence import sanitize_untrusted_text
-
-    try:
-        start = date.fromisoformat(args.get("from_date", ""))
-        end = date.fromisoformat(args.get("to_date", ""))
-    except (TypeError, ValueError):
-        return {"error": t("llm.tools.date_range_format_error")}
-
-    if start > end:
-        return {"error": t("llm.tools.date_range_reversed", start=start, end=end)}
-
-    range_days = (end - start).days + 1
-    if range_days > _MEMORY_QUERY_MAX_RANGE_DAYS:
-        return {
-            "error": t(
-                "llm.tools.date_range_too_wide",
-                days=range_days, max_days=_MEMORY_QUERY_MAX_RANGE_DAYS,
-            ),
-        }
-
-    keyword = (args.get("keyword") or "").strip() or None
-    category = args.get("category") or None
-
-    rows = await journal_repo.query(
-        session, user.id, start, end,
-        keyword=keyword, category=category, limit=_MEMORY_QUERY_LIMIT,
-    )
-
-    truncated = len(rows) >= _MEMORY_QUERY_LIMIT
-    entries: list[dict] = []
-    total_chars = 0
-    for row in rows:
-        text = sanitize_untrusted_text(row.text)
-        if total_chars + len(text) > _MEMORY_QUERY_MAX_RESULT_CHARS:
-            truncated = True
-            break
-        total_chars += len(text)
-        entries.append({"date": str(row.entry_date), "category": row.category, "text": text})
-
-    return {
-        "range": {"from": str(start), "to": str(end)},
-        "count": len(entries),
-        "truncated": truncated,
-        "entries": entries,
-    }
 
 
 def _compute_zone_restrictions(severity: str) -> dict:

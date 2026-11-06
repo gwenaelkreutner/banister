@@ -1,0 +1,18 @@
+name: banister
+version: 1.0.0
+description: Cycling coaching on top of Banister. The agent chooses or composes sessions; Banister computes, checks and publishes after the athlete's approval.
+author: Banister contributors
+provides_tools:
+  - banister_context
+  - banister_fitness_history
+  - banister_training_trend
+  - banister_wellness_history
+  - banister_ride
+  - banister_memory
+  - banister_add_note
+  - banister_find_sessions
+  - banister_recommendation
+  - banister_evaluate_session
+  - banister_propose_session
+  - banister_publications
+  - banister_request_withdrawal

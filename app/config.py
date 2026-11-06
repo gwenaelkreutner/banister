@@ -118,6 +118,10 @@ class Settings(BaseSettings):
     # the Hermes mobility coach. Empty (default) disables the endpoint entirely.
     internal_api_token: SecretStr = SecretStr("")
 
+    # Agent API (app/api/agent.py, docs/AGENT_INTEGRATION.md) — bearer token for an external
+    # agent that reads, evaluates and proposes sessions. Empty (default) disables it.
+    agent_api_token: SecretStr = SecretStr("")
+
     # Optional read-only nutrition source (docs/NUTRITION_INTEGRATION.md). Empty = intervals.icu
     # wellness fields only.
     nutrition_api_url: str = ""

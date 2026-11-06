@@ -1359,6 +1359,34 @@ le coach mobilité Hermes (`/root/mobilite`), qui lisait auparavant la base en `
   obligatoire (comparaison à temps constant) ; `INTERNAL_API_TOKEN` vide = routeur en 404 (fermé par défaut).
 - Bornes : `days` 1–28, `ahead` 1–14. Tests : `tests/test_services/test_sport_context.py`.
 
+## API agent — brancher un agent externe (hors spec — 2026-11-06)
+
+`app/api/agent.py` (préfixe `/agent/v1`, contrat public en anglais : `docs/AGENT_INTEGRATION.md`) laisse un
+agent externe coacher avec Banister : **l'agent comprend et choisit ou compose, Banister calcule et vérifie,
+seul le geste de l'athlète écrit au calendrier.** Le chat Telegram intégré reste le mode par défaut.
+
+- **Jeton dédié** `AGENT_API_TOKEN`, séparé de `INTERNAL_API_TOKEN` (celui-ci reste en lecture seule) ; vide =
+  routeur en 404, donc rien d'exposé sur une installation par défaut.
+- **`services/session_design.py`** : `session_catalog()` (plusieurs candidats, contrairement à l'outil du chat),
+  `evaluate_session()` (template ajusté ou séance composée → durée, TSS estimé, cibles, avertissements ; n'écrit
+  rien), `create_proposal()` / `approve_proposal()` (`session_proposals`, consentement lié au contenu par
+  `content_hash`, `claim()` atomique contre le double tap). Les constats **signalent, ne bloquent jamais**
+  (« liberté encadrée ») : seule une séance impossible est refusée (structure, zone, date). Les constats décrivent
+  l'état du jour (`evaluated_as_of`), pas une prévision de la date visée.
+- **Pas de seuil par défaut** (Principe IV) : sans FTP ni FC, `publishable: false` et cibles vides, là où le bouton
+  du chat retombe encore sur `ftp or 200`.
+- **`/approve` et `DELETE /publications/{id}` ne doivent jamais devenir des outils du modèle** : ils sont réservés
+  aux boutons gérés par le code de l'intégration.
+- **`services/agent_verification.py`** + `POST /verify-reply` : même garantie que `verify_response()` du chat
+  (Principe I) sur la réponse finale de l'agent, avec les valeurs reçues passées dans `retrieved`.
+- **Extractions sans changement de comportement** : `services/freestyle_suggestion.py` (chat = service +
+  `pick_template`), `services/coach_memory.py`, `publication.publish_and_record_freestyle()`.
+- **Plugin Hermes** : `integrations/hermes/banister/` (client HTTP stdlib, sans dépendance à l'app ; hook
+  `transform_llm_output` pour `/verify-reply`, d'où `display.streaming: false`) ; `integrations/hermes/install.sh`.
+  Tests : `tests/test_api/test_agent_api.py`, `tests/test_integrations/test_hermes_plugin.py`.
+- **Pas encore migré vers l'agent** : notification post-sortie, RPE, rappels, récap hebdo, `/setup`, `/goal`, plans.
+  Ils restent sur le bot Banister. Le bouton de publication du chat publie toujours à la date du jour.
+
 ## Variables d'environnement
 
 ```

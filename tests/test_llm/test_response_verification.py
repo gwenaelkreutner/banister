@@ -186,3 +186,12 @@ def test_a_clean_response_is_returned_unchanged():
     text = "Ton CTL est à 45.9, belle forme."
     res = verify_response(text, r)
     assert apply_result(text, res) == text
+
+
+def test_a_number_range_is_not_a_negative_metric_value():
+    """Found live: "~5-6 relances" next to a TSB was read as a TSB of -6."""
+    registry = MetricRegistry()
+    registry.register("tsb", 5.3)
+    text = "Avec un TSB à +5 tu as la caisse pour avaler les ~5-6 relances à seuil."
+    assert verify_response(text, registry).ok
+    assert not verify_response("Ton TSB est à -6 et tu peux y aller.", registry).ok

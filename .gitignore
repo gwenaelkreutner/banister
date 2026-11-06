@@ -3,6 +3,7 @@ __pycache__/
 venv/
 .pytest_cache/
 .env
+.env.save
 # Wiring Docker spécifique à un déploiement (ex. réseau partagé avec un Phoenix
 # self-hosté pour le tracing LLM — voir CLAUDE.md § Observabilité) : jamais générique
 # entre self-hosters, docker-compose.yml doit rester autonome sans ce fichier.

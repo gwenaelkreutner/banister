@@ -14,6 +14,7 @@ wrong-plan, un-approved, or content-stale approval (FR-001, FR-004). execute_pub
 from __future__ import annotations
 
 import hashlib
+import uuid
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -563,6 +564,39 @@ async def publish_freestyle_session(
         intervals_event_id=event_id,
         content_hash=content_hash,
     )
+
+
+async def publish_and_record_freestyle(
+    session: AsyncSession,
+    client: IntervalsClient,
+    *,
+    user_id: uuid.UUID,
+    session_date: date,
+    name: str,
+    workout_type: str,
+    steps: list,
+    zones: dict,
+) -> tuple[FreestylePublishOutcome, uuid.UUID | None]:
+    """The one path from an approved freestyle session to the calendar: write the event,
+    then record it, so a later withdrawal can find it. The caller holds the approval and
+    commits. A failed write records nothing."""
+    from app.db.repositories import freestyle_publication_repo
+
+    outcome = await publish_freestyle_session(
+        client, session_date, name, workout_type, steps, zones
+    )
+    if outcome.status != "created":
+        return outcome, None
+    entry = await freestyle_publication_repo.create(
+        session,
+        user_id=user_id,
+        external_id=outcome.external_id,
+        intervals_event_id=outcome.intervals_event_id,
+        session_date=session_date,
+        workout_type=workout_type,
+        content_hash=outcome.content_hash,
+    )
+    return outcome, entry.id
 
 
 async def withdraw_freestyle_publications(

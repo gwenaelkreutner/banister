@@ -1985,3 +1985,72 @@ msgid "llm.fence.close"
 msgstr "<<<FIN DONNÉES ATHLÈTE>>>"
 msgid "llm.fence.truncated"
 msgstr "\n[…tronqué]"
+
+msgid "agent.card.header"
+msgstr "Séance proposée pour le {date}"
+
+msgid "agent.card.summary"
+msgstr "{minutes} min · {zone} · environ {tss} TSS (estimation)"
+
+msgid "agent.card.published"
+msgstr "✅ Ajoutée à ton calendrier intervals.icu pour le {date}."
+
+msgid "agent.card.published_already"
+msgstr "Cette séance est déjà dans ton calendrier."
+
+msgid "agent.card.no_longer_pending"
+msgstr "Cette proposition n'est plus ouverte."
+
+msgid "agent.card.date_passed"
+msgstr "La date de cette séance est passée."
+
+msgid "agent.card.declined"
+msgstr "❌ Séance non ajoutée."
+
+msgid "agent.card.withdrawn"
+msgstr "🗑 Séance du {date} retirée de ton calendrier."
+
+msgid "agent.card.withdraw_question"
+msgstr "Retirer cette séance de ton calendrier ? {workout}, {date}"
+
+msgid "agent.warning.no_fitness_data"
+msgstr "Pas encore de données de forme : impossible de comparer cette charge à ta forme actuelle."
+
+msgid "agent.warning.fitness_not_current"
+msgstr "Tes chiffres de forme ne sont pas à jour : prends cette comparaison avec prudence."
+
+msgid "agent.warning.above_reference_load"
+msgstr "Environ {tss:.0f} TSS, au-dessus des {reference_tss:.0f} TSS que Banister recommanderait aujourd'hui."
+
+msgid "agent.warning.not_the_recommended_type"
+msgstr "Banister recommanderait plutôt : {recommended}."
+
+msgid "agent.warning.hard_effort_too_recent"
+msgstr "Seulement {days} jour(s) depuis ton dernier effort dur à cette date."
+
+msgid "agent.warning.returning_from_break"
+msgstr "Tu as repris après une coupure il y a {days} jour(s) : l'intensité est un risque."
+
+msgid "agent.warning.already_scheduled"
+msgstr "{count} séance(s) déjà prévue(s) ce jour-là."
+
+msgid "agent.warning.no_threshold_reference"
+msgstr "Pas de FTP ni de référence cardiaque : cette séance ne peut pas être publiée."
+
+msgid "agent.warning.guardrail"
+msgstr "{observed} : {action}"
+
+msgid "agent.card.approve"
+msgstr "✅ Ajouter au calendrier"
+
+msgid "agent.card.decline"
+msgstr "❌ Non merci"
+
+msgid "agent.card.withdraw"
+msgstr "🗑 La retirer"
+
+msgid "agent.card.keep"
+msgstr "La garder"
+
+msgid "agent.card.kept"
+msgstr "Séance gardée dans ton calendrier."

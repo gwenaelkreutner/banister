@@ -1984,3 +1984,72 @@ msgid "llm.fence.close"
 msgstr "<<<END ATHLETE DATA>>>"
 msgid "llm.fence.truncated"
 msgstr "\n[…truncated]"
+
+msgid "agent.card.header"
+msgstr "Proposed session for {date}"
+
+msgid "agent.card.summary"
+msgstr "{minutes} min · {zone} · about {tss} TSS (estimate)"
+
+msgid "agent.card.published"
+msgstr "✅ Added to your intervals.icu calendar for {date}."
+
+msgid "agent.card.published_already"
+msgstr "This session is already on your calendar."
+
+msgid "agent.card.no_longer_pending"
+msgstr "This proposal is no longer open."
+
+msgid "agent.card.date_passed"
+msgstr "The date of this session has passed."
+
+msgid "agent.card.declined"
+msgstr "❌ Session not added."
+
+msgid "agent.card.withdrawn"
+msgstr "🗑 Session of {date} removed from your calendar."
+
+msgid "agent.card.withdraw_question"
+msgstr "Remove this session from your calendar? {workout}, {date}"
+
+msgid "agent.warning.no_fitness_data"
+msgstr "No fitness data yet: this load cannot be compared to your current form."
+
+msgid "agent.warning.fitness_not_current"
+msgstr "Your fitness figures are not current: treat this comparison with caution."
+
+msgid "agent.warning.above_reference_load"
+msgstr "About {tss:.0f} TSS, above the {reference_tss:.0f} TSS Banister would recommend today."
+
+msgid "agent.warning.not_the_recommended_type"
+msgstr "Banister would recommend {recommended} today."
+
+msgid "agent.warning.hard_effort_too_recent"
+msgstr "Only {days} day(s) since your last hard effort at that date."
+
+msgid "agent.warning.returning_from_break"
+msgstr "You came back from a break {days} day(s) ago: intensity is a risk."
+
+msgid "agent.warning.already_scheduled"
+msgstr "{count} session(s) already scheduled that day."
+
+msgid "agent.warning.no_threshold_reference"
+msgstr "No FTP or heart rate reference: this session cannot be published."
+
+msgid "agent.warning.guardrail"
+msgstr "{observed}: {action}"
+
+msgid "agent.card.approve"
+msgstr "✅ Add to calendar"
+
+msgid "agent.card.decline"
+msgstr "❌ No thanks"
+
+msgid "agent.card.withdraw"
+msgstr "🗑 Remove it"
+
+msgid "agent.card.keep"
+msgstr "Keep it"
+
+msgid "agent.card.kept"
+msgstr "Session kept on your calendar."

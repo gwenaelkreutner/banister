@@ -4,7 +4,12 @@ from app.db.models.chat_message import ChatMessage
 from app.db.models.coach_journal import CoachJournalEntry
 from app.db.models.guardrail import GuardrailAcknowledgement, ResponseCheckFailure
 from app.db.models.profile import AthleteProfile
-from app.db.models.publication import FreestylePublishedEntry, PublicationApproval, PublishedEntry
+from app.db.models.publication import (
+    FreestylePublishedEntry,
+    PublicationApproval,
+    PublishedEntry,
+    SessionProposal,
+)
 from app.db.models.session_log import SessionLog
 from app.db.models.sync_state import ReportedActivity, SyncState
 from app.db.models.training_plan import TrainingPlan
@@ -19,6 +24,7 @@ __all__ = [
     "PublicationApproval",
     "PublishedEntry",
     "FreestylePublishedEntry",
+    "SessionProposal",
     "TrainingPlan",
     "SessionLog",
     "ChatMessage",

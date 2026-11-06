@@ -56,6 +56,19 @@ async def get_active_for_user(
     return list(result.scalars().all())
 
 
+async def get_active_by_id(
+    session: AsyncSession, user_id: uuid.UUID, entry_id: uuid.UUID
+) -> FreestylePublishedEntry | None:
+    result = await session.execute(
+        select(FreestylePublishedEntry).where(
+            FreestylePublishedEntry.id == entry_id,
+            FreestylePublishedEntry.user_id == user_id,
+            FreestylePublishedEntry.withdrawn_at.is_(None),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def mark_withdrawn(session: AsyncSession, entry_id: uuid.UUID) -> None:
     result = await session.execute(
         select(FreestylePublishedEntry).where(FreestylePublishedEntry.id == entry_id)

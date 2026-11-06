@@ -156,6 +156,10 @@ Anything else you type goes to the free-form coaching chat.
 
 ---
 
+## Using your own AI agent
+
+Banister's coach works out of the box. If you already run an agent, it can coach with Banister instead: the agent chooses or composes sessions, Banister computes and checks them, and only your tap publishes. See [docs/AGENT_INTEGRATION.md](docs/AGENT_INTEGRATION.md), with a ready-made plugin for Hermes Agent.
+
 ## Contributing without touching Python
 
 Two things are plain YAML, loaded at startup, no code change required:

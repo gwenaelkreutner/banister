@@ -8,7 +8,17 @@ restart. Re-deriving it from the calendar alone would lose the approval linkage.
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, ForeignKey, Index, SmallInteger, String, UniqueConstraint, Uuid
+from sqlalchemy import (
+    JSON,
+    Date,
+    Float,
+    ForeignKey,
+    Index,
+    SmallInteger,
+    String,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.models.base import Base
@@ -133,3 +143,31 @@ class FreestylePublishedEntry(Base):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     published_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     withdrawn_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
+class SessionProposal(Base):
+    """A session an external agent proposed and the athlete can approve (agent API).
+
+    The consent record for a calendar write: bound to one exact content (`content_hash`),
+    and only `app/services/session_design.py::approve_proposal()` turns it into a
+    publication. Kept after use so what was proposed and approved stays auditable.
+    """
+
+    __tablename__ = "session_proposals"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    workout_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    steps: Mapped[list] = mapped_column(JSON, nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    tss_estimate: Mapped[float] = mapped_column(Float, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # pending -> publishing -> published | pending (failed write, retry allowed) ; declined
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    publication_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)

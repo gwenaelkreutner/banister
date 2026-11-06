@@ -28,7 +28,6 @@ from aiogram.types import (
     Message,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.bot.states import PlanStates
@@ -294,12 +293,11 @@ async def cb_publish_freestyle(
     from pydantic import TypeAdapter
 
     from app.config import settings
-    from app.db.repositories import freestyle_publication_repo
     from app.engine.schemas import AthleteProfileSchema, RepeatGroup, Step
     from app.engine.session_render import render_description
     from app.engine.zones import compute_hr_zones, compute_power_zones
     from app.providers.intervals.client import IntervalsClient
-    from app.services.publication import publish_freestyle_session
+    from app.services.publication import publish_and_record_freestyle
 
     profile = AthleteProfileSchema.model_validate(profile_row.profile)
     if profile.coaching_mode == "power":
@@ -315,8 +313,15 @@ async def cb_publish_freestyle(
     client = IntervalsClient(
         settings.intervals_api_key.get_secret_value(), athlete_id=settings.intervals_athlete_id
     )
-    outcome = await publish_freestyle_session(
-        client, session_date, name, workout_type, steps, zones
+    outcome, _ = await publish_and_record_freestyle(
+        session,
+        client,
+        user_id=user.id,
+        session_date=session_date,
+        name=name,
+        workout_type=workout_type,
+        steps=steps,
+        zones=zones,
     )
 
     if outcome.status != "created":
@@ -328,15 +333,6 @@ async def cb_publish_freestyle(
         await callback.answer()
         return
 
-    await freestyle_publication_repo.create(
-        session,
-        user_id=user.id,
-        external_id=outcome.external_id,
-        intervals_event_id=outcome.intervals_event_id,
-        session_date=session_date,
-        workout_type=workout_type,
-        content_hash=outcome.content_hash,
-    )
     # FR-010 : effacé seulement après succès — un deuxième tap n'a plus rien à matcher.
     await state.update_data(pending_freestyle_id=None, pending_freestyle_suggestion=None)
 
