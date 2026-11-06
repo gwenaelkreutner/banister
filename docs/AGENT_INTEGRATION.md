@@ -47,6 +47,9 @@ hermes gateway restart
 
 Use a Telegram bot other than Banister's, so going back to `telegram` stays a one-line change.
 
+Send the bot a first message after installing: Hermes only lets a plugin continue a chat that a
+person has started, and until then the coach cannot follow up on its own.
+
 ## Writing your own integration
 
 Any agent works (an MCP server, for instance): it is plain HTTP. Your integration has two sides.

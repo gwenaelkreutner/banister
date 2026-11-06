@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from .client import BanisterError, call, owner_chat_id
 
@@ -69,16 +70,21 @@ def send_card(card: dict) -> bool:
         return False
 
 
+def _session_key(chat_id: str) -> str:
+    """<home>/plugins/banister/: a profile's home sits under profiles/, the default one is `main`."""
+    home = Path(__file__).resolve().parents[2]
+    namespace = home.name if home.parent.name == "profiles" else "main"
+    return f"agent:{namespace}:telegram:dm:{chat_id}"
+
+
 def _ask_agent(prompt: str | None) -> bool:
     """Start a turn of the agent in the athlete's chat, so it continues in its own words. Hermes
-    refuses while the current session has no message from the athlete: False, nothing happened."""
+    needs a session holding a message from the athlete: False when it refuses outright."""
     ctx, chat_id = _state["ctx"], owner_chat_id()
     if not (prompt and ctx and chat_id):
         return False
-    return bool(ctx.inject_message(
-        prompt,
-        origin={"platform": "telegram", "chat_id": chat_id, "chat_type": "dm", "user_id": chat_id},
-    ))
+    # Join the existing chat: Hermes does not route a turn to a hand-built `origin` here.
+    return bool(ctx.inject_message(prompt, session_key=_session_key(chat_id)))
 
 
 async def _hand_over(loop, message: dict) -> None:

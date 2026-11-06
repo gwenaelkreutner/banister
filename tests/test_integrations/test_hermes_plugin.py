@@ -159,3 +159,12 @@ async def test_a_refused_handover_is_never_silent(monkeypatch, accepted, sent):
         asyncio.get_running_loop(), {"agent_prompt": "go", "handover_hint": "HINT"}
     )
     assert out == sent
+
+
+def test_session_key_follows_the_profile(monkeypatch):
+    from banister import messaging
+
+    monkeypatch.setattr(messaging, "__file__", "/h/profiles/coach/plugins/banister/messaging.py")
+    assert messaging._session_key("1") == "agent:coach:telegram:dm:1"
+    monkeypatch.setattr(messaging, "__file__", "/h/.hermes/plugins/banister/messaging.py")
+    assert messaging._session_key("1") == "agent:main:telegram:dm:1"
