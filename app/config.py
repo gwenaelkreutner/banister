@@ -13,7 +13,8 @@ class Settings(BaseSettings):
     )
 
     # Telegram
-    telegram_bot_token: str
+    # Required unless COACH_INTERFACE=agent, where Banister has no bot of its own to run.
+    telegram_bot_token: str = ""
     telegram_owner_id: int = 0  # Telegram user ID of the bot owner (required)
     telegram_webhook_url: str = ""
     telegram_webhook_secret: str = "banister-secret"
@@ -124,7 +125,7 @@ class Settings(BaseSettings):
     agent_api_token: SecretStr = SecretStr("")
     # Who talks to the athlete. "telegram" (default): Banister's own bot and chat. "agent": an
     # external agent does, through the agent API; the bot stays silent and every message goes
-    # to the outbox. Needs agent_api_token, and an athlete already set up.
+    # to the outbox. Needs agent_api_token.
     coach_interface: Literal["telegram", "agent"] = "telegram"
 
     # Optional read-only nutrition source (docs/NUTRITION_INTEGRATION.md). Empty = intervals.icu
@@ -138,9 +139,11 @@ class Settings(BaseSettings):
     persona: str = "coach-default"
 
     @model_validator(mode="after")
-    def _agent_interface_needs_a_token(self) -> "Settings":
+    def _interface_has_what_it_needs(self) -> "Settings":
         if self.coach_interface == "agent" and not self.agent_api_token.get_secret_value():
             raise ValueError("COACH_INTERFACE=agent needs AGENT_API_TOKEN")
+        if self.coach_interface == "telegram" and not self.telegram_bot_token:
+            raise ValueError("COACH_INTERFACE=telegram needs TELEGRAM_BOT_TOKEN")
         return self
 
     @property

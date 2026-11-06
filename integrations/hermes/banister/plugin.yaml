@@ -16,6 +16,9 @@ provides_tools:
   - banister_propose_session
   - banister_publications
   - banister_request_withdrawal
+  - banister_setup_status
+  - banister_setup
+  - banister_update_profile
   - banister_week_recap
   - banister_power_profile
   - banister_report_injury

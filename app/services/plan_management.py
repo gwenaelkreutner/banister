@@ -42,6 +42,21 @@ class PlanChangeError(ValueError):
         self.status = status
 
 
+async def read_fresh_source(client) -> dict:
+    """What the source says now: a new plan is built on the current thresholds (spec 007)."""
+    from app.providers.intervals.athlete_profile import read_athlete_profile, stamp
+
+    fresh = await read_athlete_profile(client)
+    return {
+        "ftp": fresh.ftp.value,
+        "max_hr": fresh.max_hr.value,
+        "resting_hr": fresh.resting_hr.value,
+        "age": fresh.age.value,
+        "coaching_mode": fresh.coaching_mode,
+        "read_from_source_at": stamp(),
+    }
+
+
 # ── New goal ─────────────────────────────────────────────────────────────────
 
 
@@ -309,14 +324,19 @@ def _goal_label(goal: str) -> str:
 
 
 async def propose_new_plan(
-    session: AsyncSession, user: User, goal: str, target_date: date | None
+    session: AsyncSession, user: User, goal: str, target_date: date | None, client
 ) -> dict:
     today = date.today()
     if target_date is not None and target_date <= today:
         raise PlanChangeError("the target date must be in the future")
     if await repo.profile_repo.get_by_user_id(session, user.id) is None:
         raise PlanChangeError("the athlete has no profile yet", status=409)
-    new_plan, profile = await build_new_plan(session, user, goal, target_date)
+    try:
+        fresh = await read_fresh_source(client)
+    except Exception as exc:
+        logger.exception("read_athlete_profile failed while proposing a plan")
+        raise PlanChangeError(t("goal.profile_read_failed"), status=502) from exc
+    new_plan, profile = await build_new_plan(session, user, goal, target_date, fresh)
 
     old_plan = await repo.plan_repo.get_active_plan(session, user.id)
     preview = ""

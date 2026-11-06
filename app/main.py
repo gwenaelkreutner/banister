@@ -51,7 +51,7 @@ logging.config.dictConfig({
 })
 logger = logging.getLogger(__name__)
 
-bot = create_bot()
+bot = None if settings.uses_agent_interface else create_bot()
 dp = create_dispatcher()
 # Who carries Banister's messages: its own bot, or the outbox an external agent delivers from.
 messenger = OutboxMessenger() if settings.uses_agent_interface else bot
@@ -146,7 +146,8 @@ async def lifespan(app: FastAPI):
             await polling_task
         except asyncio.CancelledError:
             pass
-    await bot.session.close()
+    if bot is not None:
+        await bot.session.close()
     instance_lock.release()
     logger.info("Bot arrêté")
 

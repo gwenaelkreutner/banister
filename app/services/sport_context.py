@@ -116,6 +116,7 @@ def _profile(profile_row) -> dict:
         "level": p.get("level"),
         "objective": (p.get("objective") or {}).get("type"),
         "hours_per_week": (p.get("availability") or {}).get("hours_per_week"),
+        "available_days": (p.get("availability") or {}).get("preferred_days"),
         "health_constraints": p.get("health_constraints"),
         "injury_status": p.get("injury_status"),
     }

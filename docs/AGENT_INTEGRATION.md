@@ -17,8 +17,8 @@ gesture changes their calendar or their plan.
 | Coaching text | Banister's LLM settings | Your agent. Banister makes no LLM call for it |
 | Banister's bot | Polling | Silent |
 
-The agent API works in both modes, for an agent that only reads or proposes next to the bot. Set the
-athlete up first with `/setup` on the bot, then switch: `/setup` has no agent equivalent yet.
+The agent API works in both modes, for an agent that only reads or proposes next to the bot. With
+`COACH_INTERFACE=agent`, Banister needs no Telegram bot of its own: `TELEGRAM_BOT_TOKEN` is optional.
 
 ## Enabling it
 
@@ -78,6 +78,9 @@ All under `/agent/v1`.
 
 | Method and path | Purpose |
 |---|---|
+| `GET /setup` | Whether the athlete is set up, what the source knows, what it lacks |
+| `POST /setup` | First-time setup: `{"hours_per_week", "available_days", "health_constraints"}`, plus what the source lacks |
+| `PATCH /profile` | `{"hours_per_week", "available_days", "health_constraints"}`, applied at once |
 | `GET /context?days=&ahead=` | Dated form, recovery, guardrail findings, recent rides, planned sessions, profile |
 | `GET /fitness?days=&granularity=` | CTL/ATL/TSB history |
 | `GET /trend?days=` | Weekly totals |
@@ -159,6 +162,6 @@ guardrail metrics are read by Banister. Pass what else your agent received:
 `session` (evaluate or proposal answers) or `recommendation`, and `result` is the answer as received. Check before anything reaches
 the athlete: with a streaming display, the text would already be out.
 
-## Not available through this API yet
+## Not available through this API
 
-First-time `/setup`, and `/reset`: use the bot for those, with `COACH_INTERFACE=telegram`.
+`/reset`, which erases the athlete's data: it stays a deliberate gesture on the bot.

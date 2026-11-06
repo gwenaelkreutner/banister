@@ -1401,8 +1401,11 @@ poller, rappels, récap ─ messenger ─ Bot aiogram | OutboxMessenger (app/mai
   `integrations/hermes/skills/banister-coach/`, hors du plugin, pour que l'agent le corrige lui-même (`skill_manage`) :
   ses corrections apparaissent en `git diff` dans ce dépôt public, à relire avant tout commit (rien de personnel).
   Les règles de sécurité restent dans le code, jamais dans le skill.
-- **Pas d'équivalent agent** : premier `/setup` et `/reset` (repasser en `telegram`). Le bouton du chat intégré
-  publie toujours à la date du jour.
+- **Setup et profil** (`services/athlete_setup.py`, partagé avec `/setup`) : `POST /setup` crée l'athlète en mode
+  libre et refuse si déjà configuré ; `PATCH /profile` change heures, jours et contraintes. Ni l'un ni l'autre n'a de
+  carte : ils se font en conversation et n'écrivent que dans Banister, sans toucher au calendrier ni au plan actif.
+  Seul ce qui touche au calendrier ou au plan passe par un bouton. `TELEGRAM_BOT_TOKEN` est facultatif en mode agent.
+- **Pas d'équivalent agent** : `/reset`, volontairement. Le bouton du chat intégré publie toujours à la date du jour.
 - Tests : `tests/test_api/test_agent_api.py`, `tests/test_integrations/test_hermes_plugin.py`.
 
 ## Variables d'environnement

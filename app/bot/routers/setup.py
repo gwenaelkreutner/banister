@@ -20,7 +20,7 @@ valider. Minimum 2 jours — c'est le plancher réel du moteur (`_build_sessions
 """
 
 import logging
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -33,33 +33,28 @@ from app.bot.text_format import to_telegram_html
 from app.config import settings
 from app.core.localization import t, tp
 from app.db import repositories as repo
-from app.db.repositories import activity_repo
-from app.engine.atl_ctl import compute_fitness_from_any, estimate_initial_ctl
 from app.engine.plan_builder import DAY_NAMES, generate_plan
 from app.engine.schemas import (
     AthleteProfileSchema,
-    AvailabilityProfile,
-    EquipmentProfile,
-    ObjectiveProfile,
-    PhysioProfile,
 )
-from app.engine.tss import tss_from_weekly_hours
-from app.providers.intervals.athlete_profile import ReadProfile, read_athlete_profile, stamp
+from app.providers.intervals.athlete_profile import ReadProfile, read_athlete_profile
 from app.providers.intervals.client import IntervalsClient
-from app.services.fitness import get_current_fitness
+from app.services.athlete_setup import (
+    _DEFAULT_AVAILABLE_DAYS,
+    _MIN_AVAILABLE_DAYS,
+    _MISSING_PROFILE_FIELDS,
+    starting_fitness,
+)
+from app.services.athlete_setup import (
+    build_profile as _build_profile,
+)
+from app.services.athlete_setup import (
+    read_profile_to_fsm as _read_profile_to_fsm,
+)
 
 # Point de départ pré-sélectionné pour AVAILABLE_DAYS — même 4 jours que l'ancien défaut
 # hardcodé, mais maintenant modifiable par l'athlète avant validation, jamais silencieux.
-_DEFAULT_AVAILABLE_DAYS = ["tuesday", "thursday", "saturday", "sunday"]
-# Plancher réel du moteur (app/engine/plan_builder.py::_build_sessions) — en dessous,
-# aucun effet observable sur le plan généré.
-_MIN_AVAILABLE_DAYS = 2
 
-_MISSING_PROFILE_FIELDS = {
-    "age": ("read_age", "setup.field.age", "setup.unit.years", 35.0, 12.0, 100.0),
-    "max_hr": ("read_max_hr", "setup.field.max_hr", "bpm", 185.0, 100.0, 240.0),
-    "resting_hr": ("read_resting_hr", "setup.field.resting_hr", "bpm", 60.0, 30.0, 120.0),
-}
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -180,25 +175,6 @@ def parse_goal_date(text: str) -> tuple[date | None, str | None]:
     if days > 365:
         return d, "too_far"
     return d, None
-
-
-def _read_profile_to_fsm(rp: ReadProfile) -> dict:
-    """Flatten a ReadProfile into JSON-safe FSM data. `_build_profile` reads this back."""
-    return {
-        "read_ftp": rp.ftp.value,
-        "read_ftp_present": rp.ftp.present,
-        "read_lthr": rp.lthr.value,
-        "read_max_hr": rp.max_hr.value,
-        "read_resting_hr": rp.resting_hr.value,
-        "read_weight": rp.weight_kg.value,
-        "read_sex": rp.sex.value,
-        "read_height_cm": rp.height_cm.value,
-        "read_age": rp.age.value,
-        "read_has_power_meter": rp.has_power_meter,
-        "read_coaching_mode": rp.coaching_mode,
-        "read_from_source_at": stamp(),
-        "corrections_deferred": {},
-    }
 
 
 def _render_confirm_screen(rp: ReadProfile) -> str:
@@ -602,34 +578,9 @@ async def _finalize_setup(
             first_name=tg.first_name,
         )
 
-    # Forme de départ : consommée depuis la source si déjà disponible (spec 002 FR-016),
-    # sinon repli sur l'historique local importé — les deux peuvent être vides si
-    # l'athlète vient tout juste de se connecter et que le poller n'a pas encore eu son
-    # premier tick (import_history/ingest_wellness sont idempotents, voir poller.py)
-    fitness = None
-    fitness_is_seeded = False
-    try:
-        current = await get_current_fitness(session, user.id)
-        if current is not None:
-            fitness = current.metrics
-        else:
-            activities = await activity_repo.get_for_user(session, user.id, days=120)
-            weekly_tss_seed = tss_from_weekly_hours(float(data.get("hours_per_week", 5)))
-            initial_ctl_seed = estimate_initial_ctl(weekly_tss_seed)
-            seed_date = date.today() - timedelta(days=120)
-            if activities and len(activities) >= 4:
-                fitness = compute_fitness_from_any(
-                    activities, initial_ctl=initial_ctl_seed, seed_date=seed_date
-                )
-            else:
-                # FR-010 — too little history to measure current fitness: use a
-                # documented conservative seed and disclose it.
-                fitness = compute_fitness_from_any(
-                    activities or [], initial_ctl=initial_ctl_seed, seed_date=seed_date
-                )
-                fitness_is_seeded = True
-    except Exception:
-        pass
+    fitness, fitness_is_seeded = await starting_fitness(
+        session, user, float(data.get("hours_per_week", 5))
+    )
 
     profile = _build_profile(data, fitness)
 
@@ -702,88 +653,6 @@ async def _finalize_setup(
         bot=message.bot,
         chat_id=message.chat.id,
     ))
-
-
-def _build_profile(data: dict, fitness=None) -> AthleteProfileSchema:
-    """Build the profile from the CONFIRMED read values (spec 007 US1) + the five
-    answers (goal, date, volume, available days, health constraints). Everything read
-    from intervals.icu carries `*_source == "source"` (Constitution IV); nothing is
-    silently defaulted.
-
-    FR-007: a value the athlete asked to correct is kept at the source's *current*
-    number (the correction must be applied at intervals.icu) — the wanted value lives
-    only in `corrections_deferred`, for the recap caveat.
-    """
-    has_pm = bool(data.get("read_has_power_meter"))
-    ftp = data.get("read_ftp")
-    supplied = dict(data.get("supplied_profile_values") or {})
-
-    def resolved(field: str, source_key: str, fallback: float) -> tuple[float, str]:
-        source_value = data.get(source_key)
-        if source_value is not None:
-            return float(source_value), "source"
-        supplied_value = supplied.get(field)
-        if supplied_value is not None:
-            return float(supplied_value["value"]), supplied_value["source"]
-        # Compatibility only for partial FSM data created before missing-value prompts.
-        return fallback, "estimated"
-
-    age, _age_source = resolved("age", "read_age", 35.0)
-    max_hr, hr_max_source = resolved("max_hr", "read_max_hr", 220 - age)
-    resting_hr, hr_rest_source = resolved("resting_hr", "read_resting_hr", 60.0)
-    ftp_source = "source" if ftp is not None else "estimated"
-    if has_pm and ftp is None:
-        # FR-008-adjacent: only reached if the athlete confirmed a power-meter setup
-        # with no FTP anywhere — a coarse level default, flagged estimated.
-        ftp = {"beginner": 150, "intermediate": 220, "advanced": 280, "expert": 340}["intermediate"]
-
-    target_date = date.fromisoformat(data["target_date"]) if data.get("target_date") else None
-
-    hours = float(data.get("hours_per_week", 7))
-    if hours <= 5:
-        level = "beginner"
-    elif hours <= 8:
-        level = "intermediate"
-    elif hours <= 12:
-        level = "advanced"
-    else:
-        level = "expert"
-
-    return AthleteProfileSchema(
-        objective=ObjectiveProfile(
-            type=data.get("goal", "fitness"),
-            target_date=target_date,
-        ),
-        availability=AvailabilityProfile(
-            hours_per_week=hours,
-            # AVAILABLE_DAYS always sets this in the live flow; the default here is
-            # only a safety net for state data missing the key (e.g. an old/partial
-            # FSM state from before this question existed), not the normal path.
-            preferred_days=list(data.get("available_days") or _DEFAULT_AVAILABLE_DAYS),
-        ),
-        level=level,
-        structured_plan_history=False,
-        equipment=EquipmentProfile(
-            power_meter=has_pm,
-            ftp=int(ftp) if ftp is not None else None,
-            ftp_source=ftp_source,
-        ),
-        physio=PhysioProfile(
-            age=int(age),
-            hr_max=int(max_hr),
-            hr_max_source=hr_max_source,
-            hr_rest=int(resting_hr),
-            hr_rest_source=hr_rest_source,
-        ),
-        coaching_mode=data.get("read_coaching_mode") or ("power" if has_pm else "hr"),
-        health_constraints=bool(data.get("health_constraints")),
-        current_ctl=fitness.ctl if fitness else None,
-        current_atl=fitness.atl if fitness else None,
-        current_tsb=fitness.tsb if fitness else None,
-        weight_kg=data.get("read_weight"),
-        sex=data.get("read_sex"),
-        height_cm=data.get("read_height_cm"),
-    )
 
 
 def _built_from_recap(profile: AthleteProfileSchema, data: dict, seeded: bool) -> str:

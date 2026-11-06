@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +17,7 @@ from app.db.client import get_session
 from app.db.models.user import User
 from app.engine.schemas import AthleteProfileSchema
 from app.providers.intervals.client import IntervalsClient
-from app.services import athlete_status, coach_memory, coach_queries
+from app.services import athlete_setup, athlete_status, coach_memory, coach_queries
 from app.services.power_profile import fetch_power_profile
 from app.services.session_review import (
     assemble_review_context,
@@ -30,6 +31,79 @@ from app.services.weekly_recap import compute_weekly_recap
 router = APIRouter()
 
 Granularity = Literal["daily", "weekly"]
+
+
+class Setup(BaseModel):
+    hours_per_week: float = Field(gt=0, le=40)
+    available_days: list[str]
+    health_constraints: bool = False
+    # Only what the source lacks, as `GET /setup` reports it.
+    age: float | None = None
+    max_hr: float | None = None
+    resting_hr: float | None = None
+    use_estimate: list[str] = Field(default_factory=list)
+    owner_id: int | None = None
+
+
+@router.get("/setup")
+async def setup_status(
+    session: AsyncSession = Depends(get_session),
+    client: IntervalsClient = Depends(intervals_client),
+):
+    try:
+        return await athlete_setup.setup_status(session, client)
+    except athlete_setup.SetupError as exc:
+        return JSONResponse(status_code=exc.status, content={"detail": str(exc)})
+
+
+@router.post("/setup", status_code=201)
+async def setup(
+    body: Setup,
+    session: AsyncSession = Depends(get_session),
+    client: IntervalsClient = Depends(intervals_client),
+):
+    values = {
+        name: value
+        for name, value in (
+            ("age", body.age), ("max_hr", body.max_hr), ("resting_hr", body.resting_hr),
+        )
+        if value is not None
+    }
+    try:
+        result = await athlete_setup.complete_setup(
+            session,
+            client,
+            hours_per_week=body.hours_per_week,
+            available_days=body.available_days,
+            health_constraints=body.health_constraints,
+            values=values,
+            use_estimate=body.use_estimate,
+            owner_id=body.owner_id,
+        )
+    except athlete_setup.SetupError as exc:
+        return JSONResponse(status_code=exc.status, content={"detail": str(exc)})
+    await session.commit()
+    return result
+
+
+class ProfileUpdate(BaseModel):
+    hours_per_week: float | None = Field(default=None, gt=0, le=40)
+    available_days: list[str] | None = None
+    health_constraints: bool | None = None
+
+
+@router.patch("/profile")
+async def update_profile(
+    body: ProfileUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    try:
+        result = await athlete_setup.update_profile(session, user, **body.model_dump())
+    except athlete_setup.SetupError as exc:
+        return JSONResponse(status_code=exc.status, content={"detail": str(exc)})
+    await session.commit()
+    return result
 
 
 @router.get("/context")

@@ -44,9 +44,23 @@ async def db_session():
     await engine.dispose()
 
 
+ATHLETE_FROM_SOURCE = {
+    "sportSettings": [{"types": ["Ride"], "ftp": 260, "lthr": 170, "max_hr": 190}],
+    "icu_resting_hr": 50,
+    "icu_date_of_birth": "1990-01-01",
+}
+
+
 @pytest.fixture
 def calendar():
-    return FakeCalendarClient()
+    client = FakeCalendarClient()
+
+    async def get_athlete():
+        return dict(client.athlete)
+
+    client.athlete = ATHLETE_FROM_SOURCE
+    client.get_athlete = get_athlete
+    return client
 
 
 @pytest_asyncio.fixture
@@ -668,3 +682,122 @@ def test_agent_interface_refuses_to_start_without_a_token():
             telegram_bot_token="x",
             intervals_api_key="x",
         )
+
+
+# ── Setup et profil ──────────────────────────────────────────────────────────
+
+DAYS = ["tuesday", "saturday", "sunday"]
+
+
+async def test_first_setup_from_nothing(client, db_session, calendar):
+    from app.db.repositories import user_repo
+
+    status = (await client.get("/agent/v1/setup")).json()
+    assert status["configured"] is False
+    assert status["from_source"]["ftp"] == 260 and status["missing"] == []
+
+    r = await client.post("/agent/v1/setup", json={
+        "hours_per_week": 6, "available_days": DAYS, "owner_id": 42,
+    })
+    assert r.status_code == 201, r.text
+    assert r.json()["card"]["text"]  # the disclaimer, once
+    user = await user_repo.get_single_user(db_session)
+    assert user.onboarding_completed and user.telegram_id in (42, settings.telegram_owner_id)
+    assert (await client.get("/agent/v1/plan")).json()["mode"] == "freestyle"
+    assert (await client.get("/agent/v1/setup")).json()["configured"] is True
+
+    r = await client.post("/agent/v1/setup", json={"hours_per_week": 9, "available_days": DAYS})
+    assert r.status_code == 409  # never overwrites an athlete already set up
+
+
+async def test_setup_asks_for_what_the_source_lacks(client, calendar):
+    calendar.athlete = {"sportSettings": [{"types": ["Ride"], "ftp": 260, "max_hr": 190}]}
+    missing = (await client.get("/agent/v1/setup")).json()["missing"]
+    assert {m["field"] for m in missing} == {"age", "resting_hr"}
+
+    base = {"hours_per_week": 6, "available_days": DAYS}
+    r = await client.post("/agent/v1/setup", json=base)
+    assert r.status_code == 422 and "age" in r.json()["detail"]  # never silently defaulted
+    r = await client.post("/agent/v1/setup", json={**base, "age": 5, "resting_hr": 50})
+    assert r.status_code == 422
+    r = await client.post("/agent/v1/setup", json={**base, "age": 36, "use_estimate": ["resting_hr"]})
+    assert r.status_code == 201, r.text
+
+
+@pytest.mark.parametrize("days", [["monday"], ["funday", "monday"]])
+async def test_setup_refuses_impossible_days(client, days):
+    r = await client.post("/agent/v1/setup", json={"hours_per_week": 6, "available_days": days})
+    assert r.status_code == 422
+
+
+async def _profile(db_session, athlete) -> dict:
+    await db_session.commit()
+    row = await profile_repo.get_by_user_id(db_session, athlete.id)
+    await db_session.refresh(row)
+    return row.profile
+
+
+async def test_profile_changes_directly_and_says_what_changed(client, athlete, db_session):
+    before = await _profile(db_session, athlete)
+    r = await client.patch("/agent/v1/profile", json={"hours_per_week": 11, "available_days": DAYS})
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "changed": {"hours_per_week": 11, "available_days": DAYS},
+        "active_plan_unchanged": False,
+    }
+    after = await _profile(db_session, athlete)
+    assert after["availability"] == {"hours_per_week": 11, "preferred_days": DAYS}
+    assert after["level"] == "advanced"
+    assert after["equipment"] == before["equipment"]  # thresholds stay at the source
+
+
+async def test_a_profile_change_leaves_the_plan_and_calendar_alone(client, athlete, calendar):
+    plan = await _start_plan(client)
+    await _tap(client, f"change:apply:{plan['proposal_id']}")
+    before = (await client.get("/agent/v1/plan")).json()
+    r = await client.patch("/agent/v1/profile", json={"hours_per_week": 11})
+    assert r.json()["active_plan_unchanged"] is True
+    assert (await client.get("/agent/v1/plan")).json() == before
+    assert calendar.create_calls == 0 and calendar.delete_calls == 0
+
+
+async def test_saying_the_same_thing_changes_nothing(client, athlete, db_session):
+    current = (await _profile(db_session, athlete))["availability"]["hours_per_week"]
+    r = await client.patch("/agent/v1/profile", json={"hours_per_week": current})
+    assert r.json()["changed"] == {}
+    assert (await client.patch("/agent/v1/profile", json={})).json()["changed"] == {}
+
+
+@pytest.mark.parametrize("body", [
+    {"available_days": ["monday"]}, {"available_days": ["funday", "monday"]}, {"hours_per_week": 0},
+])
+async def test_an_impossible_profile_is_refused(client, athlete, body):
+    assert (await client.patch("/agent/v1/profile", json=body)).status_code == 422
+
+
+async def test_a_new_plan_uses_the_thresholds_the_source_has_now(client, athlete, db_session, calendar):
+    plan = await _start_plan(client)
+    await _tap(client, f"change:apply:{plan['proposal_id']}")
+    assert (await _profile(db_session, athlete))["equipment"]["ftp"] == 260
+
+
+async def test_a_plan_is_not_built_on_old_thresholds_if_the_source_is_down(client, athlete, calendar):
+    async def down():
+        raise RuntimeError("down")
+
+    calendar.get_athlete = down
+    r = await client.post("/agent/v1/plan/proposals/new", json={"goal": "fitness"})
+    assert r.status_code == 502
+
+
+def test_agent_interface_runs_without_a_bot_token():
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    agent = Settings(coach_interface="agent", agent_api_token="t", telegram_bot_token="",
+                     _env_file=None, intervals_api_key="x")
+    assert agent.uses_agent_interface
+    with pytest.raises(ValidationError):
+        Settings(coach_interface="telegram", telegram_bot_token="", _env_file=None,
+                 intervals_api_key="x")

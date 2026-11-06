@@ -10,7 +10,7 @@ import time
 import urllib.parse
 from collections import deque
 
-from .client import BanisterError, call
+from .client import BanisterError, call, owner_chat_id
 
 send_card = None  # set by register(): sends a card from Banister, buttons included
 
@@ -148,6 +148,25 @@ def _request_plan_withdrawal(_a):
     return _with_card(call("POST", "/plan/calendar/withdraw-request"))
 
 
+def _setup_status(_a):
+    return call("GET", "/setup")
+
+
+def _setup(a):
+    keys = ("hours_per_week", "available_days", "health_constraints", "age", "max_hr",
+            "resting_hr", "use_estimate")
+    body = {k: a[k] for k in keys if a.get(k) is not None}
+    owner = owner_chat_id()
+    if owner.isdigit():
+        body["owner_id"] = int(owner)
+    return _with_card(call("POST", "/setup", body))
+
+
+def _update_profile(a):
+    keys = ("hours_per_week", "available_days", "health_constraints")
+    return call("PATCH", "/profile", {k: a.get(k) for k in keys})
+
+
 def _recap(_a):
     return _remember("recap", call("GET", "/recap"))
 
@@ -204,6 +223,11 @@ _DRAFT = {
     "required": ["date"],
 }
 _DAYS = {"type": "integer", "minimum": 7, "maximum": 90}
+_DAYS_LIST = {
+    "type": "array",
+    "minItems": 2,
+    "items": {"type": "string", "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]},
+}
 _GRANULARITY = {"type": "string", "enum": ["daily", "weekly"]}
 
 
@@ -271,6 +295,27 @@ TOOLS = [
         "banister_propose_session", "Show the athlete an approval card for a session. Only the athlete's tap on the card adds it to the calendar: you cannot publish, and must not say it is published. card_sent=false means no card could be shown here.",
         _DRAFT["properties"], ["date"],
     ), _tool(_propose)),
+    (_schema(
+        "banister_setup_status", "Whether the athlete is set up, what the data source already knows about them, and what it lacks.",
+    ), _tool(_setup_status)),
+    (_schema(
+        "banister_setup", "First-time setup, once the athlete told you their availability. Refused if already set up. It starts in freestyle: a plan is a separate choice.",
+        {"hours_per_week": {"type": "number"},
+         "available_days": _DAYS_LIST,
+         "health_constraints": {"type": "boolean"},
+         "age": {"type": "number", "description": "Only if the source lacks it."},
+         "max_hr": {"type": "number", "description": "Only if the source lacks it."},
+         "resting_hr": {"type": "number", "description": "Only if the source lacks it."},
+         "use_estimate": {"type": "array", "items": {"type": "string", "enum": ["age", "max_hr", "resting_hr"]},
+                          "description": "Fields the athlete does not know: a flagged estimate is used."}},
+        ["hours_per_week", "available_days"],
+    ), _tool(_setup)),
+    (_schema(
+        "banister_update_profile", "Change weekly hours, available days or health constraints, once the athlete said so. Give only what changes. Takes effect at once. FTP and heart rate are changed on the data source, not here.",
+        {"hours_per_week": {"type": "number"},
+         "available_days": _DAYS_LIST,
+         "health_constraints": {"type": "boolean"}},
+    ), _tool(_update_profile)),
     (_schema(
         "banister_week_recap", "This week's figures: load, sessions, trend, intensity distribution.",
     ), _tool(_recap)),

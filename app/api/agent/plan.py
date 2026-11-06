@@ -10,9 +10,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.agent.deps import current_user
+from app.api.agent.deps import current_user, intervals_client
 from app.db.client import get_session
 from app.db.models.user import User
+from app.providers.intervals.client import IntervalsClient
 from app.services import agent_actions, plan_management
 from app.services.plan_management import PlanChangeError
 
@@ -68,9 +69,10 @@ async def propose_new_plan(
     body: NewPlan,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_user),
+    client: IntervalsClient = Depends(intervals_client),
 ):
     return await _propose(
-        session, plan_management.propose_new_plan(session, user, body.goal, body.target_date)
+        session, plan_management.propose_new_plan(session, user, body.goal, body.target_date, client)
     )
 
 
