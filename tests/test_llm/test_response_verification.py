@@ -205,3 +205,33 @@ def test_a_time_window_is_not_a_metric_value():
     assert verify_response("148 TSS sur les 7 derniers jours, charge légère.", registry).ok
     assert verify_response("148 TSS over the last 7 days and the past 6 weeks.", registry).ok
     assert not verify_response("Tu as fait 200 TSS sur les 7 derniers jours.", registry).ok
+
+
+def test_only_the_value_next_to_the_term_is_a_claim():
+    """Found live: the 1 of "la 1ère semaine". A clause holds other numbers than the metric's."""
+    r = MetricRegistry()
+    r.register("tss", 217.0)
+    r.register("tsb", 5.0)
+    for text in (
+        "Charge de départ : ~217 TSS la 1ère semaine.",
+        "217 TSS sur 3 sorties, c'est solide.",
+        "217 TSS en 2 jours et demi.",
+        "With a TSB of 5 you can handle 8 more efforts today, easily.",
+    ):
+        assert verify_response(text, r).ok, text
+
+
+def test_a_wrong_value_next_to_its_term_is_still_caught():
+    r = MetricRegistry()
+    r.register("tss", 217.0)
+    r.register("tsb", 5.0)
+    r.register("ctl", 40.0)
+    for text in (
+        "Tu as fait 300 TSS la 1ère semaine.",
+        "TSS de la semaine prochaine : 300.",
+        "Ton TSB est maintenant à environ -11.",
+        "Ton TSB est passé de 5 à -20.",  # every number of a run counts
+        "CTL 40 TSS 300.",  # a number belongs to one term only
+    ):
+        assert not verify_response(text, r).ok, text
+    assert verify_response("CTL 40 TSS 217.", r).ok

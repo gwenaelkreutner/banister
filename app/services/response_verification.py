@@ -137,6 +137,11 @@ _RELATIVE_LOAD_MULTIPLE = re.compile(
     re.IGNORECASE,
 )
 
+_ORDINAL_AFTER = re.compile(r"(?:[eè]re|[eè]me|er|e|nde?|st|rd|th)\b", re.IGNORECASE)
+_VALUE_BEFORE_TERM = re.compile(r"\s*(?:de\s+|d['’]\s*|of\s+)?")
+_VALUE_RUN = re.compile(r"\s*(?:à|a|to|puis|then|et|and|→|->)\s*", re.IGNORECASE)
+_MAX_VALUE_GAP = 30
+
 # Clause boundaries — a claim is a term and a number in the *same* clause. A period or
 # comma *between digits* is a decimal separator, not a boundary.
 _CLAUSE_SPLIT = re.compile(r"(?<!\d)\.(?!\d)|[\n;()—]|(?<!\d),(?!\d)| - ")
@@ -172,6 +177,68 @@ def _to_float(token: str) -> float:
     return float(token.replace(",", ".").replace("+", ""))
 
 
+def _anchors_in(low: str) -> list[tuple[str, int, int]]:
+    """Metric terms in the clause, left to right, without the overlaps of longer and shorter
+    patterns for the same words ("fc de repos" / "fc")."""
+    found = sorted(
+        ((canon, m.start(), m.end()) for pat, canon in _ANCHORS for m in re.finditer(pat, low)),
+        key=lambda a: (a[1], -a[2]),
+    )
+    anchors: list[tuple[str, int, int]] = []
+    for anchor in found:
+        if not anchors or anchor[1] >= anchors[-1][2]:
+            anchors.append(anchor)
+    return anchors
+
+
+def _value_numbers(clause: str) -> list[re.Match]:
+    """Numbers that could state a value: not a date, range, ordinal, duration, percentage or
+    zone."""
+    excluded = [m.span() for m in _DATE_TOKEN.finditer(clause)]
+    excluded += [m.span() for m in _NUMBER_RANGE.finditer(clause)]
+    numbers = []
+    for number in re.finditer(_NUMBER, clause):
+        start, end = number.span()
+        if any(start >= low and end <= high for low, high in excluded):
+            continue
+        rest = clause[start:]
+        if (
+            _NON_CLAIM_AFTER.match(rest)
+            or _RELATIVE_LOAD_MULTIPLE.match(rest)
+            or _ORDINAL_AFTER.match(clause[end:])
+            or _ZONE.search(clause[max(0, start - 2):end + 2])
+        ):
+            continue
+        numbers.append(number)
+    return numbers
+
+
+def _numbers_bound_to(
+    clause: str, start: int, end: int, numbers: list[re.Match], used: set[int]
+) -> list[re.Match]:
+    """Which numbers state this metric's value. Being in the same clause is not enough: "217 TSS
+    la 1ère semaine", "148 TSS sur 3 sorties" and "TSB à +5, assez pour 6 relances" state one value
+    each. A value sits right before the term ("148 TSS"), or is the next number after it within
+    `_MAX_VALUE_GAP` ("TSB à +5"), and a run ("de 5 à -20") states all its numbers."""
+    available = [n for n in numbers if n.start() not in used]
+    before = next(
+        (n for n in reversed(available)
+         if n.end() <= start and _VALUE_BEFORE_TERM.fullmatch(clause[n.end():start])),
+        None,
+    )
+    if before is not None:
+        return [before]
+    after = [n for n in available if n.start() >= end]
+    if not after or after[0].start() - end > _MAX_VALUE_GAP:
+        return []
+    bound = [after[0]]
+    for number in after[1:]:
+        if not _VALUE_RUN.fullmatch(clause[bound[-1].end():number.start()]):
+            break
+        bound.append(number)
+    return bound
+
+
 def _extract_claims(text: str) -> list[Claim]:
     claims: list[Claim] = []
     for sentence in _SENTENCE_SPLIT.split(text):
@@ -179,46 +246,23 @@ def _extract_claims(text: str) -> list[Claim]:
         if not sentence:
             continue
         for clause in _CLAUSE_SPLIT.split(sentence):
-            low = clause.lower()
-            anchors_here = [
-                (canon, m.end())
-                for pat, canon in _ANCHORS
-                for m in re.finditer(pat, low)
-            ]
-            if not anchors_here:
+            anchors = _anchors_in(clause.lower())
+            if not anchors:
                 continue
-            date_spans = [match.span() for match in _DATE_TOKEN.finditer(clause)]
-            date_spans += [match.span() for match in _NUMBER_RANGE.finditer(clause)]
-            seen: set[str] = set()
-            for num_m in re.finditer(_NUMBER, clause):
-                start, end = num_m.span()
-                if any(start >= d_start and end <= d_end for d_start, d_end in date_spans):
-                    continue
-                # Skip durations / zones / percentages / cadence.
-                if (
-                    _NON_CLAIM_AFTER.match(clause[start:])
-                    or _RELATIVE_LOAD_MULTIPLE.match(clause[start:])
-                ):
-                    continue
-                if _ZONE.search(clause[max(0, start - 2):end + 2]):
-                    continue
-                token = num_m.group()
-                if token in seen:
-                    continue
-                seen.add(token)
-                # Anchor to the nearest preceding term, else the nearest term.
-                canon = min(
-                    anchors_here,
-                    key=lambda a: (abs(a[1] - start), 0 if a[1] <= start else 1),
-                )[0]
-                claims.append(
-                    Claim(
-                        metric=canon,
-                        stated_text=token,
-                        stated_value=_to_float(token),
-                        sentence=sentence,
+            numbers = _value_numbers(clause)
+            used: set[int] = set()
+            for canon, start, end in anchors:
+                for number in _numbers_bound_to(clause, start, end, numbers, used):
+                    used.add(number.start())
+                    token = number.group()
+                    claims.append(
+                        Claim(
+                            metric=canon,
+                            stated_text=token,
+                            stated_value=_to_float(token),
+                            sentence=sentence,
+                        )
                     )
-                )
     return claims
 
 
