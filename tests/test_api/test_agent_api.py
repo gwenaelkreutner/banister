@@ -801,3 +801,12 @@ def test_agent_interface_runs_without_a_bot_token():
     with pytest.raises(ValidationError):
         Settings(coach_interface="telegram", telegram_bot_token="", _env_file=None,
                  intervals_api_key="x")
+
+
+async def test_verify_reply_accepts_the_recent_peak_it_was_given(client, athlete):
+    text = "Ton plus gros jour des 6 dernières semaines : 148 TSS."
+    retrieved = [{"kind": "session", "result": {"engine_reference": {
+        "target_tss": 35.0, "recent_peak_day": {"date": "2026-10-18", "tss": 148.0},
+    }}}]
+    r = await client.post("/agent/v1/verify-reply", json={"text": text, "retrieved": retrieved})
+    assert r.json() == {"ok": True, "text": text}

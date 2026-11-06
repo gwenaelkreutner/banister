@@ -61,7 +61,9 @@ def register_retrieved(registry: MetricRegistry, kind: str, result: dict) -> Non
         registry.register_also("rhr", recovery.get("resting_hr_avg_7d"))
     elif kind == "session":
         registry.register_also("tss", result.get("tss_estimate"))
-        registry.register_also("tss", (result.get("engine_reference") or {}).get("target_tss"))
+        reference = result.get("engine_reference") or {}
+        registry.register_also("tss", reference.get("target_tss"))
+        registry.register_also("tss", (reference.get("recent_peak_day") or {}).get("tss"))
     elif kind == "recommendation":
         registry.register_also("tss", result.get("target_tss"))
     elif kind == "recap":

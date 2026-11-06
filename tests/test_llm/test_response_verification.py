@@ -195,3 +195,13 @@ def test_a_number_range_is_not_a_negative_metric_value():
     text = "Avec un TSB à +5 tu as la caisse pour avaler les ~5-6 relances à seuil."
     assert verify_response(text, registry).ok
     assert not verify_response("Ton TSB est à -6 et tu peux y aller.", registry).ok
+
+
+def test_a_time_window_is_not_a_metric_value():
+    """Found live: the 6 of "6 dernières semaines" was read as a TSS of 6."""
+    registry = MetricRegistry()
+    registry.register("tss", 148.0)
+    assert verify_response("Ton plus gros jour des 6 dernières semaines : 148 TSS.", registry).ok
+    assert verify_response("148 TSS sur les 7 derniers jours, charge légère.", registry).ok
+    assert verify_response("148 TSS over the last 7 days and the past 6 weeks.", registry).ok
+    assert not verify_response("Tu as fait 200 TSS sur les 7 derniers jours.", registry).ok

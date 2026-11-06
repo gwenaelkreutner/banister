@@ -124,7 +124,7 @@ _DATE_TOKEN = re.compile(r"\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?)\
 # zones, cadence, percentages (a "-20%" is a relative statement, not an absolute value
 # the registry could hold).
 _NON_CLAIM_AFTER = re.compile(
-    rf"(?:{_NUMBER})\s*(?:%|h\d*|h\b|mins?\b|minutes?\b|hours?\b|rpm\b|s\b|sec\b|seconds?\b|semaines?\b|weeks?\b|jours?\b|days?\b)",
+    rf"(?:{_NUMBER})\s*(?:(?:derni[eè]re?s?|prochaine?s?|last|past|next)\s+)?(?:%|h\d*|h\b|mins?\b|minutes?\b|hours?\b|rpm\b|s\b|sec\b|seconds?\b|semaines?\b|weeks?\b|jours?\b|days?\b)",
     re.IGNORECASE,
 )
 _ZONE = re.compile(r"\bZ[1-7]\b", re.IGNORECASE)
