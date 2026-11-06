@@ -168,3 +168,33 @@ def test_session_key_follows_the_profile(monkeypatch):
     assert messaging._session_key("1") == "agent:coach:telegram:dm:1"
     monkeypatch.setattr(messaging, "__file__", "/h/.hermes/plugins/banister/messaging.py")
     assert messaging._session_key("1") == "agent:main:telegram:dm:1"
+
+
+def test_the_reply_is_observed_and_never_rewritten(monkeypatch):
+    import banister
+
+    registered = {}
+
+    class Ctx:
+        def register_tool(self, **_k):
+            pass
+
+        def register_platform_handler(self, *_a):
+            pass
+
+        def register_hook(self, name, callback):
+            registered[name] = callback
+
+    banister.register(Ctx())
+    assert set(registered) == {"post_llm_call"}  # not the transform hook, which can replace text
+
+    seen = []
+    monkeypatch.setattr(banister, "call", lambda *a, **k: seen.append(a[1]))
+    assert registered["post_llm_call"](assistant_response="CTL 40", session_id="s") is None
+    assert seen == ["/verify-reply"]
+
+    def down(*_a, **_k):
+        raise plugin_client.BanisterError(0, "down")
+
+    monkeypatch.setattr(banister, "call", down)
+    assert registered["post_llm_call"](assistant_response="CTL 40") is None  # never breaks a turn

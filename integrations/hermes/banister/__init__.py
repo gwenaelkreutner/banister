@@ -13,21 +13,19 @@ from .client import BanisterError, call
 logger = logging.getLogger("hermes_plugins.banister")
 
 
-def _check_reply(response_text: str, **_kw) -> str | None:
-    """Withhold sentences stating a metric value the agent did not retrieve. If Banister cannot
-    be reached the reply goes out unchanged, as in the built-in chat."""
-    if not response_text or not any(c.isdigit() for c in response_text):
-        return None
+def _observe_reply(assistant_response: str = "", **_kw) -> None:
+    """Let Banister record any figure that looks wrong. The reply itself is never touched, and
+    nothing here can hold it back or break it."""
+    if not assistant_response or not any(c.isdigit() for c in assistant_response):
+        return
     try:
-        result = call(
+        call(
             "POST", "/verify-reply",
-            {"text": response_text, "retrieved": tools.retrieved_values()},
-            timeout=8,
+            {"text": assistant_response, "retrieved": tools.retrieved_values()},
+            timeout=5,
         )
     except BanisterError as exc:
-        logger.warning("banister: reply not checked (%s)", exc)
-        return None
-    return None if result.get("ok") else result.get("text")
+        logger.debug("banister: reply not observed (%s)", exc)
 
 
 def register(ctx) -> None:
@@ -36,4 +34,4 @@ def register(ctx) -> None:
     for schema, handler in tools.TOOLS:
         ctx.register_tool(name=schema["name"], toolset="banister", schema=schema, handler=handler)
     ctx.register_platform_handler("telegram", messaging.on_telegram)
-    ctx.register_hook("transform_llm_output", _check_reply)
+    ctx.register_hook("post_llm_call", _observe_reply)

@@ -10,7 +10,7 @@ Architecture en un seul process : aiogram v3 (bot) + FastAPI (webhooks/OAuth) + 
 ## Refonte open source — terminée (specs 001–007)
 
 Ce document décrit **l'état actuel du code**. La refonte vers un produit self-hosted open source
-(specs `001`–`007`, gouvernée par `.specify/memory/constitution.md` **v1.1.0**) est **complète**.
+(specs `001`–`007`, gouvernée par `.specify/memory/constitution.md` **v2.0.0**) est **complète**.
 
 **✅ Fait** : spec 003 (SQLite local remplace Supabase), spec 002 (intervals.icu remplace Strava, log manuel
 supprimé), spec 004 (séances structurées, bibliothèque de templates, fitting), spec 005 (push des séances
@@ -21,7 +21,7 @@ vérification des chiffres de la réponse LLM), spec 007 (setup = confirmation d
 Reste hors specs, connu :
 - `docs/ARCHITECTURE.md` réécrit (2026-09-07) pour refléter l'état specs 001–007 — modèle de process,
   couches, flux de données ; complémentaire de ce fichier (qui garde l'historique spec par spec et la
-  navigation). `CLAUDE.md` reste la référence vivante (constitution v1.1.0).
+  navigation). `CLAUDE.md` reste la référence vivante (constitution v2.0.0).
 - Écriture-retour d'une correction FTP vers intervals.icu (spec 007 FR-006) : différée derrière une sonde
   d'endpoint autorisée séparément. Défaut livré = FR-007 (l'athlète change sur intervals.icu, aucune
   valeur locale divergente).
@@ -1393,11 +1393,12 @@ poller, rappels, récap ─ messenger ─ Bot aiogram | OutboxMessenger (app/mai
   plan dont elle est calculée ; plan modifié entre-temps = proposition périmée.
 - **Passage de relais** : un message ou un résultat d'action peut porter un `agent_prompt` (revue après le RPE,
   analyse du dimanche) qui démarre un tour de l'agent. `compute_weekly_recap(narrate=False)` ne fait aucun appel LLM.
-- **Vérification** (`services/agent_verification.py`, `/verify-reply`) : même garantie que le chat (Principe I) sur la
-  réponse finale de l'agent. Fourchettes (« 5-6 relances ») exclues des affirmations.
+- **Observation** (`services/agent_verification.py`, `/verify-reply`) : la réponse d'un agent externe n'est jamais
+  réécrite (Constitution I, v2.0.0) ; les chiffres suspects vont seulement dans `response_check_failures`. Le chat
+  intégré continue de retirer les phrases. Un nombre n'est une affirmation que s'il est juste avant le terme de
+  métrique, ou le suivant juste après (`_numbers_bound_to`) ; fourchettes, ordinaux et durées exclus.
 - **Plugin Hermes** (`integrations/hermes/banister/`) : `tools.py` = ce que le modèle peut faire, `messaging.py` = ce
-  que seul le code fait (outbox, boutons, relais), `client.py` = HTTP stdlib. `display.streaming: false` obligatoire
-  pour que la vérification passe avant l'envoi ; `allow_gateway_injection: true` pour le relais. Le skill est dans
+  que seul le code fait (outbox, boutons, relais), `client.py` = HTTP stdlib. `allow_gateway_injection: true` pour le relais. Le skill est dans
   `integrations/hermes/skills/banister-coach/`, hors du plugin, pour que l'agent le corrige lui-même (`skill_manage`) :
   ses corrections apparaissent en `git diff` dans ce dépôt public, à relire avant tout commit (rien de personnel).
   Les règles de sécurité restent dans le code, jamais dans le skill.

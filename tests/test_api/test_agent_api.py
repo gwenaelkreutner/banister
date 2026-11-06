@@ -352,7 +352,7 @@ async def test_memory_note_is_kept_and_found(client, athlete):
     assert found["journal"]["count"] == 1
 
 
-async def test_verify_reply_withholds_invented_numbers_and_records_them(
+async def test_verify_reply_records_a_wrong_figure_and_rewrites_nothing(
     client, athlete, db_session
 ):
     from sqlalchemy import select
@@ -362,14 +362,15 @@ async def test_verify_reply_withholds_invented_numbers_and_records_them(
     await wellness_repo.upsert(db_session, athlete.id, paris_today(), ctl=41.0, atl=52.0)
     await db_session.commit()
 
-    ok = await client.post("/agent/v1/verify-reply", json={"text": "Ta CTL est à 41 aujourd'hui."})
-    assert ok.json() == {"ok": True, "text": "Ta CTL est à 41 aujourd'hui."}
+    good = await client.post("/agent/v1/verify-reply", json={"text": "Ta CTL est à 41."})
+    assert good.json() == {"ok": True, "flagged": []}
 
-    bad = await client.post(
-        "/agent/v1/verify-reply", json={"text": "Ta CTL est à 70. Roule tranquille."}
-    )
-    assert bad.json()["ok"] is False
-    assert "70" not in bad.json()["text"] and "Roule tranquille." in bad.json()["text"]
+    bad = await client.post("/agent/v1/verify-reply", json={"text": "Ta CTL est à 70."})
+    assert bad.json() == {
+        "ok": False,
+        "flagged": [{"metric": "ctl", "stated": "70", "expected": 41.0}],
+    }
+    assert "text" not in bad.json()  # nothing for an integration to send instead
     failures = (await db_session.execute(select(ResponseCheckFailure))).scalars().all()
     assert [f.metric_name for f in failures] == ["ctl"]
 
@@ -379,10 +380,7 @@ async def test_verify_reply_accepts_what_the_agent_retrieved(client, athlete):
     assert (await client.post("/agent/v1/verify-reply", json={"text": text})).json()["ok"] is False
     good = await client.post(
         "/agent/v1/verify-reply",
-        json={
-            "text": text,
-            "retrieved": [{"kind": "session", "result": {"tss_estimate": 140.0}}],
-        },
+        json={"text": text, "retrieved": [{"kind": "session", "result": {"tss_estimate": 140.0}}]},
     )
     assert good.json()["ok"] is True
 
@@ -809,4 +807,4 @@ async def test_verify_reply_accepts_the_recent_peak_it_was_given(client, athlete
         "target_tss": 35.0, "recent_peak_day": {"date": "2026-10-18", "tss": 148.0},
     }}}]
     r = await client.post("/agent/v1/verify-reply", json={"text": text, "retrieved": retrieved})
-    assert r.json() == {"ok": True, "text": text}
+    assert r.json() == {"ok": True, "flagged": []}

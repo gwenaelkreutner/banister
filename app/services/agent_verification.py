@@ -1,10 +1,10 @@
-"""Check an external agent's final text against what it actually retrieved.
+"""Observe what an external agent says about the athlete's numbers.
 
-The same guarantee as the built-in chat (Constitution Principle I, spec 006 US3), for a reply
-written outside Banister: current metrics are read here, and the values the agent received
-from its tools are registered from `retrieved`. Bad sentences are withheld and recorded.
+Same check as the built-in chat (spec 006 US3), against current metrics and the values the agent
+received from its tools, but it only records: an external agent's reply is never rewritten
+(Constitution Principle I). `response_check_failures` is how a real drift would be seen. Real
+conversations showed this check flagging correct sentences far more often than invented figures.
 """
-
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,11 +13,7 @@ from app.db import repositories as repo
 from app.db.models.user import User
 from app.services.fitness import get_current_fitness
 from app.services.guardrail_service import collect_registry_metrics
-from app.services.response_verification import (
-    MetricRegistry,
-    apply_result,
-    verify_response,
-)
+from app.services.response_verification import MetricRegistry, verify_response
 
 
 def _dated(
@@ -85,7 +81,7 @@ def register_retrieved(registry: MetricRegistry, kind: str, result: dict) -> Non
 async def verify_agent_reply(
     session: AsyncSession, user: User, text: str, retrieved: list[dict]
 ) -> dict:
-    """`{"ok": bool, "text": str}`: `text` is the reply to send, bad sentences replaced."""
+    """`{"ok": bool, "flagged": [...]}`. Records what looks wrong, changes nothing."""
     registry = MetricRegistry()
     current = await get_current_fitness(session, user.id)
     if current is not None:
@@ -101,27 +97,18 @@ async def verify_agent_reply(
         register_retrieved(registry, item.get("kind", ""), item.get("result") or {})
 
     result = verify_response(text, registry)
-    if result.ok:
-        return {"ok": True, "text": text}
-    for claim, expected in result.mismatches:
+    flagged = []
+    for claim, expected in [*result.mismatches, *((c, None) for c in result.unretrieved)]:
         await repo.guardrail_repo.record_check_failure(
             session,
             user_id=user.id,
-            failure_kind="mismatch",
+            failure_kind="mismatch" if expected is not None else "unretrieved",
             metric_name=claim.metric,
             stated_value=claim.stated_text,
-            expected_value=f"{expected:g}",
+            expected_value=f"{expected:g}" if expected is not None else None,
             response_excerpt=claim.sentence,
         )
-    for claim in result.unretrieved:
-        await repo.guardrail_repo.record_check_failure(
-            session,
-            user_id=user.id,
-            failure_kind="unretrieved",
-            metric_name=claim.metric,
-            stated_value=claim.stated_text,
-            expected_value=None,
-            response_excerpt=claim.sentence,
-        )
-    await session.commit()
-    return {"ok": False, "text": apply_result(text, result)}
+        flagged.append({"metric": claim.metric, "stated": claim.stated_text, "expected": expected})
+    if flagged:
+        await session.commit()
+    return {"ok": result.ok, "flagged": flagged}

@@ -65,8 +65,6 @@ toolsets = ["skills", "session_search", "clarify", "todo", "vision", "tts", "ban
 platforms = config.setdefault("platform_toolsets", {})
 for platform in ("cli", "telegram", "cron"):
     platforms[platform] = list(toolsets)
-# The reply check rewrites the final text: it must not have been streamed out already.
-config.setdefault("display", {})["streaming"] = False
 yaml.safe_dump(config, open(path, "w"), allow_unicode=True, sort_keys=False)
 PY
 

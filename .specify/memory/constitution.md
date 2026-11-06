@@ -1,6 +1,19 @@
 <!--
 Sync Impact Report
-Version change: 1.0.0 → 1.1.0
+Version change: 1.1.0 → 2.0.0 (MAJOR: Principles I and II redefined, with the owner's consent)
+Amended: 2026-11-06
+
+Rationale: an external agent can now be the coach (COACH_INTERFACE=agent). Withholding sentences from
+its replies did more harm than good: of the 11 failures recorded in real use, none was a proven
+invention, and several replaced correct sentences with a notice.
+
+Modified principles:
+  - I. Deterministic Engine — the zero-LLM load calculation is unchanged. Response verification still
+    withholds in the built-in coach; for an external agent's reply it records without rewriting.
+  - II. Single-User, Local-First — the owner guard now applies to whichever interface talks to the
+    athlete: the bot's middleware, or the external agent integration and its API token.
+
+Previous amendment, 1.0.0 → 1.1.0:
 Ratified: 2026-08-27 | Last amended: 2026-09-01
 
 Rationale: the document had drifted from the codebase across specs 002–006 and was, by
@@ -47,6 +60,8 @@ verified against the value that was actually retrieved or computed, before the r
 reaches the athlete; a stated value that disagrees with the data, or a value stated for a
 metric that was never retrieved, MUST be withheld and the failure recorded (spec 006 US3).
 This verification is itself deterministic — the LLM never checks its own output.
+An external agent acting as the coach (`COACH_INTERFACE=agent`) is the exception: its reply is not
+rewritten, and such a value is recorded instead, so that a real drift can be seen.
 
 Rationale: training load numbers drive real athletic decisions (overtraining, injury
 risk). Non-deterministic generation of these numbers is unacceptable, and a coach that
@@ -57,7 +72,8 @@ and auditable.
 ### II. Single-User, Local-First, No Cloud Dependency
 Banister runs self-hosted for a single owner. The Telegram owner guard (`TELEGRAM_OWNER_ID`)
 MUST be enforced at the middleware level so messages from any other Telegram user are
-silently dropped. The system MUST remain fully operable without any mandatory external
+silently dropped. With an external agent as the coach (`COACH_INTERFACE=agent`), the agent API
+requires its own token and stays local, and the integration MUST act on the owner's gestures only. The system MUST remain fully operable without any mandatory external
 cloud service beyond the LLM provider and the intervals.icu training-data integration — no
 multi-tenant assumptions, no hosted-SaaS coupling. Secrets (`.env`, API keys, tokens) MUST
 NOT be committed.
@@ -149,4 +165,4 @@ modules, new integrations, engine changes) SHOULD verify compliance with the Cor
 Principles above; `CLAUDE.md` carries day-to-day operational detail that must stay
 consistent with, but does not override, this document.
 
-**Version**: 1.1.0 | **Ratified**: 2026-08-27 | **Last Amended**: 2026-09-01
+**Version**: 2.0.0 | **Ratified**: 2026-08-27 | **Last Amended**: 2026-11-06

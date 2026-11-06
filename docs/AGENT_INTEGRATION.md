@@ -37,7 +37,7 @@ To go back, set `COACH_INTERFACE=telegram` and restart: nothing else changes, al
 ## Hermes Agent
 
 A ready-made plugin lives in `integrations/hermes/`: tools, delivery of messages, buttons, a coaching
-skill and a check of the agent's final reply.
+skill and a record of figures that look wrong.
 
 ```bash
 BANISTER_AGENT_TOKEN=... OWNER_CHAT_ID=<your Telegram user id> ./integrations/hermes/install.sh
@@ -68,7 +68,7 @@ Any agent works (an MCP server, for instance): it is plain HTTP. Your integratio
 4. **Hand over to the agent.** When a message or an action result has an `agent_prompt`, start a turn
    of your agent with it. That is how a ride review or the weekly analysis gets written. If your
    agent cannot start a turn right now, show `handover_hint` instead of losing it silently.
-5. **Check the final reply** with `/verify-reply`, before anything reaches the athlete.
+5. **Report the final reply** to `/verify-reply`. Banister records what looks wrong; it changes nothing.
 
 Actions fit Telegram's 64-byte limit with a prefix of up to 4 bytes.
 
@@ -108,7 +108,7 @@ All under `/agent/v1`.
 | `POST /plan/calendar/withdraw-request` | A `card` to remove them |
 | `GET /messages/pending`, `POST /messages/{id}/delivered` | **Code only.** The outbox |
 | `POST /actions` | **Code only, on the athlete's tap.** `{"action"}` |
-| `POST /verify-reply` | **Code only.** `{"text", "retrieved"}` returns the text to send |
+| `POST /verify-reply` | **Code only.** `{"text", "retrieved"}` records figures that look wrong |
 
 ## Describing a session
 
@@ -150,17 +150,18 @@ a measurement. Without FTP or heart rate reference, `publishable` is `false` rat
 
 ## `/verify-reply`
 
-Same check as the built-in coach. A sentence stating a metric that disagrees with the data, or that
-was never retrieved, is replaced by a notice and the failure recorded. Current CTL, ATL, TSB, FTP and
-guardrail metrics are read by Banister. Pass what else your agent received:
+An external agent's reply is never rewritten. This compares what it says with what it was given and
+records anything that looks wrong in `response_check_failures`, so a real drift can be seen. Current
+CTL, ATL, TSB, FTP and guardrail metrics are read by Banister. Pass what else your agent received:
 
 ```json
 {"text": "...", "retrieved": [{"kind": "session", "result": {"tss_estimate": 140.0}}]}
 ```
 
 `kind` is one of `context`, `fitness`, `trend`, `wellness`, `ride`, `recap`, `plan`, `plan_proposal`,
-`session` (evaluate or proposal answers) or `recommendation`, and `result` is the answer as received. Check before anything reaches
-the athlete: with a streaming display, the text would already be out.
+`session` (evaluate or proposal answers) or `recommendation`, and `result` is the answer as received.
+The answer is `{"ok", "flagged"}`. The built-in coach, which may run on a small model, still withholds
+such sentences.
 
 ## Not available through this API
 
