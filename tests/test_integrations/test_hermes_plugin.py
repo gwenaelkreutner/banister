@@ -201,14 +201,14 @@ def test_the_reply_is_observed_and_never_rewritten(monkeypatch):
 
 
 def test_route_estimate_reads_only_gpx_files_the_athlete_sent(monkeypatch, tmp_path):
-    home = tmp_path / "hermes"
-    sent = home / "profiles" / "banister" / "cache" / "documents" / "x" / "route.gpx"
+    docs = tmp_path / "profiles" / "banister" / "cache" / "documents"
+    sent = docs / "native-inputs" / "abc" / "doc_1_route.gpx"
     sent.parent.mkdir(parents=True)
     sent.write_text("<gpx/>")
-    elsewhere = tmp_path / "secret.gpx"
-    elsewhere.write_text("<gpx/>")
-    monkeypatch.setenv("HERMES_HOME", str(home))
+    (tmp_path / "secret.gpx").write_text("<gpx/>")
+    monkeypatch.setenv("BANISTER_DOCUMENTS_DIR", str(docs))
     bodies = []
+
     def fake_call(method, path, body=None, **_kw):
         bodies.append(body)
         return {"ok": True}
@@ -216,8 +216,16 @@ def test_route_estimate_reads_only_gpx_files_the_athlete_sent(monkeypatch, tmp_p
     monkeypatch.setattr(tools, "call", fake_call)
     handler = dict((s["name"], h) for s, h in tools.TOOLS)["banister_estimate_route"]
 
+    # the model sees the sandbox mount, not the profile directory on the host
+    sandbox_path = "/root/.hermes/cache/documents/native-inputs/abc/doc_1_route.gpx"
+    assert json.loads(handler({"gpx_file": sandbox_path, "mode": "chill"})) == {"ok": True}
     assert json.loads(handler({"gpx_file": str(sent), "mode": "chill"})) == {"ok": True}
     assert bodies[-1] == {"gpx": "<gpx/>", "mode": "chill"}
-    for path in (str(elsewhere), str(home / ".env")):
+    for path in (
+        str(tmp_path / "secret.gpx"),
+        "/root/.hermes/cache/documents/../../../secret.gpx",
+        "/root/.hermes/cache/documents/missing.gpx",
+        "/root/.hermes/.env",
+    ):
         assert "error" in json.loads(handler({"gpx_file": path, "mode": "chill"}))
-    assert len(bodies) == 1
+    assert len(bodies) == 2

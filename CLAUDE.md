@@ -1418,7 +1418,9 @@ poller, rappels, récap ─ messenger ─ Bot aiogram | OutboxMessenger (app/mai
   (`/root/allure`, https://github.com/gwenaelkreutner/Allure, dépendance épinglée sur une archive de release dans
   `pyproject.toml`). Ne jamais réimplémenter ou recalibrer ce modèle ici : le changer dans Allure, publier une
   version, monter l'épingle (`uv lock`). Outil Hermes `banister_estimate_route` : un `gpx_file` n'est lu que
-  s'il est un `.gpx` reçu (dossier `documents` sous `HERMES_HOME`). Liens Strava : refusés avec la consigne
+  s'il est un `.gpx` reçu, cherché dans `<profil>/cache/documents/` (le modèle voit le chemin monté dans son
+  sandbox Docker, `/root/.hermes/cache/documents/…`, pas celui de l'hôte : seule la partie après `documents/`
+  compte, rien hors de ce dossier n'est lu). Liens Strava : refusés avec la consigne
   d'exporter le GPX (géométrie non publique) ; RideWithGPS bloque les IP de datacenter (418) → même consigne.
 - **Pas d'équivalent agent** : `/reset`, volontairement. Le bouton du chat intégré publie toujours à la date du jour.
 - Tests : `tests/test_api/test_agent_api.py`, `tests/test_integrations/test_hermes_plugin.py`.

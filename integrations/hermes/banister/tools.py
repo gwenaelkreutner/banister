@@ -236,11 +236,26 @@ _GRANULARITY = {"type": "string", "enum": ["daily", "weekly"]}
 _GPX_MAX_BYTES = 8_000_000
 
 
+def _documents_root() -> Path:
+    """Where Hermes stores the documents received by this profile: <profile>/cache/documents,
+    the plugin itself living in <profile>/plugins/banister/."""
+    override = os.environ.get("BANISTER_DOCUMENTS_DIR")
+    return Path(override) if override else Path(__file__).resolve().parents[2] / "cache" / "documents"
+
+
 def _received_gpx(path: str) -> str:
-    """Content of a GPX file the athlete sent: only files Hermes stored as received documents."""
-    home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes").resolve()
-    f = Path(path).expanduser().resolve()
-    if f.suffix.lower() != ".gpx" or not f.is_relative_to(home) or "documents" not in f.parts:
+    """Content of a GPX file the athlete sent: only files Hermes stored as received documents.
+
+    The model sees the path as mounted in its sandbox (…/.hermes/cache/documents/…), not the
+    profile's directory on the host: the part after `documents/` is looked up in this profile's
+    documents directory, and nothing outside it is ever read."""
+    root = _documents_root().resolve()
+    parts = Path(path).parts
+    if "documents" not in parts:
+        raise ValueError("gpx_file must be a .gpx file the athlete sent in this chat")
+    relative = parts[len(parts) - 1 - parts[::-1].index("documents") + 1:]
+    f = root.joinpath(*relative).resolve()
+    if f.suffix.lower() != ".gpx" or not f.is_relative_to(root) or not f.is_file():
         raise ValueError("gpx_file must be a .gpx file the athlete sent in this chat")
     if f.stat().st_size > _GPX_MAX_BYTES:
         raise ValueError("GPX file too large")
