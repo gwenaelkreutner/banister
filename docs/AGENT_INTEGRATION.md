@@ -88,6 +88,7 @@ All under `/agent/v1`.
 | `GET /rides/{date}` | The rides of a past day, with `reviews`: everything measured |
 | `GET /recap` | The week's figures |
 | `GET /power-profile` | Power curve changes and what can be sustained |
+| `POST /route-estimate` | Moving time and average speed for a route, writes nothing. One source: `url` (Komoot, RideWithGPS, direct GPX), `gpx` (file content) or `ride_date` (a past ride's track); one target: `mode` (`chill`, `steady`, `tempo`, `race`) or `watts` (+ `watts_kind` `np`/`avg`); `context` `solo`/`group`/`race`, `group_size`, `temperature_c`. FTP and weight are read from the source. Computed by [allure-cycling](https://github.com/gwenaelkreutner/Allure) |
 | `GET /memory?keyword=&category=&days=` | Durable notes and dated journal |
 | `POST /memory/notes` | `{"category", "note"}` adds a note |
 | `PUT /injury` | `{"location", "severity", "estimated_recovery_days"}` |

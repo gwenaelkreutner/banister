@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 
 import httpx
@@ -808,3 +809,77 @@ async def test_verify_reply_accepts_the_recent_peak_it_was_given(client, athlete
     }}}]
     r = await client.post("/agent/v1/verify-reply", json={"text": text, "retrieved": retrieved})
     assert r.json() == {"ok": True, "flagged": []}
+
+
+# ── Route estimate (allure-cycling) ──────────────────────────────────────────
+
+
+def _gpx(km: float = 10.0, grade: float = 0.0) -> str:
+    n = int(km * 100)
+    pts = "".join(
+        f'<trkpt lat="{45 + i * 10 / 111_195:.7f}" lon="5.0">'
+        f"<ele>{100 + grade * i * 10:.1f}</ele></trkpt>"
+        for i in range(n + 1)
+    )
+    return f'<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg>{pts}</trkseg></trk></gpx>'
+
+
+def _with_weight(calendar, kg=68.0):
+    calendar.athlete = {**ATHLETE_FROM_SOURCE, "icu_weight": kg}
+
+
+async def test_gpx_estimate_uses_the_source_ftp_and_weight(client, athlete, calendar):
+    _with_weight(calendar)
+    r = await client.post("/agent/v1/route-estimate", json={"gpx": _gpx(), "mode": "steady"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["inputs"]["ftp_w"] == 260 and body["inputs"]["weight_kg"] == 68
+    assert math.isclose(body["route"]["distance_km"], 10.0, abs_tol=0.2)
+    assert 25 < body["estimate"]["avg_speed_kmh"] < 40
+    assert body["intensity"]["intensity_factor"] == 0.71
+
+
+async def test_group_is_faster_than_solo_on_the_flat(client, athlete, calendar):
+    _with_weight(calendar)
+    url = "/agent/v1/route-estimate"
+    solo = (await client.post(url, json={"gpx": _gpx(), "watts": 200})).json()
+    group = (await client.post(
+        url, json={"gpx": _gpx(), "watts": 200, "context": "group", "group_size": 10}
+    )).json()
+    assert group["estimate"]["moving_time_s"] < solo["estimate"]["moving_time_s"]
+
+
+async def test_route_from_a_past_ride(client, athlete, calendar):
+    _with_weight(calendar)
+
+    async def list_activities(*, oldest, newest):
+        return [{"id": "i1", "type": "Ride", "distance": 5000, "name": "Sortie"}]
+
+    async def get_activity_streams(activity_id, *, types):
+        n = 501
+        return [
+            {"type": "latlng", "data2": [5.0] * n,
+             "data": [45 + i * 10 / 111_195 for i in range(n)]},
+            {"type": "altitude", "data": [100.0] * n},
+        ]
+
+    calendar.list_activities, calendar.get_activity_streams = list_activities, get_activity_streams
+    body = {"ride_date": "2026-11-21", "mode": "chill"}
+    r = await client.post("/agent/v1/route-estimate", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["route"]["source"].startswith("ride of 2026-11-21")
+
+
+async def test_inputs_are_refused_with_a_reason(client, athlete, calendar):
+    _with_weight(calendar)
+    no_source = await client.post("/agent/v1/route-estimate", json={"mode": "chill"})
+    assert no_source.status_code == 422
+    strava = await client.post(
+        "/agent/v1/route-estimate", json={"url": "https://www.strava.com/routes/1", "mode": "chill"}
+    )
+    assert strava.status_code == 422 and "Export GPX" in strava.json()["detail"]
+
+
+async def test_unknown_weight_is_said_not_guessed(client, athlete, calendar):
+    r = await client.post("/agent/v1/route-estimate", json={"gpx": _gpx(), "mode": "chill"})
+    assert r.status_code == 422 and "weight" in r.json()["detail"]

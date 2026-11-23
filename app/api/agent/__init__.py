@@ -10,7 +10,7 @@ means the whole router answers 404 (fail closed), so a default install exposes n
 
 from fastapi import APIRouter, Depends
 
-from app.api.agent import athlete, messages, plan, sessions
+from app.api.agent import athlete, messages, plan, route_estimate, sessions
 from app.api.agent.deps import intervals_client, require_agent_token
 
 router = APIRouter(prefix="/agent/v1", dependencies=[Depends(require_agent_token)])
@@ -18,5 +18,6 @@ router.include_router(athlete.router)
 router.include_router(sessions.router)
 router.include_router(plan.router)
 router.include_router(messages.router)
+router.include_router(route_estimate.router)
 
 __all__ = ["intervals_client", "router"]

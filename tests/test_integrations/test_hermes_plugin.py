@@ -198,3 +198,26 @@ def test_the_reply_is_observed_and_never_rewritten(monkeypatch):
 
     monkeypatch.setattr(banister, "call", down)
     assert registered["post_llm_call"](assistant_response="CTL 40") is None  # never breaks a turn
+
+
+def test_route_estimate_reads_only_gpx_files_the_athlete_sent(monkeypatch, tmp_path):
+    home = tmp_path / "hermes"
+    sent = home / "profiles" / "banister" / "cache" / "documents" / "x" / "route.gpx"
+    sent.parent.mkdir(parents=True)
+    sent.write_text("<gpx/>")
+    elsewhere = tmp_path / "secret.gpx"
+    elsewhere.write_text("<gpx/>")
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    bodies = []
+    def fake_call(method, path, body=None, **_kw):
+        bodies.append(body)
+        return {"ok": True}
+
+    monkeypatch.setattr(tools, "call", fake_call)
+    handler = dict((s["name"], h) for s, h in tools.TOOLS)["banister_estimate_route"]
+
+    assert json.loads(handler({"gpx_file": str(sent), "mode": "chill"})) == {"ok": True}
+    assert bodies[-1] == {"gpx": "<gpx/>", "mode": "chill"}
+    for path in (str(elsewhere), str(home / ".env")):
+        assert "error" in json.loads(handler({"gpx_file": path, "mode": "chill"}))
+    assert len(bodies) == 1

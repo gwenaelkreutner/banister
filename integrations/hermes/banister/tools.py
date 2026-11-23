@@ -6,9 +6,11 @@ show a card, whose buttons are handled in `messaging.py`, on the athlete's tap.
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.parse
 from collections import deque
+from pathlib import Path
 
 from .client import BanisterError, call, owner_chat_id
 
@@ -231,6 +233,28 @@ _DAYS_LIST = {
 _GRANULARITY = {"type": "string", "enum": ["daily", "weekly"]}
 
 
+_GPX_MAX_BYTES = 8_000_000
+
+
+def _received_gpx(path: str) -> str:
+    """Content of a GPX file the athlete sent: only files Hermes stored as received documents."""
+    home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes").resolve()
+    f = Path(path).expanduser().resolve()
+    if f.suffix.lower() != ".gpx" or not f.is_relative_to(home) or "documents" not in f.parts:
+        raise ValueError("gpx_file must be a .gpx file the athlete sent in this chat")
+    if f.stat().st_size > _GPX_MAX_BYTES:
+        raise ValueError("GPX file too large")
+    return f.read_text(encoding="utf-8", errors="replace")
+
+
+def _estimate_route(a):
+    keys = ("url", "ride_date", "mode", "watts", "watts_kind", "context", "group_size", "temperature_c")
+    body = {k: a[k] for k in keys if a.get(k) not in (None, "")}
+    if a.get("gpx_file"):
+        body["gpx"] = _received_gpx(a["gpx_file"])
+    return _remember("route_estimate", call("POST", "/route-estimate", body, timeout=120))
+
+
 def _schema(name: str, description: str, properties: dict | None = None, required=()) -> dict:
     return {
         "name": name,
@@ -373,4 +397,22 @@ TOOLS = [
         "banister_request_withdrawal", "Ask the athlete, with a card, to confirm removing a published session. Only their tap removes it.",
         {"publication_id": {"type": "string"}}, ["publication_id"],
     ), _tool(_request_withdrawal)),
+    (_schema(
+        "banister_estimate_route",
+        "Moving time and average speed for a route, computed by a physics model (allure-cycling) from the athlete's FTP and weight. "
+        "Give exactly one route source: a link (Komoot tour, RideWithGPS, direct .gpx; a Strava route cannot be read: ask for its GPX export), "
+        "the path of a .gpx file the athlete sent, or the date of one of their past rides. "
+        "Give either an intensity mode or watts. Moving time only, stops excluded. Read back the numbers as returned, with the notes.",
+        {"url": {"type": "string"},
+         "gpx_file": {"type": "string", "description": "Path of a received .gpx document, as given in the message."},
+         "ride_date": {"type": "string", "description": "YYYY-MM-DD: reuse the track of that day's ride."},
+         "mode": {"type": "string", "enum": ["chill", "steady", "tempo", "race"],
+                  "description": "chill: easy endurance; steady: sustained endurance; tempo: fast group ride; race: mass-start race."},
+         "watts": {"type": "number", "description": "Power target instead of a mode."},
+         "watts_kind": {"type": "string", "enum": ["np", "avg"], "description": "Default np (normalized power)."},
+         "context": {"type": "string", "enum": ["solo", "group", "race"],
+                     "description": "group: club ride with relays and regroupings; race: closed roads, in the bunch. Default solo."},
+         "group_size": {"type": "integer", "minimum": 2, "maximum": 300},
+         "temperature_c": {"type": "number", "description": "Expected temperature, if known."}},
+    ), _tool(_estimate_route)),
 ]

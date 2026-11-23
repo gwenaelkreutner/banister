@@ -31,6 +31,9 @@ dependencies = [
     # ZoneInfoNotFoundError on a real machine, breaking every conversational chat
     # message. tzdata vendors the database so this can't depend on the host.
     "tzdata>=2024.1",
+    # Moving-time estimate for a route (POST /agent/v1/route-estimate). Separate open-source
+    # library so any app gets the same physics; pinned to a release archive (no git in the image).
+    "allure-cycling[web] @ https://github.com/gwenaelkreutner/Allure/archive/refs/tags/v0.2.0.tar.gz",
 ]
 
 [project.optional-dependencies]
