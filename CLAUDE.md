@@ -163,9 +163,12 @@ consolidation).
 ```
 poller.py (tick périodique, cf. INTERVALS_POLL_INTERVAL_MINUTES, défaut 5 min)
     → import historique idempotent + rafraîchissement wellness sur six jours (aujourd'hui à J-5)
-    → seuils relus sur GET /athlete (FTP, FC max/repos, âge, poids) et réécrits dans le profil s'ils
-      ont bougé (`athlete_setup.refresh_thresholds_from_source`, 2026-11-23 — avant, le setup les
-      copiait une fois pour toutes : FTP passée à 270 W sur intervals.icu, coach toujours à 290 W)
+    → nouvelle sortie vélo : sa `icu_ftp` (FTP des réglages, copiée par intervals.icu sur chaque
+      activité) remplace la FTP du profil si elle a changé (`athlete_setup.update_ftp_from_activities`,
+      2026-11-23 — avant, le setup la copiait une fois pour toutes : FTP passée à 270 W sur
+      intervals.icu, coach toujours à 290 W). Zéro requête en plus ; une FTP changée sans rouler
+      n'est vue qu'à la sortie suivante (choix owner). Jamais `icu_rolling_ftp`/`icu_pm_ftp`
+      (estimations). FC max/repos du profil : toujours figées au setup
     → commit avant toute détection : les jours de repos et les échecs de notification conservent les données
     → client.list_activities() : liste des activités récentes
     → détecte les nouvelles (sync_state), une notification par activité, jamais de doublon ni d'oubli

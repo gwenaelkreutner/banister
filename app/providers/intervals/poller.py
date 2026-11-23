@@ -223,19 +223,21 @@ async def run_poller_scheduler(session_factory, client_factory, bot=None) -> Non
                 except IntervalsError:
                     logger.warning("Wellness refresh failed this tick — will retry next cycle.")
 
-                # Thresholds (FTP, max/resting HR, weight) live at the source: setup only
-                # copied them once, so an FTP changed on intervals.icu was never picked up.
-                try:
-                    from app.services.athlete_setup import refresh_thresholds_from_source
-
-                    await refresh_thresholds_from_source(session, user.id, client)
-                except Exception:
-                    logger.warning("Threshold refresh failed this tick — will retry next cycle.")
-
                 # Persist source data even on rest days or if detection/delivery fails.
                 await session.commit()
 
                 unreported = await poll_once(session, user.id, client)
+                # Setup copied the FTP once: a new ride carries the current one (icu_ftp),
+                # with no extra request.
+                if unreported:
+                    from app.services.athlete_setup import update_ftp_from_activities
+
+                    try:
+                        async with session.begin_nested():
+                            await update_ftp_from_activities(session, user.id, unreported)
+                        await session.commit()
+                    except Exception:
+                        logger.warning("FTP update from the latest ride failed — kept the old one.")
                 if not unreported:
                     continue
 

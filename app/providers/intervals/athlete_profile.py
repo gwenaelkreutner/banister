@@ -16,7 +16,7 @@ from datetime import date, datetime
 from app.providers.intervals.client import IntervalsClient
 
 # sportSettings[].types values that mean "this is the cycling entry".
-_CYCLING_TYPES = frozenset(
+CYCLING_TYPES = frozenset(
     {"Ride", "VirtualRide", "MountainBikeRide", "GravelRide", "TrackRide", "Cyclocross"}
 )
 
@@ -61,7 +61,7 @@ class ReadProfile:
 
 def _cycling_sport_settings(athlete: dict) -> dict | None:
     for s in athlete.get("sportSettings") or []:
-        if _CYCLING_TYPES.intersection(s.get("types") or []):
+        if CYCLING_TYPES.intersection(s.get("types") or []):
             return s
     return None
 
