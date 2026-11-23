@@ -298,6 +298,57 @@ async def complete_setup(
     return result
 
 
+def apply_source_thresholds(profile: dict, read: ReadProfile) -> tuple[dict, dict]:
+    """Bring the stored thresholds back in line with the source (Constitution IV: thresholds
+    live at the source). Setup copies them once; without this, an FTP changed on
+    intervals.icu afterwards was never seen again. Only a value the source currently has
+    is applied — a field the source lacks keeps what Banister stored (declared or
+    estimated), and the coaching mode is left alone. Returns (new profile, changed)."""
+    data = dict(profile)
+    equipment = dict(data.get("equipment") or {})
+    physio = dict(data.get("physio") or {})
+    changed: dict = {}
+
+    def put(target: dict, key: str, value, origin_key: str | None) -> None:
+        if target.get(key) != value:
+            changed[key] = {"from": target.get(key), "to": value}
+            target[key] = value
+        if origin_key is not None:
+            target[origin_key] = "source"
+
+    if read.ftp.present:
+        put(equipment, "ftp", int(read.ftp.value), "ftp_source")
+        equipment["power_meter"] = True
+    if read.max_hr.present:
+        put(physio, "hr_max", int(read.max_hr.value), "hr_max_source")
+    if read.resting_hr.present:
+        put(physio, "hr_rest", int(read.resting_hr.value), "hr_rest_source")
+    if read.age.present:
+        put(physio, "age", int(read.age.value), None)
+    if read.weight_kg.present and data.get("weight_kg") != float(read.weight_kg.value):
+        changed["weight_kg"] = {"from": data.get("weight_kg"), "to": float(read.weight_kg.value)}
+        data["weight_kg"] = float(read.weight_kg.value)
+
+    data["equipment"] = equipment
+    data["physio"] = physio
+    return data, changed
+
+
+async def refresh_thresholds_from_source(session: AsyncSession, user_id: int, client) -> dict:
+    """Re-read the athlete's thresholds at the source and store them if they moved. Called
+    by the poller each tick (one GET /athlete). No profile yet → nothing to refresh."""
+    row = await repo.profile_repo.get_by_user_id(session, user_id)
+    if row is None or not row.profile:
+        return {}
+    read = await read_athlete_profile(client)
+    data, changed = apply_source_thresholds(row.profile, read)
+    if changed:
+        data["read_from_source_at"] = stamp()
+        await repo.profile_repo.update(session, row, data)
+        logger.info("Thresholds refreshed from the source: %s", changed)
+    return changed
+
+
 async def update_profile(
     session: AsyncSession,
     user,
