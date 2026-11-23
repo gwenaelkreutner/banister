@@ -262,12 +262,13 @@ def _received_gpx(path: str) -> str:
     return f.read_text(encoding="utf-8", errors="replace")
 
 
-def _estimate_route(a):
-    keys = ("url", "ride_date", "mode", "watts", "watts_kind", "context", "group_size", "temperature_c")
+def _simulate_ride(a):
+    keys = ("url", "track_ride_date", "date", "mode", "watts", "watts_kind", "context",
+            "group_size", "temperature_c")
     body = {k: a[k] for k in keys if a.get(k) not in (None, "")}
     if a.get("gpx_file"):
         body["gpx"] = _received_gpx(a["gpx_file"])
-    return _remember("route_estimate", call("POST", "/route-estimate", body, timeout=120))
+    return _remember("ride_simulation", call("POST", "/simulate-ride", body, timeout=120))
 
 
 def _schema(name: str, description: str, properties: dict | None = None, required=()) -> dict:
@@ -413,14 +414,18 @@ TOOLS = [
         {"publication_id": {"type": "string"}}, ["publication_id"],
     ), _tool(_request_withdrawal)),
     (_schema(
-        "banister_estimate_route",
-        "Moving time and average speed for a route, computed by a physics model (allure-cycling) from the athlete's FTP and weight. "
-        "Give exactly one route source: a link (Komoot tour, RideWithGPS, direct .gpx; a Strava route cannot be read: ask for its GPX export), "
-        "the path of a .gpx file the athlete sent, or the date of one of their past rides. "
-        "Give either an intensity mode or watts. Moving time only, stops excluded. Read back the numbers as returned, with the notes.",
+        "banister_simulate_ride",
+        "Simulate a ride before doing it, from a physics model (allure-cycling) and the athlete's FTP and weight: "
+        "moving time and speed, every climb (start km, length, gain, grade, hardest km, category, predicted time and power), "
+        "descents, checkpoints every 10 km, effort (NP, IF, TSS, kJ); with a date, the form after the ride (CTL/ATL/TSB) "
+        "and workload findings. Nothing is saved. One route source: a link (Komoot tour, direct .gpx; Strava and "
+        "RideWithGPS cannot be read from here: ask for the GPX export), the path of a .gpx file the athlete sent, or "
+        "track_ride_date to reuse a past ride's track. Either a mode or watts. Describe the route and the effort "
+        "from what it returns, never from memory; fuelling is the nutrition coach's job.",
         {"url": {"type": "string"},
          "gpx_file": {"type": "string", "description": "Path of a received .gpx document, as given in the message."},
-         "ride_date": {"type": "string", "description": "YYYY-MM-DD: reuse the track of that day's ride."},
+         "track_ride_date": {"type": "string", "description": "YYYY-MM-DD: reuse the track of that day's ride."},
+         "date": {"type": "string", "description": "YYYY-MM-DD the athlete plans to ride: adds the form projection."},
          "mode": {"type": "string", "enum": ["chill", "steady", "tempo", "race"],
                   "description": "chill: easy endurance; steady: sustained endurance; tempo: fast group ride; race: mass-start race."},
          "watts": {"type": "number", "description": "Power target instead of a mode."},
@@ -429,5 +434,5 @@ TOOLS = [
                      "description": "group: club ride with relays and regroupings; race: closed roads, in the bunch. Default solo."},
          "group_size": {"type": "integer", "minimum": 2, "maximum": 300},
          "temperature_c": {"type": "number", "description": "Expected temperature, if known."}},
-    ), _tool(_estimate_route)),
+    ), _tool(_simulate_ride)),
 ]

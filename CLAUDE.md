@@ -1412,16 +1412,23 @@ poller, rappels, récap ─ messenger ─ Bot aiogram | OutboxMessenger (app/mai
   libre et refuse si déjà configuré ; `PATCH /profile` change heures, jours et contraintes. Ni l'un ni l'autre n'a de
   carte : ils se font en conversation et n'écrivent que dans Banister, sans toucher au calendrier ni au plan actif.
   Seul ce qui touche au calendrier ou au plan passe par un bouton. `TELEGRAM_BOT_TOKEN` est facultatif en mode agent.
-- **Estimation de temps de parcours** (`POST /route-estimate`, 2026-11-23) : `services/route_estimate.py` ne fait que
-  rassembler les entrées (trace depuis un lien, un GPX ou une sortie passée ; FTP et poids relus sur la source,
-  repli sur le profil stocké) ; toute la physique vit dans la bibliothèque **allure-cycling**
-  (`/root/allure`, https://github.com/gwenaelkreutner/Allure, dépendance épinglée sur une archive de release dans
-  `pyproject.toml`). Ne jamais réimplémenter ou recalibrer ce modèle ici : le changer dans Allure, publier une
-  version, monter l'épingle (`uv lock`). Outil Hermes `banister_estimate_route` : un `gpx_file` n'est lu que
-  s'il est un `.gpx` reçu, cherché dans `<profil>/cache/documents/` (le modèle voit le chemin monté dans son
-  sandbox Docker, `/root/.hermes/cache/documents/…`, pas celui de l'hôte : seule la partie après `documents/`
-  compte, rien hors de ce dossier n'est lu). Liens Strava : refusés avec la consigne
-  d'exporter le GPX (géométrie non publique) ; RideWithGPS bloque les IP de datacenter (418) → même consigne.
+- **Simulation d'une sortie** (`POST /simulate-ride`, 2026-11-23 ; remplace `/route-estimate`) :
+  `services/ride_simulation.py` rassemble les entrées (trace depuis un lien, un GPX ou la trace d'une sortie
+  passée `track_ride_date` ; FTP et poids relus sur la source, repli sur le profil stocké) ; la physique — temps,
+  bosses (catégories Strava), descentes, points de passage, NP/IF/TSS/kJ — vit dans la bibliothèque
+  **allure-cycling** (`/root/allure`, https://github.com/gwenaelkreutner/Allure, épinglée sur une archive de
+  release dans `pyproject.toml`). Ne jamais réimplémenter ou recalibrer ce modèle ici : le changer dans Allure,
+  publier une version, monter l'épingle (`uv lock`). Avec `date` (jour prévu, ≤ 60 j) : projection CTL/ATL/TSB
+  par `engine/ride_simulation.py` (même EMA que `atl_ctl`, valeurs de fin de journée) depuis la dernière ligne
+  wellness, en comptant les séances du plan actif (`tss_target`) ; les séances libres publiées n'ont pas de TSS
+  stocké → listées « non comptées » ; une séance du plan le même jour est signalée comme remplacée ; ACWR et
+  rampe 7 j passent par les évaluateurs existants (`evaluate_acwr`, `evaluate_ramp_rate`). Rien n'est écrit.
+  Pas de ravitaillement : Banister ne fait pas de nutrition (durée et kJ suffisent au service nutrition).
+  Outil Hermes `banister_simulate_ride` : un `gpx_file` n'est lu que s'il est un `.gpx` reçu, cherché dans
+  `<profil>/cache/documents/` (le modèle voit le chemin monté dans son sandbox Docker,
+  `/root/.hermes/cache/documents/…` : seule la partie après `documents/` compte, rien hors de ce dossier n'est
+  lu). Liens Strava : refusés avec la consigne d'exporter le GPX (géométrie non publique) ; RideWithGPS bloque
+  les IP de datacenter (418) → même consigne.
 - **Pas d'équivalent agent** : `/reset`, volontairement. Le bouton du chat intégré publie toujours à la date du jour.
 - Tests : `tests/test_api/test_agent_api.py`, `tests/test_integrations/test_hermes_plugin.py`.
 
@@ -1522,6 +1529,6 @@ INTERNAL_API_TOKEN=                      # optionnel — active /internal/v1/con
 | Modifier le tracing LLM (Phoenix) | `app/observability.py` — `setup_observability()` ; span manuel dans `app/llm/providers/openrouter.py` |
 | Modifier `/review` (picker, synthèse) | `app/bot/routers/review.py` + `app/llm/review.py` — prompt dans `app/llm/prompts.py::build_review_system_prompt()`/`build_review_user_message()` |
 | Activer/désactiver un bloc de données `/review` (puissance brute, qualité, contexte externe, forme, nutrition) | `app/llm/prompts.py` — `REVIEW_DATA_BLOCKS` |
-| Modifier l'estimation de temps d'un parcours | Modèle : bibliothèque `allure-cycling` (`/root/allure`) ; entrées/route : `app/services/route_estimate.py`, `app/api/agent/route_estimate.py`, outil `banister_estimate_route` |
+| Modifier la simulation d'une sortie (temps, bosses, TSS, forme après) | Modèle : bibliothèque `allure-cycling` (`/root/allure`) ; entrées : `app/services/ride_simulation.py` ; projection de forme : `app/engine/ride_simulation.py` ; route : `app/api/agent/ride_simulation.py` ; outil `banister_simulate_ride` |
 | Modifier le contexte sportif exposé aux services locaux | `app/services/sport_context.py` — `build_sport_context()` ; route + jeton dans `app/api/internal.py` |
 | Architecture complète | `docs/ARCHITECTURE.md` |

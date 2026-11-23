@@ -184,15 +184,15 @@ wheels = [
 
 [[package]]
 name = "allure-cycling"
-version = "0.2.0"
-source = { url = "https://github.com/gwenaelkreutner/Allure/archive/refs/tags/v0.2.0.tar.gz" }
+version = "0.3.0"
+source = { url = "https://github.com/gwenaelkreutner/Allure/archive/refs/tags/v0.3.0.tar.gz" }
 dependencies = [
     { name = "gpxpy" },
     { name = "numpy" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-sdist = { hash = "sha256:3d16521729499251a69a27bc2f23efae9635c4bbb173fd29f7c666ef354e109e" }
+sdist = { hash = "sha256:cd6abef35767bff28aa1084c9506d31642671298310de04d52837a9fd8a70f61" }
 
 [package.optional-dependencies]
 web = [
@@ -344,7 +344,7 @@ requires-dist = [
     { name = "aiogram", specifier = ">=3.13.0" },
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "alembic", specifier = ">=1.13.0" },
-    { name = "allure-cycling", extras = ["web"], url = "https://github.com/gwenaelkreutner/Allure/archive/refs/tags/v0.2.0.tar.gz" },
+    { name = "allure-cycling", extras = ["web"], url = "https://github.com/gwenaelkreutner/Allure/archive/refs/tags/v0.3.0.tar.gz" },
     { name = "anthropic", specifier = ">=1.0.0" },
     { name = "anthropic", marker = "extra == 'observability'", specifier = ">=1.0.0" },
     { name = "arize-phoenix-otel", marker = "extra == 'observability'", specifier = ">=0.8.0" },

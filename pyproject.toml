@@ -33,7 +33,7 @@ dependencies = [
     "tzdata>=2024.1",
     # Moving-time estimate for a route (POST /agent/v1/route-estimate). Separate open-source
     # library so any app gets the same physics; pinned to a release archive (no git in the image).
-    "allure-cycling[web] @ https://github.com/gwenaelkreutner/Allure/archive/refs/tags/v0.2.0.tar.gz",
+    "allure-cycling[web] @ https://github.com/gwenaelkreutner/Allure/archive/refs/tags/v0.3.0.tar.gz",
 ]
 
 [project.optional-dependencies]

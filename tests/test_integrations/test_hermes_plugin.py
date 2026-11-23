@@ -214,7 +214,7 @@ def test_route_estimate_reads_only_gpx_files_the_athlete_sent(monkeypatch, tmp_p
         return {"ok": True}
 
     monkeypatch.setattr(tools, "call", fake_call)
-    handler = dict((s["name"], h) for s, h in tools.TOOLS)["banister_estimate_route"]
+    handler = dict((s["name"], h) for s, h in tools.TOOLS)["banister_simulate_ride"]
 
     # the model sees the sandbox mount, not the profile directory on the host
     sandbox_path = "/root/.hermes/cache/documents/native-inputs/abc/doc_1_route.gpx"

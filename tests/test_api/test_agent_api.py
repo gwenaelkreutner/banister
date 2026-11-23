@@ -811,7 +811,7 @@ async def test_verify_reply_accepts_the_recent_peak_it_was_given(client, athlete
     assert r.json() == {"ok": True, "flagged": []}
 
 
-# ── Route estimate (allure-cycling) ──────────────────────────────────────────
+# ── Ride simulation (allure-cycling) ──────────────────────────────────────────
 
 
 def _gpx(km: float = 10.0, grade: float = 0.0) -> str:
@@ -828,20 +828,22 @@ def _with_weight(calendar, kg=68.0):
     calendar.athlete = {**ATHLETE_FROM_SOURCE, "icu_weight": kg}
 
 
-async def test_gpx_estimate_uses_the_source_ftp_and_weight(client, athlete, calendar):
+async def test_simulation_uses_the_source_ftp_and_weight(client, athlete, calendar):
     _with_weight(calendar)
-    r = await client.post("/agent/v1/route-estimate", json={"gpx": _gpx(), "mode": "steady"})
+    r = await client.post("/agent/v1/simulate-ride", json={"gpx": _gpx(), "mode": "steady"})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["inputs"]["ftp_w"] == 260 and body["inputs"]["weight_kg"] == 68
     assert math.isclose(body["route"]["distance_km"], 10.0, abs_tol=0.2)
     assert 25 < body["estimate"]["avg_speed_kmh"] < 40
-    assert body["intensity"]["intensity_factor"] == 0.71
+    assert body["effort"]["intensity_factor"] == 0.71
+    assert body["effort"]["tss"] > 0 and body["effort"]["kilojoules"] > 0
+    assert "form" not in body  # no date, no projection
 
 
 async def test_group_is_faster_than_solo_on_the_flat(client, athlete, calendar):
     _with_weight(calendar)
-    url = "/agent/v1/route-estimate"
+    url = "/agent/v1/simulate-ride"
     solo = (await client.post(url, json={"gpx": _gpx(), "watts": 200})).json()
     group = (await client.post(
         url, json={"gpx": _gpx(), "watts": 200, "context": "group", "group_size": 10}
@@ -864,22 +866,72 @@ async def test_route_from_a_past_ride(client, athlete, calendar):
         ]
 
     calendar.list_activities, calendar.get_activity_streams = list_activities, get_activity_streams
-    body = {"ride_date": "2026-11-21", "mode": "chill"}
-    r = await client.post("/agent/v1/route-estimate", json=body)
+    body = {"track_ride_date": "2026-11-21", "mode": "chill"}
+    r = await client.post("/agent/v1/simulate-ride", json=body)
     assert r.status_code == 200, r.text
     assert r.json()["route"]["source"].startswith("ride of 2026-11-21")
 
 
 async def test_inputs_are_refused_with_a_reason(client, athlete, calendar):
     _with_weight(calendar)
-    no_source = await client.post("/agent/v1/route-estimate", json={"mode": "chill"})
+    no_source = await client.post("/agent/v1/simulate-ride", json={"mode": "chill"})
     assert no_source.status_code == 422
     strava = await client.post(
-        "/agent/v1/route-estimate", json={"url": "https://www.strava.com/routes/1", "mode": "chill"}
+        "/agent/v1/simulate-ride", json={"url": "https://www.strava.com/routes/1", "mode": "chill"}
     )
     assert strava.status_code == 422 and "Export GPX" in strava.json()["detail"]
 
 
 async def test_unknown_weight_is_said_not_guessed(client, athlete, calendar):
-    r = await client.post("/agent/v1/route-estimate", json={"gpx": _gpx(), "mode": "chill"})
+    r = await client.post("/agent/v1/simulate-ride", json={"gpx": _gpx(), "mode": "chill"})
     assert r.status_code == 422 and "weight" in r.json()["detail"]
+
+
+def _gpx_profile(pieces) -> str:
+    d, e = [0.0], [100.0]
+    for length, g in pieces:
+        for _ in range(int(length / 10)):
+            d.append(d[-1] + 10)
+            e.append(e[-1] + 10 * g)
+    pts = "".join(
+        f'<trkpt lat="{45 + x / 111_195:.7f}" lon="5.0"><ele>{z:.1f}</ele></trkpt>'
+        for x, z in zip(d, e)
+    )
+    return f'<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg>{pts}</trkseg></trk></gpx>'
+
+
+async def test_simulation_describes_each_climb(client, athlete, calendar):
+    _with_weight(calendar)
+    gpx = _gpx_profile([(3000, 0.0), (4000, 0.06), (3000, 0.0)])
+    body = (await client.post("/agent/v1/simulate-ride", json={"gpx": gpx, "mode": "steady"})).json()
+    (climb,) = body["route"]["climbs"]
+    assert climb["category"] == "3" and 230 < climb["gain_m"] < 250  # 4000 m x 6 % = 24000
+    assert climb["time"] and climb["avg_power_w"] > body["effort"]["avg_power_w"]
+
+
+async def test_simulation_projects_form_after_the_ride(client, athlete, calendar, db_session):
+    _with_weight(calendar)
+    today = paris_today()
+    await wellness_repo.upsert(db_session, athlete.id, today, ctl=40.0, atl=40.0)
+    await db_session.commit()
+    ride_day = today + timedelta(days=3)
+    r = await client.post(
+        "/agent/v1/simulate-ride",
+        json={"gpx": _gpx(40), "mode": "tempo", "date": ride_day.isoformat()},
+    )
+    assert r.status_code == 200, r.text
+    form = r.json()["form"]
+    assert form["available"] and form["after_ride"]["date"] == ride_day.isoformat()
+    # rest days before: fatigue drops; the ride raises it again and lowers the TSB
+    assert form["day_before_ride"]["atl"] < 40
+    assert form["after_ride"]["atl"] > form["day_before_ride"]["atl"]
+    assert form["after_ride"]["tsb"] < form["day_before_ride"]["tsb"]
+    assert form["from_source"]["date"] == today.isoformat()
+
+
+async def test_simulation_date_out_of_range_is_refused(client, athlete, calendar):
+    _with_weight(calendar)
+    past = (paris_today() - timedelta(days=1)).isoformat()
+    r = await client.post("/agent/v1/simulate-ride", json={"gpx": _gpx(), "mode": "chill", "date": past})
+    assert r.status_code == 422
+

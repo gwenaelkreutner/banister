@@ -30,4 +30,4 @@ provides_tools:
   - banister_propose_session_change
   - banister_request_plan_publication
   - banister_request_plan_withdrawal
-  - banister_estimate_route
+  - banister_simulate_ride
