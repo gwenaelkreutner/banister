@@ -163,6 +163,9 @@ consolidation).
 ```
 poller.py (tick périodique, cf. INTERVALS_POLL_INTERVAL_MINUTES, défaut 5 min)
     → import historique idempotent + rafraîchissement wellness sur six jours (aujourd'hui à J-5)
+    → seuils relus sur GET /athlete (FTP, FC max/repos, âge, poids) et réécrits dans le profil s'ils
+      ont bougé (`athlete_setup.refresh_thresholds_from_source`, 2026-11-23 — avant, le setup les
+      copiait une fois pour toutes : FTP passée à 270 W sur intervals.icu, coach toujours à 290 W)
     → commit avant toute détection : les jours de repos et les échecs de notification conservent les données
     → client.list_activities() : liste des activités récentes
     → détecte les nouvelles (sync_state), une notification par activité, jamais de doublon ni d'oubli
